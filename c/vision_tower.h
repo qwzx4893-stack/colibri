@@ -125,12 +125,15 @@ static inline int coli_vision_output_tokens(const ColiVisionConfig *config,
  * block-major token order the reference produces.
  * out: [output_tokens, out_hidden]. Returns 0, or -1 on bad arguments or
  * allocation failure. */
+#define COLI_VISION_MAX_HEAD_DIM 512   /* rotary scratch size; a larger head_dim is refused, not truncated */
+
 static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
                                       const float *pixels, int grid_h, int grid_w) {
     const ColiVisionConfig *c = &tower->config;
     if (!out || !tower || !pixels || grid_h < 1 || grid_w < 1 ||
         c->heads < 1 || c->hidden != c->heads * c->head_dim ||
-        c->head_dim % 4 || coli_vision_output_tokens(c, grid_h, grid_w) < 0)
+        c->head_dim % 4 || c->head_dim > COLI_VISION_MAX_HEAD_DIM ||
+        coli_vision_output_tokens(c, grid_h, grid_w) < 0)
         return -1;
 
     const int tokens = grid_h * grid_w;
@@ -146,7 +149,11 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
     float *scores = malloc((size_t)tokens * sizeof(float));
     float *scratch = malloc((size_t)(hidden > c->intermediate ? hidden : c->intermediate) *
                             sizeof(float));
-    float *branch = malloc((size_t)tokens * hidden * sizeof(float));
+    /* branch holds the attention result, and later the MLP gate/up pair of one token,
+     * so it is sized for whichever is larger (no per-token allocation in the MLP). */
+    size_t branch_floats = (size_t)tokens * hidden;
+    if (branch_floats < (size_t)c->intermediate * 2) branch_floats = (size_t)c->intermediate * 2;
+    float *branch = malloc(branch_floats * sizeof(float));
     if (!state || !cos_table || !sin_table || !qkv || !scores || !scratch || !branch) {
         free(branch); free(scratch); free(scores); free(qkv);
         free(sin_table); free(cos_table); free(state);
@@ -204,11 +211,10 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
                 coli_vision_rmsnorm(k, k, block->k_norm, hd, c->eps);
                 for (int pass = 0; pass < 2; pass++) {
                     float *vec = pass ? k : q;
-                    float rotated[512];
-                    int limit = hd < 512 ? hd : 512;
-                    for (int i = 0; i < limit; i++)
+                    float rotated[COLI_VISION_MAX_HEAD_DIM];   /* hd is checked above: never truncated */
+                    for (int i = 0; i < hd; i++)
                         rotated[i] = i < hd / 2 ? -vec[i + hd / 2] : vec[i - hd / 2];
-                    for (int i = 0; i < limit; i++)
+                    for (int i = 0; i < hd; i++)
                         vec[i] = vec[i] * cosine[i] + rotated[i] * sine[i];
                 }
             }
@@ -247,9 +253,7 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
         }
         /* ---- MLP ---- */
         for (int t = 0; t < tokens; t++) {
-            float *gate = malloc((size_t)c->intermediate * 2 * sizeof(float));
-            if (!gate) { free(branch); free(scratch); free(scores); free(qkv);
-                         free(sin_table); free(cos_table); free(state); return -1; }
+            float *gate = branch;                 /* attention output is already consumed */
             float *up = gate + c->intermediate;
             coli_vision_rmsnorm(scratch, state + (size_t)t * hidden, block->norm2, hidden, c->eps);
             coli_vision_matvec(gate, block->gate_w, block->gate_b, scratch, c->intermediate, hidden);
@@ -261,7 +265,6 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
             }
             coli_vision_matvec(scratch, block->down_w, block->down_b, gate, hidden, c->intermediate);
             for (int i = 0; i < hidden; i++) state[(size_t)t * hidden + i] += scratch[i];
-            free(gate);
         }
     }
 

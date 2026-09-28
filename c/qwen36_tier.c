@@ -499,12 +499,15 @@ static void auto_place(int nl, int ne, int topk, const size_t *capacity, const u
  * decision moves from the periodic tick into qt_note, which asks: is this
  * expert, now in hand, hotter than the coldest resident on its device? */
 static int G_fp8_stream;
-static const float *G_fp8_lut;
+static float G_fp8_lut[256];          /* owned copy of the e4m3 decode table: the caller's may not outlive the tier */
+static int G_fp8_lut_set;
 static int G_upload_sync;             /* QT_UPLOAD_SYNC=1: qt_issue waits for in-flight uploads first (tests) */
 
 int qt_init_fp8(int nl, int ne, int D, int Ih, int cap, int topk, const float *e4m3_lut){
     if(G.on) return 0;
-    G_fp8_stream = 1; G_fp8_lut = e4m3_lut;
+    if(e4m3_lut){ memcpy(G_fp8_lut, e4m3_lut, sizeof G_fp8_lut); G_fp8_lut_set = 1; }
+    else G_fp8_lut_set = 0;
+    G_fp8_stream = 1;
     int ok = qt_init(nl, ne, D, Ih, cap, topk, 0, 0);
     if(!ok) G_fp8_stream = 0;
     return ok;
@@ -587,7 +590,7 @@ int qt_init(int nl, int ne, int D, int Ih, int cap, int topk, int expert_gs,
     if(have<G.ndev){ G.ndev=have; }
     if(G.ndev<1){ fprintf(stderr,"[qtier] no CUDA devices -> CPU path\n"); return 0; }
     if(G_fp8_stream){
-        if(!G_fp8_lut || !coli_cuda_fp8_set_lut(G_fp8_lut)){
+        if(!G_fp8_lut_set || !coli_cuda_fp8_set_lut(G_fp8_lut)){
             fprintf(stderr,"[qtier] fmt=8 decode table not published -> CPU path\n");
             return 0;
         }
