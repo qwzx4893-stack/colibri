@@ -58,9 +58,11 @@ class KimiUsageTest(unittest.TestCase):
         out = r.stdout + r.stderr
         self.assertIn("without a model", out,
                       "no args: does not say what is missing")
-        self.assertIn("coli chat", out,
-                      "no args: does not name the launcher, which is what the "
-                      "person almost certainly wanted")
+        # The launcher is `./coli` on POSIX and `coli.cmd` on Windows
+        # (compat.h coli_print_launcher_help), so accept either spelling.
+        self.assertRegex(out, r"coli(\.cmd)? chat",
+                         "no args: does not name the launcher, which is what the "
+                         "person almost certainly wanted")
         self.assertNotEqual(r.returncode, 0, "a missing model dir is a failure")
 
     def test_usage_names_the_launcher(self):

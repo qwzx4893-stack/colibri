@@ -213,13 +213,13 @@ class ConverterEndToEndTest(unittest.TestCase):
         result = run_converter(self.gguf, self.out)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-        config = json.loads((self.out / "config.json").read_text())
+        config = json.loads((self.out / "config.json").read_text(encoding="utf-8"))
         self.assertEqual(config["hidden_size"], HIDDEN)
         self.assertEqual(config["num_experts"], N_EXPERTS)
         self.assertEqual(config["vocab_size"], 4)
         self.assertFalse(config["norm_topk_prob"])
 
-        tokenizer = json.loads((self.out / "tokenizer.json").read_text())
+        tokenizer = json.loads((self.out / "tokenizer.json").read_text(encoding="utf-8"))
         self.assertEqual(tokenizer["model"]["vocab"], {"aa": 0, "bb": 1, "<unk>": 2, "Ġt": 3})
 
         present = set()

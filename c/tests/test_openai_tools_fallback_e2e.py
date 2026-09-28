@@ -170,7 +170,7 @@ class _TwoTurnLoop(_FallbackBase):
                           "temperature": 0, "max_tokens": 128})
         self.assertIn("25", out2["choices"][0]["message"]["content"] or "")
 
-        prompts = self.mock_log.read_text()
+        prompts = self.mock_log.read_text(encoding="utf-8")
         self.assertIn("<tools>", prompts)          # declaration was injected
         self.assertIn("<tool_call>get_weather", prompts)   # prior call replayed
         self.assertIn("<tool_response>", prompts)  # result reached the prompt

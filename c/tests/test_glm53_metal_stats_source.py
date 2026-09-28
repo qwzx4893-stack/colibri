@@ -9,7 +9,7 @@ SRC = ROOT / "c" / "glm53.c"
 class Glm53MetalStatsSourceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.src = SRC.read_text()
+        cls.src = SRC.read_text(encoding="utf-8")
 
     def test_counters_declared(self):
         for needle in (

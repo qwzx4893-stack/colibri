@@ -67,7 +67,7 @@ class K3RepackIndexTest(unittest.TestCase):
         return path
 
     def index(self):
-        return json.loads((self.dst / "model.safetensors.index.json").read_text())
+        return json.loads((self.dst / "model.safetensors.index.json").read_text(encoding="utf-8"))
 
     def test_rebuild_combines_disjoint_partial_runs_and_counts_existing_payloads(self):
         first = self.shard(1, [("layer.1.weight", b"1234")])
@@ -171,7 +171,7 @@ class K3RepackResumeIntegrationTest(unittest.TestCase):
         self.run_main(1)
         self.run_main(2)
         index_path = self.dst / "model.safetensors.index.json"
-        document = json.loads(index_path.read_text())
+        document = json.loads(index_path.read_text(encoding="utf-8"))
 
         self.assertEqual(document, {
             "metadata": {"total_size": 3},
@@ -219,7 +219,7 @@ class K3RepackResumeIntegrationTest(unittest.TestCase):
         self.assertIn("skipped (resume)", out)
         self.assertIn("[ 3] SOURCE MISSING", out)
         self.assertIn("done:", out)
-        self.assertEqual(json.loads(index_path.read_text())["weight_map"],
+        self.assertEqual(json.loads(index_path.read_text(encoding="utf-8"))["weight_map"],
                          {"model.layers.1.input_layernorm.weight":
                           "model-00001-of-000094.safetensors"})
 

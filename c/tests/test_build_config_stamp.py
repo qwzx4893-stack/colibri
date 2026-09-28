@@ -39,14 +39,14 @@ class BuildConfigStampTest(unittest.TestCase):
         marker = f"-DCOLI_STAMP_TEST_{time.monotonic_ns()}"
         self.parse(*version, f"EXTRA_CFLAGS={marker}")
         self.assertTrue(STAMP.exists(), "the stamp was not written")
-        text = STAMP.read_text()
+        text = STAMP.read_text(encoding="utf-8")
         self.assertIn(marker, text)
         before = STAMP.stat().st_mtime_ns
         time.sleep(0.05)
         self.parse(*version, f"EXTRA_CFLAGS={marker}")
         self.assertEqual(STAMP.stat().st_mtime_ns, before,
                          "an unchanged configuration rewrote the stamp")
-        self.assertEqual(STAMP.read_text(), text)
+        self.assertEqual(STAMP.read_text(encoding="utf-8"), text)
 
     def test_make_381_writes_the_stamp(self):
         self.check("MAKE_VERSION=3.81")

@@ -121,7 +121,7 @@ class K3ToolCallingE2E(unittest.TestCase):
             return json.loads(resp.read().decode())
 
     def prompts(self):
-        return [p for p in self.mock_log.read_text().split("\n\x00\n") if p]
+        return [p for p in self.mock_log.read_text(encoding="utf-8").split("\n\x00\n") if p]
 
     def test_declaration_reaches_the_wire_and_call_parses(self):
         out = self.post({"model": self.model_id, "tools": TOOLS,

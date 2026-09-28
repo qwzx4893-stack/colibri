@@ -75,7 +75,7 @@ def main() -> int:
         print(f"SKIP: serve {arguments.binary} e la fixture; generala con "
               f"tools/make_qwen38_multimodal_tiny.py")
         return 0
-    meta = json.loads(meta_path.read_text())
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
     grid_h, grid_w = meta["grid_h"], meta["grid_w"]
     features, image_token = meta["features"], meta["image_token"]
     tokens = meta["tokens"]

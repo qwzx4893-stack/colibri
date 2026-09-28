@@ -59,7 +59,7 @@ def main() -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from tools import qwen38_image
 
-    raw = json.loads(arguments.config.read_text())
+    raw = json.loads(arguments.config.read_text(encoding="utf-8"))
     settings = {k: v for k, v in raw.items()
                 if k not in ("processor_class", "image_processor_type")}
     reference = Qwen2VLImageProcessor(**settings)

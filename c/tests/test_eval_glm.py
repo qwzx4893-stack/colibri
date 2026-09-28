@@ -122,7 +122,7 @@ class EvalGlmEvidenceTests(unittest.TestCase):
             self.last_popen_kwargs = popen.call_args.kwargs if popen.called else {}
             self.last_stderr = stderr_buf.getvalue()
             self.last_stdout = stdout_buf.getvalue()
-            return rc, output.read_text(), popen.call_count
+            return rc, output.read_text(encoding="utf-8"), popen.call_count
 
     def test_exact_score_text_survives_csv(self):
         text = "-8.5534581234567888"
@@ -423,7 +423,7 @@ class EvalGlmEvidenceTests(unittest.TestCase):
                         side_effect=AssertionError("engine launched")):
                 rc = EVAL.main()
             self.assertEqual(rc, 1)
-            self.assertIn("# INCOMPLETE:", output.read_text())
+            self.assertIn("# INCOMPLETE:", output.read_text(encoding="utf-8"))
 
     def test_banner_kernels_and_load_boundaries_are_exact(self):
         self.assertEqual(
@@ -528,7 +528,7 @@ class EvalGlmEvidenceTests(unittest.TestCase):
                                       return_value=process), \
                     self.assertRaises(OSError):
                 EVAL.main()
-            text = output.read_text()
+            text = output.read_text(encoding="utf-8")
             self.assertIn(",-1,1\n", text.replace(".000000", ""))
             self.assertNotIn("# finished:", text)
             # The crash-path marker itself must be present, not
@@ -871,7 +871,7 @@ class EvalGlmEvidenceTests(unittest.TestCase):
                 rc = EVAL.main()
             self.assertEqual(rc, 1)
             popen.assert_not_called()
-            text = out.read_text()
+            text = out.read_text(encoding="utf-8")
             self.assertIn("# INCOMPLETE: 0/0; error=no benchmark tasks selected", text)
             self.assertNotIn("finished: 0/0", text)
 
@@ -895,7 +895,7 @@ class EvalGlmEvidenceTests(unittest.TestCase):
                 rc = EVAL.main()
             self.assertEqual(rc, 1)
             popen.assert_not_called()
-            text = out.read_text()
+            text = out.read_text(encoding="utf-8")
             self.assertIn(
                 "# INCOMPLETE: 0/0; error=selected tasks produced zero SCORE requests",
                 text)
@@ -954,7 +954,7 @@ class EvalGlmEvidenceTests(unittest.TestCase):
                     rc = EVAL.main()
                 self.assertEqual(rc, 1)
                 popen.assert_not_called()
-                text = out.read_text()
+                text = out.read_text(encoding="utf-8")
                 self.assertIn("# INCOMPLETE: 0/0; error=", text)
                 self.assertNotIn("# finished:", text)
 

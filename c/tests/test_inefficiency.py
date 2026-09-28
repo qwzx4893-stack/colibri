@@ -256,7 +256,7 @@ class TinyCudaEfficiencyTest(unittest.TestCase):
         because both backends differ from the oracle at different positions and
         the summary line can't tell "CPU≠CUDA" from "CPU≠oracle"."""
         import json
-        ref = json.loads((C_DIR / "ref_glm.json").read_text())
+        ref = json.loads((C_DIR / "ref_glm.json").read_text(encoding="utf-8"))
         oracle = ref["tf_pred"]
 
         cpu = self._run(TF="1", TEMP="0")

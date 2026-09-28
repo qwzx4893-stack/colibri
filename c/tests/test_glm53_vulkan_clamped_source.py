@@ -4,10 +4,10 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SHADER = (ROOT / "shaders" / "qmatmul_gate_up.comp").read_text()
-SRC = (ROOT / "backend_vulkan.c").read_text()
-HDR = (ROOT / "backend_vulkan.h").read_text()
-GLM = (ROOT / "glm53.c").read_text()
+SHADER = (ROOT / "shaders" / "qmatmul_gate_up.comp").read_text(encoding="utf-8")
+SRC = (ROOT / "backend_vulkan.c").read_text(encoding="utf-8")
+HDR = (ROOT / "backend_vulkan.h").read_text(encoding="utf-8")
+GLM = (ROOT / "glm53.c").read_text(encoding="utf-8")
 
 
 class Glm53VulkanClampedSourceTests(unittest.TestCase):

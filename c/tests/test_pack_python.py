@@ -146,7 +146,7 @@ class PackPythonNeededTests(unittest.TestCase):
             (root / "shared.py").write_text("ROOT = 1\n")
             (root / "tools" / "shared.py").write_text("TOOLS = 1\n")
             local = PACK.local_modules(root)
-            self.assertEqual(local["shared"].read_text(), "ROOT = 1\n")
+            self.assertEqual(local["shared"].read_text(encoding="utf-8"), "ROOT = 1\n")
 
     def test_invoked_scripts_matches_only_the_exact_call_shape(self):
         with tempfile.TemporaryDirectory() as tmp:

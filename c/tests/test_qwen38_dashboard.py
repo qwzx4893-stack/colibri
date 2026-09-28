@@ -68,7 +68,7 @@ class Qwen38DashboardTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.boot, cls.turn, cls.after = one_turn()
-        cls.config = json.loads((FIXTURE / "config.json").read_text())
+        cls.config = json.loads((FIXTURE / "config.json").read_text(encoding="utf-8"))
 
     @staticmethod
     def only(lines, kind):

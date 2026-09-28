@@ -204,7 +204,7 @@ def tearDownModule():
 
 
 def records(path):
-    return [json.loads(line) for line in path.read_text().splitlines()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def lcp(sequences):
@@ -627,7 +627,7 @@ class RealFrozenCorpusOptInTest(unittest.TestCase):
                 Path(temporary.name), corpus_path=REAL_CORPUS,
                 comparisons_path=REAL_COMPARISONS, policy_path=REAL_POLICY)
             status = adapter.main(argv)
-        result = json.loads(output.read_text())
+        result = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(status, 0)
         self.assertEqual(result["verdict"], "PASS")
 
@@ -660,7 +660,7 @@ class ReadOnceHashingTest(unittest.TestCase):
 
         with patch.object(Path, "read_bytes", spy):
             status = adapter.main(argv)
-        result = json.loads(output.read_text())
+        result = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(status, 0)
         self.assertEqual(result["verdict"], "PASS")
         for path in tracked:
@@ -695,7 +695,7 @@ class ReadOnceHashingTest(unittest.TestCase):
 
         with patch.object(Path, "read_bytes", fake_opener):
             status = adapter.main(argv)
-        result = json.loads(output.read_text())
+        result = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(len(calls), 1,
                          "a second read would have returned the swapped "
                          "manifest; the fix must never issue it")
@@ -730,7 +730,7 @@ class MissingAuthorityTest(unittest.TestCase):
                 argv[index] = str(missing)
 
                 status = adapter.main(argv)
-                result = json.loads(output.read_text())
+                result = json.loads(output.read_text(encoding="utf-8"))
                 self.assertEqual(status, 1)
                 self.assertEqual(result["verdict"], "FAIL")
                 self.assertIn(f"missing authority: {role} (", result["disposition"])
@@ -825,7 +825,7 @@ class RawAdapterTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         argv, output = make_bundle(Path(temporary.name), **kwargs)
         status = adapter.main(argv)
-        return status, json.loads(output.read_text())
+        return status, json.loads(output.read_text(encoding="utf-8"))
 
     def test_exact_denominators_and_raw_pass(self):
         status, result = self.run_bundle()
@@ -989,7 +989,7 @@ class RawAdapterTest(unittest.TestCase):
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
         status = adapter.main(argv)
-        result = json.loads(output.read_text())
+        result = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(status, 1)
         self.assertEqual(result["verdict"], "FAIL")
         self.assertIn("unexpected raw group frame: BOGUS", result["disposition"])
@@ -1007,7 +1007,7 @@ class RawAdapterTest(unittest.TestCase):
         manifest_path2.write_text(json.dumps(manifest2), encoding="utf-8")
 
         status2 = adapter.main(argv2)
-        result2 = json.loads(output2.read_text())
+        result2 = json.loads(output2.read_text(encoding="utf-8"))
         self.assertEqual(status2, 1)
         self.assertEqual(result2["verdict"], "FAIL")
         self.assertIn("unexpected raw sequential frame: BOGUS",
@@ -1156,7 +1156,7 @@ class RawAdapterTest(unittest.TestCase):
         manifest = Path(argv[argv.index("--run-manifest") + 1])
         manifest.write_text("{", encoding="utf-8")
         status = adapter.main(argv)
-        result = json.loads(output.read_text())
+        result = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(status, 2)
         self.assertEqual(result["verdict"], "BLOCK")
         self.assertNotIn("stale", result)
@@ -1168,7 +1168,7 @@ class RawAdapterTest(unittest.TestCase):
         wire = manifest.read_text(encoding="utf-8")
         manifest.write_text('{"run_id":"shadow",' + wire[1:], encoding="utf-8")
         status = adapter.main(argv)
-        result = json.loads(output.read_text())
+        result = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(status, 1)
         self.assertEqual(result["verdict"], "FAIL")
         self.assertIn("duplicate JSON key", result["disposition"])
@@ -1214,7 +1214,7 @@ class RawAdapterTest(unittest.TestCase):
 
         with patch.object(adapter, "ltr", right_to_left):
             status = adapter.main(argv)
-        result = json.loads(output.read_text())
+        result = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(status, 1)
         self.assertEqual(result["verdict"], "FAIL")
         self.assertRegex(result["disposition"], r"GRPE sum|SCORE/ECHO")
@@ -1243,7 +1243,7 @@ class RawAdapterTest(unittest.TestCase):
     def test_internal_authority_denominator_and_identity_mutations_fail(self):
         corpus_rows = records(CORPUS)
         comparison_rows = records(COMPARISONS)
-        policy = json.loads(POLICY.read_text())
+        policy = json.loads(POLICY.read_text(encoding="utf-8"))
         for kind in ("token_position", "summed_score", "prefix_swallowed",
                      "option_argmax_input", "item_argmax"):
             mutated = copy.deepcopy(comparison_rows)
@@ -1321,7 +1321,7 @@ class RawAdapterTest(unittest.TestCase):
         self._blank_evidence_file(argv, "score-evidence")
 
         status = adapter.main(argv)
-        result = json.loads(output.read_text())
+        result = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(status, 4)
         self.assertEqual(result["verdict"], "UNSUPPORTED")
         self.assertEqual(result["group_checks"], "UNSUPPORTED")
@@ -1341,7 +1341,7 @@ class RawAdapterTest(unittest.TestCase):
         self._blank_evidence_file(argv, "group-frames")
 
         status = adapter.main(argv)
-        result = json.loads(output.read_text())
+        result = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(status, 4)
         self.assertEqual(result["verdict"], "UNSUPPORTED")
         self.assertEqual(result["group_checks"], "UNSUPPORTED")
@@ -1359,7 +1359,7 @@ class RawAdapterTest(unittest.TestCase):
         self._blank_evidence_file(argv, "score-evidence")
 
         status = adapter.main(argv)
-        result = json.loads(output.read_text())
+        result = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(status, 4)
         self.assertEqual(result["verdict"], "UNSUPPORTED")
         self.assertEqual(result["group_checks"], "PASS")

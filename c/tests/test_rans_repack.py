@@ -475,7 +475,7 @@ class TestRansRepack(unittest.TestCase):
         shards = self.repack(out)
         manifest = out / "repack-manifest.json"
         self.assertTrue(manifest.exists())
-        man = json.loads(manifest.read_text())
+        man = json.loads(manifest.read_text(encoding="utf-8"))
         self.assertEqual(man["n_shards"], len(shards))
 
         # rerun over completed output: refused
@@ -508,7 +508,7 @@ class TestRansRepack(unittest.TestCase):
         out = self.root / "digests"
         shard = self.repack(out)[0]
         manifest = out / "repack-manifest.json"
-        man = json.loads(manifest.read_text())
+        man = json.loads(manifest.read_text(encoding="utf-8"))
 
         # every weight record has a digest, and it matches the bytes on disk;
         # the whole-file sha256 matches the complete shard bytes
@@ -542,7 +542,7 @@ class TestRansRepack(unittest.TestCase):
         self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
         # provenance loss is visible in output, not just by field absence
         self.assertIn("provenance is unknowable in retro mode", r.stderr)
-        man2 = json.loads(manifest.read_text())
+        man2 = json.loads(manifest.read_text(encoding="utf-8"))
         self.assertEqual(man2["shards"][0]["records"], recs)
         self.assertEqual(man2["shards"][0]["sha256"], man["shards"][0]["sha256"])
         self.assertEqual(man2["table_crc32"], man["table_crc32"])
@@ -639,7 +639,7 @@ class TestRansRepack(unittest.TestCase):
         shard = self.repack(out)[0]
         r = run_tool("repack_rans.py", "--census", str(out))
         self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
-        cen = json.loads((out / "rans-census.json").read_text())
+        cen = json.loads((out / "rans-census.json").read_text(encoding="utf-8"))
         self.assertEqual(cen["format"], rf.FORMAT_NAME)
         sh = cen["shards"][0]
         rows = {row["record_id"]: row for row in sh["records"]}

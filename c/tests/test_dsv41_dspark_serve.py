@@ -43,7 +43,7 @@ def free_port():
 def has_draft_head():
     if not (FIXTURE.name and (FIXTURE / "config.json").is_file()):
         return False
-    text = json.loads((FIXTURE / "config.json").read_text())
+    text = json.loads((FIXTURE / "config.json").read_text(encoding="utf-8"))
     text = text.get("text_config", text)
     # dspark_block_size, not n_mtp_layers: the released checkpoint declares the
     # first and omits the second, and the fixture now matches it. The engine

@@ -9,8 +9,8 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = (ROOT / "glm53.c").read_text()
-MAKE = (ROOT / "Makefile").read_text()
+SRC = (ROOT / "glm53.c").read_text(encoding="utf-8")
+MAKE = (ROOT / "Makefile").read_text(encoding="utf-8")
 
 
 class Glm53MetalSourceTests(unittest.TestCase):

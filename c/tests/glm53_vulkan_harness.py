@@ -66,7 +66,7 @@ def main() -> int:
               f"  python3 tools/make_glm53_multimodal_tiny.py --output <dir>")
         return 2  # a skip is not a pass
     binary = os.path.abspath(arguments.binary)
-    reference = json.loads((arguments.fixture / "ref.json").read_text())
+    reference = json.loads((arguments.fixture / "ref.json").read_text(encoding="utf-8"))
 
     cpu, _ = run(binary, arguments.fixture, reference, False, arguments.shaders)
     gpu, notes = run(binary, arguments.fixture, reference, True, arguments.shaders)

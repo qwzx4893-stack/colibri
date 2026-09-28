@@ -460,7 +460,7 @@ class AutotuneIntegrationTest(unittest.TestCase):
                 tokens=4, repeats=1, timeout=5, min_gain=0.03,
                 profile_dir=directory,
             )
-            seen = set(caps.read_text().split())
+            seen = set(caps.read_text(encoding="utf-8").split())
             self.assertEqual(seen, {"84"},
                              f"engine saw caps {seen}, expected the plan's 84")
 
@@ -498,7 +498,7 @@ class AutotuneIntegrationTest(unittest.TestCase):
             self.assertTrue(profile["accepted"])
             self.assertEqual(profile["winner"]["env"], {"COLI_CUDA_PIPE": "1"})
             self.assertAlmostEqual(profile["gain"], 0.20)
-            self.assertEqual(json.loads(path.read_text())["winner"]["tok_s"], 12.0)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["winner"]["tok_s"], 12.0)
 
     def test_reverse_confirmation_rejects_warmup_drift(self):
         with tempfile.TemporaryDirectory() as directory:

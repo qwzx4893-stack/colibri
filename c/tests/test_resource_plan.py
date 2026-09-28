@@ -494,7 +494,7 @@ class ResourcePlanTest(unittest.TestCase):
             self.assertEqual(ram["fixed_state_bytes"], 0)
 
     def test_glm_dsa_state_is_charged_only_when_every_indexer_weight_exists(self):
-        config = json.loads((self.model / "config.json").read_text())
+        config = json.loads((self.model / "config.json").read_text(encoding="utf-8"))
         config.update({"index_head_dim": 16,
                        "indexer_types": ["full", "shared"]})
         (self.model / "config.json").write_text(json.dumps(config))

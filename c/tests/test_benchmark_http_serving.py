@@ -241,7 +241,7 @@ class BenchmarkTest(unittest.TestCase):
                     self.server.payloads.clear()
                     completed = subprocess.run(command, capture_output=True, text=True, timeout=10)
                     self.assertEqual(completed.returncode, expected_exit, completed.stderr)
-                    report = json.loads(output.read_text())
+                    report = json.loads(output.read_text(encoding="utf-8"))
                     warmup = report["warmup"]
                     self.assertEqual(warmup["summary"]["requests"], 3)
                     self.assertIsNone(warmup["summary"]["arrival_timing"])
@@ -278,7 +278,7 @@ class BenchmarkTest(unittest.TestCase):
                 self.server.status = status
                 completed = subprocess.run(command, capture_output=True, text=True, timeout=10)
                 self.assertEqual(completed.returncode, exit_code, completed.stderr)
-                report = json.loads(output.read_text())
+                report = json.loads(output.read_text(encoding="utf-8"))
                 self.assertEqual(report["summary"]["succeeded"], 1 - exit_code)
                 self.assertEqual(len(report["config"]["workload_sha256"]), 64)
                 self.assertNotIn("messages", report["config"])
@@ -305,7 +305,7 @@ class BenchmarkTest(unittest.TestCase):
             with patch.object(sys, "argv", argv + ["--request-rate", "1000"]), \
                  patch.object(sys, "stdout", io.StringIO()):
                 self.assertEqual(bench.main(), 0)
-            report = json.loads(output.read_text())
+            report = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(report["config"]["load_model"], "poisson")
             self.assertEqual(report["config"]["arrival_distribution"], "poisson")
             self.assertEqual(report["config"]["arrival_seed"], 42)
@@ -497,7 +497,7 @@ class ParsingTest(unittest.TestCase):
                  patch.object(bench.time, "perf_counter", side_effect=lambda: now[0]), \
                  patch.object(bench, "request_one", side_effect=request):
                 self.assertEqual(bench.main(), 0)
-            report = json.loads(output.read_text())
+            report = json.loads(output.read_text(encoding="utf-8"))
         self.assertEqual(calls, [0, 100, 100])
         self.assertEqual(report["warmup"]["summary"]["wall_seconds"], 100)
         self.assertEqual(report["summary"]["wall_seconds"], 2)

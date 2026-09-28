@@ -38,7 +38,7 @@ class PlacementCrossvalTest(unittest.TestCase):
             ranked = MODULE.rank_experts(categories, penalty=0)
             output = root / "ranked.stats"
             MODULE.write_ranked(output, ranked)
-            self.assertTrue(output.read_text().startswith("0 0 "))
+            self.assertTrue(output.read_text(encoding="utf-8").startswith("0 0 "))
 
     def test_rejects_empty_stats(self):
         with tempfile.TemporaryDirectory() as tmp:

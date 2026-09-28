@@ -143,7 +143,7 @@ class ToolCallingV4E2E(unittest.TestCase):
         out2 = self.post({"model": mid, "messages": msgs, "tools": TOOLS,
                           "temperature": 0, "max_tokens": 128})
         self.assertIn("25", out2["choices"][0]["message"]["content"] or "")
-        prompts = self.mock_log.read_text()
+        prompts = self.mock_log.read_text(encoding="utf-8")
         self.assertIn("## Tools", prompts)                       # DSML declaration
         self.assertIn("<\uff5cDSML\uff5ctool_calls>", prompts) # native block syntax
         self.assertIn("<tool_result>", prompts)                  # result merged into user turn

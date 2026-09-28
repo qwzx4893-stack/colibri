@@ -7,7 +7,7 @@ SRC = Path(__file__).resolve().parents[1] / "coli"
 class GLM53CapLaunchSourceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.s = SRC.read_text()
+        cls.s = SRC.read_text(encoding="utf-8")
 
     def test_glm53_one_shot_uses_cap_for_launch(self):
         self.assertIn('cap = cap_for_launch(a.cap, e, 0)', self.s)

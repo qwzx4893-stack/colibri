@@ -57,7 +57,7 @@ def main() -> int:
     if arguments.logit_tolerance is None:
         arguments.logit_tolerance = {32: 2e-5, 8: 3e-2, 4: 5e-1}.get(bits, 5e-1)
 
-    reference = json.loads((arguments.fixture / "ref.json").read_text())
+    reference = json.loads((arguments.fixture / "ref.json").read_text(encoding="utf-8"))
     prompt = ",".join(str(token) for token in reference["prompt"])
     grid_h, grid_w = reference["grid"]
     expected_forcing = reference["teacher_forcing"]

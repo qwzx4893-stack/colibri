@@ -1187,7 +1187,7 @@ def cmd_info(a):
         family=None
     def row(k,v): print(f"   {C.gray}{k:<10}{C.r} {v}")
     if os.path.exists(cfgp):
-        c=json.load(open(cfgp))
+        c=json.load(open(cfgp,encoding="utf-8"))
         # Multimodal wrappers such as Qwen3.8 keep the language architecture
         # below text_config.  The registry has already resolved that section;
         # using the root here produced a recognized family followed by four

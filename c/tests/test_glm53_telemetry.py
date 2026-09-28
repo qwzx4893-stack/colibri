@@ -2,8 +2,8 @@ import pathlib
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-GLM = (ROOT / "glm53.c").read_text()
-TRACE = (ROOT / "route_trace.h").read_text()
+GLM = (ROOT / "glm53.c").read_text(encoding="utf-8")
+TRACE = (ROOT / "route_trace.h").read_text(encoding="utf-8")
 
 
 class Glm53RoutingTelemetryTest(unittest.TestCase):

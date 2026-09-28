@@ -163,7 +163,7 @@ static void run_forked(void (*fn)(void), int *exit_code, char *errbuf, size_t er
 
 /* ---- globals the forked subtest bodies below read (set by the parent right before fork) ---- */
 static char g_dirA[512];
-static char g_jsonbuf[512];
+static char g_jsonbuf[512] __attribute__((unused));   /* only the fork-based subtests use it (not built on Windows) */
 
 /* ==================================================================================
  * st.h fmt-table realloc + fmt strdup guards: one shard, one tensor, one colibri.fmt

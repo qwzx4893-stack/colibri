@@ -20,7 +20,7 @@ class BaselineTest(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
         example = Path(__file__).resolve().parents[2] / 'docs/baselines/three-engine.example.json'
-        self.spec = json.loads(example.read_text())
+        self.spec = json.loads(example.read_text(encoding="utf-8"))
         self.spec.update(experiment='fixture', cache_policy='warm', reasoning_policy='off',
                          speculation_policy='off', quality_protocol='external fixture check')
         self.spec['hardware'] = dict.fromkeys(self.spec['hardware'], 'fixture host')
@@ -55,7 +55,7 @@ class BaselineTest(unittest.TestCase):
 
     def change_report(self, change):
         path = self.results / 'colibri-r1-c1.json'
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         change(data)
         path.write_text(json.dumps(data))
 
@@ -118,7 +118,7 @@ class BaselineTest(unittest.TestCase):
                      lambda d: d['requests'].pop()]
         self.collect_all()
         path = self.results / 'colibri-r1-c1.json'
-        original = path.read_text()
+        original = path.read_text(encoding="utf-8")
         for mutate in mutations:
             path.write_text(original)
             self.change_report(mutate)
@@ -147,7 +147,7 @@ class BaselineTest(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
             with self.assertRaisesRegex(ValueError, 'already'):
                 baseline.collect(self.spec, self.workload, self.sha, 'colibri', 1, self.results)
-        data = json.loads((self.results / 'colibri-r1-c1.json').read_text())
+        data = json.loads((self.results / 'colibri-r1-c1.json').read_text(encoding="utf-8"))
         self.assertEqual(data['status'], 'warmup_failed')
         self.assertEqual(data['requests'], [])
 
@@ -158,7 +158,7 @@ class BaselineTest(unittest.TestCase):
             baseline.collect(self.spec, self.workload, self.sha, 'colibri', 1, self.results)
         self.assertEqual(run.call_args.kwargs['key'], 'fixture-secret')
         for path in self.results.glob('*.json'):
-            self.assertNotIn('fixture-secret', path.read_text())
+            self.assertNotIn('fixture-secret', path.read_text(encoding="utf-8"))
 
     def test_cli_collects_real_http_and_compare_reports_missing_cells(self):
         fixture = http_fixture.BenchmarkTest()

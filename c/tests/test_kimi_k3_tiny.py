@@ -145,12 +145,12 @@ def main():
     args = parser.parse_args()
 
     fixture = Path(args.fixture)
-    reference = json.loads((fixture / "ref.json").read_text())
+    reference = json.loads((fixture / "ref.json").read_text(encoding="utf-8"))
     if reference.get("source") != "moonshot-vendor":
         raise AssertionError(
             "ref.json must come from the independent vendor implementation "
             f"(source={reference.get('source')!r})")
-    config = json.loads((fixture / "config.json").read_text())
+    config = json.loads((fixture / "config.json").read_text(encoding="utf-8"))
     if (fixture / "tokenizer.json").exists():
         raise AssertionError(
             "fixture must not ship tokenizer.json: raw-id stdout is the "

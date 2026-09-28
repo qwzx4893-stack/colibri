@@ -155,7 +155,7 @@ class ToolCallingV41E2E(unittest.TestCase):
         out2 = self.post({"model": mid, "messages": msgs, "tools": TOOLS,
                           "temperature": 0, "max_tokens": 128})
         self.assertIn("25", out2["choices"][0]["message"]["content"] or "")
-        prompts = self.mock_log.read_text()
+        prompts = self.mock_log.read_text(encoding="utf-8")
         self.assertIn("## Tools", prompts)                         # DSML declaration
         self.assertIn("<｜DSML｜ calls>", prompts)         # native block syntax
         self.assertNotIn("<｜DSML｜calls>", prompts)       # V4 spelling, without the space
@@ -212,10 +212,10 @@ class Dsv41VendorEncodingCases(unittest.TestCase):
 
     @staticmethod
     def _case(number):
-        payload = json.loads((HERE / f"fixtures/dsv41_encoding_case{number}.json").read_text())
+        payload = json.loads((HERE / f"fixtures/dsv41_encoding_case{number}.json").read_text(encoding="utf-8"))
         if isinstance(payload, list):
             payload = {"messages": payload}
-        vendor = (HERE / f"fixtures/dsv41_encoding_case{number}.txt").read_text()
+        vendor = (HERE / f"fixtures/dsv41_encoding_case{number}.txt").read_text(encoding="utf-8")
         return payload, vendor
 
     def _assert_case(self, number, reasoning_effort=None):

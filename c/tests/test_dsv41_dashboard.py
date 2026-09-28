@@ -70,7 +70,7 @@ class Dsv41DashboardTest(unittest.TestCase):
             cls.completion = json.load(response)
         cls.experts = get_json(f"http://127.0.0.1:{cls.port}/experts")
         cls.profile = get_json(f"http://127.0.0.1:{cls.port}/profile")
-        cls.config = json.loads((FIXTURE / "config.json").read_text())
+        cls.config = json.loads((FIXTURE / "config.json").read_text(encoding="utf-8"))
 
     @classmethod
     def tearDownClass(cls):

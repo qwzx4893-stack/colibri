@@ -72,7 +72,7 @@ class OlmoeDashboardHitsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.lines = one_turn()
-        cls.config = json.loads((FIXTURE / "config.json").read_text())
+        cls.config = json.loads((FIXTURE / "config.json").read_text(encoding="utf-8"))
 
     def line(self, kind):
         found = [l for l in self.lines if l.startswith(kind + " ")]

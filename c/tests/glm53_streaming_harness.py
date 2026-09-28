@@ -63,7 +63,7 @@ def main() -> int:
               f"  python3 tools/make_glm53_streaming_pair.py --fixture <mm> --output <dir>")
         return 2  # un salto non e' un successo
 
-    reference = json.loads((arguments.quantized / "ref.json").read_text())
+    reference = json.loads((arguments.quantized / "ref.json").read_text(encoding="utf-8"))
     grid_h, grid_w = reference.get("grid", (0, 0))
     image = arguments.quantized / "patches.f32"
     patches = {"ids": ",".join(str(t) for t in reference["prompt"]),

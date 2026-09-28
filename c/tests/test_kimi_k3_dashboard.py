@@ -63,7 +63,7 @@ def check(binary, model, stderr_path):
         finally:
             process.stdin.close()
             process.wait(timeout=60)
-    config = json.loads((model / "config.json").read_text())
+    config = json.loads((model / "config.json").read_text(encoding="utf-8"))
     text_config = config.get("text_config", config)
     sparse = text_config["num_hidden_layers"] - text_config.get("first_k_dense_replace", 0)
     experts = text_config["num_experts"] if "num_experts" in text_config else text_config["n_routed_experts"]

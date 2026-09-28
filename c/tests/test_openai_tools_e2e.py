@@ -172,7 +172,7 @@ class ToolCallingE2E(unittest.TestCase):
         self.assertEqual(choice["finish_reason"], "stop")
         self.assertFalse(choice["message"].get("tool_calls"))
         self.assertIn("25 degrees", choice["message"]["content"])
-        rendered = self.mock_log.read_text().split("\x00")[-2]
+        rendered = self.mock_log.read_text(encoding="utf-8").split("\x00")[-2]
         self.assertIn("<|observation|><tool_response>25 degrees, sunny</tool_response>",
                       rendered)
         self.assertIn("# Tools", rendered)

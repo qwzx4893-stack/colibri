@@ -8,8 +8,8 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-HDR = (ROOT / "backend_metal.h").read_text()
-SRC = (ROOT / "backend_metal.mm").read_text()
+HDR = (ROOT / "backend_metal.h").read_text(encoding="utf-8")
+SRC = (ROOT / "backend_metal.mm").read_text(encoding="utf-8")
 
 
 class Glm53MetalClampedSourceTests(unittest.TestCase):
