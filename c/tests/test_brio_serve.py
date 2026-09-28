@@ -102,8 +102,10 @@ def strip_volatile(frames):
             if not f.startswith(("STAT", "PROF", "DONE", "TIERS", "HWINFO", "EMAP", "HITS"))]
 
 
-@unittest.skipUnless((FIXTURE / "config.json").is_file(),
-                     "tiny olmoe fixture is absent (tools/make_olmoe_tiny.py)")
+@unittest.skipUnless((FIXTURE / "config.json").is_file() and (FIXTURE / "tokenizer.json").is_file(),
+                     "converted tiny olmoe fixture is absent (make_olmoe_tiny.py + convert_olmoe_merged.py "
+                     "+ make_edge_tiny_tokenizer.py; set OLMOE_TINY). The unconverted make_olmoe_tiny "
+                     "output has no tokenizer, and the engine exits before READY on it.")
 @unittest.skipUnless(ENGINE.is_file(), "olmoe engine is not built")
 class BrioServe(unittest.TestCase):
     def test_a_snapshot_scores_exactly_like_a_cold_recompute(self):

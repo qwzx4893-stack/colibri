@@ -243,7 +243,12 @@ static void bpe_piece(Tok *T, const unsigned char *p, int a, int b, int *out, in
     int nb=b-a;
     /* stringa byte-level (concatenazione di byte2str): <=2 byte per byte di input */
     char *s=malloc(2*nb+1); int sl=0;
-    for(int i=a;i<b;i++){ int bb=p[i]; memcpy(s+sl,T->byte2str[bb],T->byte2cp_len[bb]); sl+=T->byte2cp_len[bb]; }
+    if(!s){ fprintf(stderr,"tok: out of memory\n"); exit(1); }   /* no error channel here; never write through NULL */
+    for(int i=a;i<b;i++){
+        int bb=p[i], cl=T->byte2cp_len[bb];
+        if(cl<0||cl>(int)sizeof T->byte2str[0]||sl+cl>2*nb) break;   /* table invariant: 1..2 bytes; refuse to overrun s */
+        memcpy(s+sl,T->byte2str[bb],(size_t)cl); sl+=cl;
+    }
     s[sl]=0;
     /* ignore_merges: se l'intero pezzo e' un token, emettilo diretto */
     int whole=hm_get(&T->vocab,s,sl);
