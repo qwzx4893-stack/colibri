@@ -1,0 +1,52 @@
+﻿[
+    {
+        "rss_gb":  5.04,
+        "disk_read_mb_s":  745.3,
+        "cpu_total_pct":  20.3
+    },
+    {
+        "rss_gb":  5.04,
+        "disk_read_mb_s":  874.7,
+        "cpu_total_pct":  23.1
+    },
+    {
+        "rss_gb":  5.04,
+        "disk_read_mb_s":  685,
+        "cpu_total_pct":  35.6
+    },
+    {
+        "rss_gb":  5.04,
+        "disk_read_mb_s":  579.3,
+        "cpu_total_pct":  32.2
+    },
+    {
+        "rss_gb":  5.04,
+        "disk_read_mb_s":  494.3,
+        "cpu_total_pct":  36.1
+    },
+    {
+        "rss_gb":  5.04,
+        "disk_read_mb_s":  294.3,
+        "cpu_total_pct":  35.1
+    },
+    {
+        "rss_gb":  5.04,
+        "disk_read_mb_s":  360.2,
+        "cpu_total_pct":  25
+    },
+    {
+        "rss_gb":  5.04,
+        "disk_read_mb_s":  606.7,
+        "cpu_total_pct":  33.3
+    },
+    {
+        "rss_gb":  5.04,
+        "disk_read_mb_s":  288.6,
+        "cpu_total_pct":  37.8
+    },
+    {
+        "rss_gb":  5.04,
+        "disk_read_mb_s":  362.5,
+        "cpu_total_pct":  4.8
+    }
+]

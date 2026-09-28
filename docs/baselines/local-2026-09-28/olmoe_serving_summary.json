@@ -1,0 +1,36 @@
+{
+ "cold": {
+  "short_26tok": {
+   "ttft_s": 5.9,
+   "decode_tok_s": 4.3,
+   "wall_s": 20.8
+  },
+  "medium_188tok": {
+   "ttft_s": 22.14,
+   "decode_tok_s": 4.27,
+   "wall_s": 37.13
+  },
+  "long_790tok": {
+   "ttft_s": 90.91,
+   "decode_tok_s": 3.93,
+   "wall_s": 107.19
+  }
+ },
+ "warm": {
+  "short_26tok": {
+   "ttft_s": 4.64,
+   "decode_tok_s": 4.36,
+   "wall_s": 19.33
+  },
+  "medium_188tok": {
+   "ttft_s": 23.34,
+   "decode_tok_s": 4.35,
+   "wall_s": 38.05
+  },
+  "long_790tok": {
+   "ttft_s": 93.64,
+   "decode_tok_s": 4.01,
+   "wall_s": 109.61
+  }
+ }
+}

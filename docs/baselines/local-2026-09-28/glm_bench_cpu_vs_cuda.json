@@ -1,0 +1,127 @@
+{
+  "cpu_stream": {
+    "runs_tok_s": [
+      42.19,
+      40.86,
+      39.79
+    ],
+    "median_tok_s": 40.86,
+    "median_profile_s": {
+      "disk": 0.191,
+      "expert_matmul": 0.054,
+      "attention": 0.029,
+      "lm_head": 0.002,
+      "other": 0.02
+    },
+    "median_p0": {
+      "routed_cpu": 0.054,
+      "routed_cpu_gb_s": 4.69,
+      "routed_cpu_rows": 320.0,
+      "routed_gpu_critical": 0.0,
+      "router": 0.003,
+      "p2p": 0.0,
+      "p2p_hops": 0.0,
+      "orchestration": 0.018
+    }
+  },
+  "dense_cuda": {
+    "runs_tok_s": [
+      48.34,
+      47.14,
+      48.66
+    ],
+    "median_tok_s": 48.34,
+    "median_profile_s": {
+      "disk": 0.17099999999999999,
+      "expert_matmul": 0.054,
+      "attention": 0.023,
+      "lm_head": 0.001,
+      "other": 0.016
+    },
+    "median_p0": {
+      "routed_cpu": 0.054,
+      "routed_cpu_gb_s": 4.71,
+      "routed_cpu_rows": 320.0,
+      "routed_gpu_critical": 0.0,
+      "router": 0.003,
+      "p2p": 0.0,
+      "p2p_hops": 0.0,
+      "orchestration": 0.013
+    }
+  },
+  "cpu_pin": {
+    "runs_tok_s": [
+      79.48,
+      78.01,
+      76.41
+    ],
+    "median_tok_s": 78.01,
+    "median_profile_s": {
+      "disk": 0.0,
+      "expert_matmul": 0.052,
+      "attention": 0.028,
+      "lm_head": 0.002,
+      "other": 0.02
+    },
+    "median_p0": {
+      "routed_cpu": 0.052,
+      "routed_cpu_gb_s": 4.88,
+      "routed_cpu_rows": 320.0,
+      "routed_gpu_critical": 0.0,
+      "router": 0.003,
+      "p2p": 0.0,
+      "p2p_hops": 0.0,
+      "orchestration": 0.018
+    }
+  },
+  "cuda_pin": {
+    "runs_tok_s": [
+      124.07,
+      123.51,
+      133.88
+    ],
+    "median_tok_s": 124.07,
+    "median_profile_s": {
+      "disk": 0.0,
+      "expert_matmul": 0.012,
+      "attention": 0.029,
+      "lm_head": 0.002,
+      "other": 0.021
+    },
+    "median_p0": {
+      "routed_cpu": 0.0,
+      "routed_cpu_gb_s": 0.0,
+      "routed_cpu_rows": 0.0,
+      "routed_gpu_critical": 0.011,
+      "router": 0.003,
+      "p2p": 0.0,
+      "p2p_hops": 0.0,
+      "orchestration": 0.019
+    }
+  },
+  "cuda_pin_dense": {
+    "runs_tok_s": [
+      164.92,
+      167.69,
+      178.44
+    ],
+    "median_tok_s": 167.69,
+    "median_profile_s": {
+      "disk": 0.0,
+      "expert_matmul": 0.011,
+      "attention": 0.022,
+      "lm_head": 0.001,
+      "other": 0.013
+    },
+    "median_p0": {
+      "routed_cpu": 0.0,
+      "routed_cpu_gb_s": 0.0,
+      "routed_cpu_rows": 0.0,
+      "routed_gpu_critical": 0.01,
+      "router": 0.003,
+      "p2p": 0.0,
+      "p2p_hops": 0.0,
+      "orchestration": 0.011
+    }
+  }
+}

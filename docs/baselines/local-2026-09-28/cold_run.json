@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "config": {
+    "endpoint": "http://127.0.0.1:8123/v1/chat/completions",
+    "model": "olmoe",
+    "workload_sha256": "cc6f7b71078d7ca83194f795da360a34ee5bde9e04f331a3f27480ea43624616",
+    "workload_rows": 3,
+    "concurrency": 1,
+    "load_model": "closed_loop",
+    "arrival_distribution": null,
+    "arrival_seed": null,
+    "request_rate": null,
+    "warmup_requests": 0,
+    "repeats": 1,
+    "max_tokens": 64,
+    "temperature": 0.0,
+    "socket_timeout_seconds": 600.0,
+    "slo_first_output_seconds": null,
+    "slo_duration_seconds": null,
+    "stream": true,
+    "include_usage": true,
+    "n": 1
+  },
+  "status": "measured",
+  "warmup": null,
+  "summary": {
+    "requests": 3,
+    "succeeded": 3,
+    "failed": 0,
+    "failure_rate": 0.0,
+    "wall_seconds": 165.11940969999978,
+    "successful_requests_per_second": 0.018168669603716516,
+    "successful_requests_with_usage": 3,
+    "reported_successful_completion_tokens": 192,
+    "successful_completion_tokens_per_second": 1.162794854637857,
+    "successful_duration_seconds": {
+      "count": 3,
+      "mean": 55.03888433333335,
+      "p50": 37.12776579999991,
+      "p95": 107.19150369999988,
+      "p99": 107.19150369999988
+    },
+    "successful_first_output_seconds": {
+      "count": 3,
+      "mean": 39.652262766666354,
+      "p50": 22.14062119999926,
+      "p95": 90.91496730000017,
+      "p99": 90.91496730000017
+    },
+    "arrival_timing": null,
+    "latency_slo": null
+  },
+  "requests": [
+    {
+      "index": 0,
+      "start_seconds": 0.00235179999981483,
+      "success": true,
+      "http_status": 200,
+      "error": null,
+      "first_output_seconds": 5.901199799999631,
+      "completion_tokens": 64,
+      "finish_reason": "length",
+      "duration_seconds": 20.79738350000025
+    },
+    {
+      "index": 1,
+      "start_seconds": 20.799780800000008,
+      "success": true,
+      "http_status": 200,
+      "error": null,
+      "first_output_seconds": 22.14062119999926,
+      "completion_tokens": 64,
+      "finish_reason": "length",
+      "duration_seconds": 37.12776579999991
+    },
+    {
+      "index": 2,
+      "start_seconds": 57.92757509999956,
+      "success": true,
+      "http_status": 200,
+      "error": null,
+      "first_output_seconds": 90.91496730000017,
+      "completion_tokens": 64,
+      "finish_reason": "length",
+      "duration_seconds": 107.19150369999988
+    }
+  ]
+}
