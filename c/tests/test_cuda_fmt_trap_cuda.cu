@@ -264,13 +264,15 @@ static int a6_run_child(const char *self, int fmt) {
 }
 #else
 /* MSVC (nvcc's host compiler on Windows) has no fork/waitpid. system() returns
- * the child's exit code directly there. NOTE: `make cuda-test` is unreachable on
- * Windows (the Makefile errors out and directs you to `make CUDA_DLL=1
- * cuda-dll`), so this branch exists to keep the file COMPILING on that
- * toolchain, and has not been executed. */
+ * the child's exit code directly there, and runs it through cmd.exe, which does
+ * not accept the `./name.exe` spelling the Makefile passes as argv[0]: every probe
+ * "did not run" (child result 1) until the slashes are flipped. Executed on an
+ * RTX 4060 laptop GPU with nvcc + MSVC via `make cuda-test`. */
 static int a6_run_child(const char *self, int fmt) {
-    char cmd[1024];
-    snprintf(cmd, sizeof cmd, "\"%s\" %s %d", self, A6_PROBE_FLAG, fmt);
+    char path[512], cmd[1024];
+    snprintf(path, sizeof path, "%s", self);
+    for (char *p = path; *p; p++) if (*p == '/') *p = '\\';
+    snprintf(cmd, sizeof cmd, "\"%s\" %s %d", path, A6_PROBE_FLAG, fmt);
     fflush(stdout);
     int rc = system(cmd);
     return rc < 0 ? -1000 : rc;

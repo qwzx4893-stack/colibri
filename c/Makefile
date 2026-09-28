@@ -798,7 +798,7 @@ endif
 endif
 .build-config: ;
 
-colibri$(EXE): colibri.c moe_router.h sse41_kernels.h exact_dot.h oracle.h pin_pool.h cli_args.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h omp_tune.h kv_fp8.h kv_tq.h abl.h backend_cuda.h backend_metal.h backend_vulkan.h decode_batch.h edge_adapters.h edge_runtime.h edge_tok_internal.h schema_gbnf.h segment_adapter_internal.h segment_adapters.h segment_runtime.h tier.h $(CUDA_OBJ) $(METAL_OBJ) $(VK_OBJ) $(VK_SPV) .build-config
+colibri$(EXE): colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h sse41_kernels.h exact_dot.h oracle.h pin_pool.h cli_args.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h omp_tune.h kv_fp8.h kv_tq.h abl.h backend_cuda.h backend_metal.h backend_vulkan.h decode_batch.h edge_adapters.h edge_runtime.h edge_tok_internal.h schema_gbnf.h segment_adapter_internal.h segment_adapters.h segment_runtime.h tier.h $(CUDA_OBJ) $(METAL_OBJ) $(VK_OBJ) $(VK_SPV) .build-config
 	$(CC) $(CFLAGS) colibri.c $(CUDA_OBJ) $(METAL_OBJ) $(VK_OBJ) -o colibri$(EXE) $(LDFLAGS)
 
 # Vulkan backend object (plain C + vulkan headers) and its SPIR-V shaders.
@@ -1319,7 +1319,7 @@ iobench$(EXE): iobench.c compat.h
 tests/test_serve_sentinel$(EXE): tests/test_serve_sentinel.c compat.h serve_codec.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-tests/test_cluster_protocol$(EXE): tests/test_cluster_protocol.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_cluster_protocol$(EXE): tests/test_cluster_protocol.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 tests/test_ue8m0$(EXE): tests/test_ue8m0.c st.h json.h compat.h
@@ -1462,12 +1462,12 @@ tests/test_grammar$(EXE): tests/test_grammar.c grammar.h
 # equivalence under the shipping flags is covered by the differential dump
 # (old vs new rope_interleave are byte-identical); this test guards the
 # source-level formula equivalence and must not depend on contraction luck.
-tests/test_rope_invfreq$(EXE): tests/test_rope_invfreq.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_rope_invfreq$(EXE): tests/test_rope_invfreq.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) -ffp-contract=off $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 # schema->GBNF compile cache (#7): grammar_reset must equal a fresh setup, and
 # the GrDraft.src ownership must not leak/double-free. Includes colibri.c.
-tests/test_grammar_cache$(EXE): tests/test_grammar_cache.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_grammar_cache$(EXE): tests/test_grammar_cache.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 # Standalone: drives a faithful miniature of moe()'s routing+accumulate and links
@@ -1483,7 +1483,7 @@ tests/test_degrade_zero$(EXE): tests/test_degrade_zero.c
 tests/test_schema_gbnf$(EXE): tests/test_schema_gbnf.c schema_gbnf.h grammar.h json.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-tests/test_spec_decode_state$(EXE): tests/test_spec_decode_state.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_spec_decode_state$(EXE): tests/test_spec_decode_state.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 tests/test_decode_batch$(EXE): tests/test_decode_batch.c decode_batch.h
@@ -1542,43 +1542,43 @@ tests/test_olmoe_cache_index$(EXE): tests/test_olmoe_cache_index.c sse41_kernels
 tests/test_qwen36_cache_index$(EXE): tests/test_qwen36_cache_index.c gsgemv.h qgemv.h sse41_kernels.h qwen36.c moe_router.h expert_ffn.h st.h json.h compat.h sample.h tok.h tok_unicode.h tok_unicode_o200k.h omp_tune.h route_trace.h serve_codec.h qwen36_tier.h $(QWEN36_TIER_SRC) $(CUDA_OBJ)
 	$(CC) $(QWEN36_CFLAGS) $< $(QWEN36_TIER_SRC) $(CUDA_OBJ) -o $@ $(QWEN36_LDFLAGS)
 
-tests/test_idot$(EXE): tests/test_idot.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_idot$(EXE): tests/test_idot.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_i4_grouped$(EXE): tests/test_i4_grouped.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_i4_grouped$(EXE): tests/test_i4_grouped.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) -DCOLI_HAVE_GROUPED_PAIR $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 # Force the grouped-int4 oracle onto the SSE4.1 tier even on an AVX2 host.
-tests/test_i4_grouped_sse41$(EXE): tests/test_i4_grouped.c colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h idot.h sse41_kernels.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_i4_grouped_sse41$(EXE): tests/test_i4_grouped.c colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h idot.h sse41_kernels.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) -O3 -DCOLI_HAVE_GROUPED_PAIR -DCOLI_I4_GROUPED_SCALAR_EXACT -msse4.1 -mno-avx2 -mno-fma $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_i4_grouped_sse41_o1$(EXE): tests/test_i4_grouped.c colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h idot.h sse41_kernels.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_i4_grouped_sse41_o1$(EXE): tests/test_i4_grouped.c colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h idot.h sse41_kernels.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) -O1 -DCOLI_HAVE_GROUPED_PAIR -DCOLI_I4_GROUPED_SCALAR_EXACT -msse4.1 -mno-avx2 -mno-fma $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_i4_grouped_sse41_no_contract$(EXE): tests/test_i4_grouped.c colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h idot.h sse41_kernels.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_i4_grouped_sse41_no_contract$(EXE): tests/test_i4_grouped.c colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h idot.h sse41_kernels.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) -O3 -ffp-contract=off -DCOLI_HAVE_GROUPED_PAIR -DCOLI_I4_GROUPED_SCALAR_EXACT -msse4.1 -mno-avx2 -mno-fma $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_stops$(EXE): tests/test_stops.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_stops$(EXE): tests/test_stops.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_cfg_topk$(EXE): tests/test_cfg_topk.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_cfg_topk$(EXE): tests/test_cfg_topk.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_topp$(EXE): tests/test_topp.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_topp$(EXE): tests/test_topp.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 # bench_topp is a microbenchmark (old qsort vs new heap partial-select, #335), NOT a test
 # gate -- intentionally absent from TEST_BINS. Build on demand: make tests/bench_topp
-tests/bench_topp$(EXE): tests/bench_topp.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
+tests/bench_topp$(EXE): tests/bench_topp.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-tests/test_sample_nan$(EXE): tests/test_sample_nan.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_sample_nan$(EXE): tests/test_sample_nan.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_temp_env$(EXE): tests/test_temp_env.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_temp_env$(EXE): tests/test_temp_env.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_kv_alloc$(EXE): tests/test_kv_alloc.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h kv_fp8.h kv_tq.h $(VK_OBJ)
+tests/test_kv_alloc$(EXE): tests/test_kv_alloc.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h kv_fp8.h kv_tq.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 tests/test_kv_fp8$(EXE): tests/test_kv_fp8.c kv_fp8.h decode_batch.h
@@ -1587,7 +1587,7 @@ tests/test_kv_fp8$(EXE): tests/test_kv_fp8.c kv_fp8.h decode_batch.h
 tests/test_kv_tq$(EXE): tests/test_kv_tq.c kv_tq.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-tests/test_kv_disk$(EXE): tests/test_kv_disk.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h kv_fp8.h kv_tq.h $(VK_OBJ)
+tests/test_kv_disk$(EXE): tests/test_kv_disk.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h kv_fp8.h kv_tq.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 # fmt=6 kernel oracle: needs the generated grid table, and its fixture comes from
@@ -1622,10 +1622,10 @@ fuzz-rans: tests/fuzz_rans.c rans.h
 	  tests/fuzz_rans.c -o tests/fuzz_rans -lm
 	./tests/fuzz_rans
 
-tests/test_int3$(EXE): tests/test_int3.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_int3$(EXE): tests/test_int3.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_int3_load$(EXE): tests/test_int3_load.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_int3_load$(EXE): tests/test_int3_load.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 tests/test_fp8_passthrough$(EXE): tests/test_fp8_passthrough.c sse41_kernels.h quant.h fp8_format.h idot.h
@@ -1644,16 +1644,19 @@ tests/test_cuda_fmt_guard$(EXE): tests/test_cuda_fmt_guard.c backend_cuda.h
 tests/test_cuda_lut_gate$(EXE): tests/test_cuda_lut_gate.c backend_cuda.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-tests/test_fp8_load$(EXE): tests/test_fp8_load.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
+tests/test_fp8_load$(EXE): tests/test_fp8_load.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_qt_addrow$(EXE): tests/test_qt_addrow.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
+tests/test_qt_addrow$(EXE): tests/test_qt_addrow.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_logit_nan$(EXE): tests/test_logit_nan.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h $(VK_OBJ)
+tests/test_logit_nan$(EXE): tests/test_logit_nan.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_router_nan$(EXE): tests/test_router_nan.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h $(VK_OBJ)
+tests/test_router_nan$(EXE): tests/test_router_nan.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h $(VK_OBJ)
+	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
+
+tests/test_expert_host_present$(EXE): tests/test_expert_host_present.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 tests/test_i4_acc512$(EXE): tests/test_i4_acc512.c
@@ -1703,7 +1706,7 @@ SEGMENT_RUNTIME_LIB = $(SEGMENT_BUILD_DIR)/libcolibri_segment_edge.a
 $(SEGMENT_BUILD_DIR):
 	mkdir -p $@
 
-$(SEGMENT_BUILD_DIR)/glm.o: colibri.c moe_router.h sse41_kernels.h oracle.h segment_runtime.h edge_runtime.h \
+$(SEGMENT_BUILD_DIR)/glm.o: colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h sse41_kernels.h oracle.h segment_runtime.h edge_runtime.h \
 		segment_adapters.h edge_adapters.h segment_adapter_internal.h \
 		edge_adapter_internal.h edge_tok_internal.h st.h | $(SEGMENT_BUILD_DIR)
 	$(CC) $(SEGMENT_CPU_CFLAGS) -DCOLIBRI_NO_MAIN -c colibri.c -o $@
@@ -2053,15 +2056,15 @@ tests/test_exact_dot$(EXE): tests/test_exact_dot.c exact_dot.h
 tests/test_798_guards$(EXE): tests/test_798_guards.c st.h json.h compat.h route_trace.h moe_router.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-tests/test_dsa_select$(EXE): tests/test_dsa_select.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_dsa_select$(EXE): tests/test_dsa_select.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_corpus_draft$(EXE): tests/test_corpus_draft.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_corpus_draft$(EXE): tests/test_corpus_draft.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_cap_precedence$(EXE): tests/test_cap_precedence.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
+tests/test_cap_precedence$(EXE): tests/test_cap_precedence.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
-tests/test_mirror_stripe_split$(EXE): tests/test_mirror_stripe_split.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
+tests/test_mirror_stripe_split$(EXE): tests/test_mirror_stripe_split.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 tests/test_v4_hybrid_policy$(EXE): tests/test_v4_hybrid_policy.c deepseek_v4_hybrid.h hybrid_split.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
@@ -2072,29 +2075,29 @@ tests/test_k3_fill_budget$(EXE): tests/test_k3_fill_budget.c hybrid_split.h
 tests/test_v4_bank_pair$(EXE): tests/test_v4_bank_pair.c deepseek_v4_bank_pair.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-tests/test_ram_clamp$(EXE): tests/test_ram_clamp.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
+tests/test_ram_clamp$(EXE): tests/test_ram_clamp.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_cap_mixed_width$(EXE): tests/test_cap_mixed_width.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_cap_mixed_width$(EXE): tests/test_cap_mixed_width.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_eslot_inflight$(EXE): tests/test_eslot_inflight.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_eslot_inflight$(EXE): tests/test_eslot_inflight.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_glm_cache_index$(EXE): tests/test_glm_cache_index.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_glm_cache_index$(EXE): tests/test_glm_cache_index.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_ssd_probe$(EXE): tests/test_ssd_probe.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
+tests/test_ssd_probe$(EXE): tests/test_ssd_probe.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 # bench_dsa_select is a microbenchmark (old qsort vs new quickselect partial-select, #356),
 # NOT a test gate -- intentionally absent from TEST_BINS. Build on demand: make tests/bench_dsa_select
-tests/bench_dsa_select$(EXE): tests/bench_dsa_select.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
+tests/bench_dsa_select$(EXE): tests/bench_dsa_select.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 # bench_router_select is a microbenchmark (duplicate-prefix scan vs marked-score scan),
 # not a test gate. Build on demand: make tests/bench_router_select.
-tests/bench_router_select$(EXE): tests/bench_router_select.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
+tests/bench_router_select$(EXE): tests/bench_router_select.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 # bench_indexer_allocations: microbenchmark (DeepSeek V4 indexer malloc vs persistent arena scratch), NOT a test gate.
@@ -2104,34 +2107,34 @@ tests/bench_indexer_allocations$(EXE): tests/bench_indexer_allocations.c
 
 # bench_idot: microbenchmark (single-acc vs independent-acc AVX-VNNI idot), NOT a test gate.
 # Build on demand on an AVX-VNNI CPU: make tests/bench_idot ARCH=native
-tests/bench_idot$(EXE): tests/bench_idot.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
+tests/bench_idot$(EXE): tests/bench_idot.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 # bench_i4p_gidot: microbenchmark (per-row vs multi-row/AMX K1b grouped planar IDOT), NOT a test gate.
 # Build on demand: make tests/bench_i4p_gidot ARCH=native
-tests/bench_i4p_gidot$(EXE): tests/bench_i4p_gidot.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
+tests/bench_i4p_gidot$(EXE): tests/bench_i4p_gidot.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 # bench_gemv_stream: microbenchmark (decode-regime GEMV bandwidth vs the read ceiling;
 # frozen-baseline + deinterleaved-x candidate A/B), NOT a test gate.
 # Build on demand: make tests/bench_gemv_stream ARCH=native
-tests/bench_gemv_stream$(EXE): tests/bench_gemv_stream.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
+tests/bench_gemv_stream$(EXE): tests/bench_gemv_stream.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
 # bench_mla_simd: microbenchmark (scalar vs AVX2/NEON MLA-absorb reductions, #442),
 # NOT a test gate. Build on demand: make tests/bench_mla_simd
-tests/bench_mla_simd$(EXE): tests/bench_mla_simd.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
+tests/bench_mla_simd$(EXE): tests/bench_mla_simd.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-tests/test_uring$(EXE): tests/test_uring.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
+tests/test_uring$(EXE): tests/test_uring.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h route_trace.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_pipe_block$(EXE): tests/test_pipe_block.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h $(VK_OBJ)
+tests/test_pipe_block$(EXE): tests/test_pipe_block.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
-tests/test_pilot_ring$(EXE): tests/test_pilot_ring.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
+tests/test_pilot_ring$(EXE): tests/test_pilot_ring.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
-tests/test_moe_gs_guard$(EXE): tests/test_moe_gs_guard.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
+tests/test_moe_gs_guard$(EXE): tests/test_moe_gs_guard.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 tests/test_omp_tune$(EXE): tests/test_omp_tune.c omp_tune.h compat.h
@@ -2140,7 +2143,7 @@ tests/test_omp_tune$(EXE): tests/test_omp_tune.c omp_tune.h compat.h
 tests/test_compat_env$(EXE): tests/test_compat_env.c compat.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-tests/test_kvb_notice$(EXE): tests/test_kvb_notice.c sse41_kernels.h colibri.c moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
+tests/test_kvb_notice$(EXE): tests/test_kvb_notice.c sse41_kernels.h colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h oracle.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h idot.h sample.h kv_persist.h telemetry.h $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) -o $@ $(LDFLAGS)
 
 # Standalone: proves the group-scaled int8 GEMV keeps every row's float
@@ -2183,7 +2186,7 @@ tests/test_olmoe_dot_i8_16_sse41$(EXE): tests/test_olmoe_dot_i8_16.c olmoe.c moe
 # function only exists under -DCOLI_CUDA, so on a default (CPU) build the binary is a
 # loud SKIP; built with CUDA=1 it links backend_cuda.o ($(CUDA_OBJ)) and exercises the
 # real guard -- no GPU needed, every probed path returns before any device context.
-tests/test_shard_kvb_refuse$(EXE): tests/test_shard_kvb_refuse.c colibri.c moe_router.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h sample.h kv_persist.h telemetry.h $(CUDA_OBJ) $(VK_OBJ)
+tests/test_shard_kvb_refuse$(EXE): tests/test_shard_kvb_refuse.c colibri.c colibri_adapters.h ssd_probe.h colibri_uring_load.h colibri_cluster.h moe_router.h st.h uring.h json.h tok.h tok_unicode.h compat.h grammar.h tier.h quant.h fp8_format.h sample.h kv_persist.h telemetry.h $(CUDA_OBJ) $(VK_OBJ)
 	$(CC) $(CFLAGS) $< $(VK_OBJ) $(CUDA_OBJ) -o $@ $(LDFLAGS)
 
 # The e8x4g64 container loader harness. It takes a minted directory on argv and
