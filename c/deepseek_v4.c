@@ -1669,6 +1669,8 @@ static float softplusf_stable(float value) {
     return fmaxf(value, 0.0f) + log1pf(expf(-fabsf(value)));
 }
 
+#include "moe_router.h"
+
 int coli_v4_route(float *weights, int *indices, const float *hidden,
                   const float *gate, const float *bias,
                   const int *forced_indices, int experts, int dimension,
@@ -1678,14 +1680,11 @@ int coli_v4_route(float *weights, int *indices, const float *hidden,
         return -1;
     float scores_buf[COLI_V4_ROUTE_STACK_EXPERTS];
     float selection_buf[COLI_V4_ROUTE_STACK_EXPERTS];
-    unsigned char selected_buf[COLI_V4_ROUTE_STACK_EXPERTS];
     int on_stack = experts <= COLI_V4_ROUTE_STACK_EXPERTS;
     float *scores = on_stack ? scores_buf : malloc((size_t)experts * sizeof(*scores));
     float *selection = on_stack ? selection_buf : malloc((size_t)experts * sizeof(*selection));
-    unsigned char *selected = on_stack ? selected_buf : calloc((size_t)experts, 1);
-    if (on_stack) memset(selected, 0, (size_t)experts);
-    if (!scores || !selection || !selected) {
-        if (!on_stack) { free(scores); free(selection); free(selected); }
+    if (!scores || !selection) {
+        if (!on_stack) { free(scores); free(selection); }
         return -1;
     }
     for (int expert = 0; expert < experts; expert++) {
@@ -1698,33 +1697,27 @@ int coli_v4_route(float *weights, int *indices, const float *hidden,
     if (forced_indices) {
         for (int rank = 0; rank < topk; rank++) {
             if (forced_indices[rank] < 0 || forced_indices[rank] >= experts) {
-                if (!on_stack) { free(selected); free(selection); free(scores); }
+                if (!on_stack) { free(selection); free(scores); }
                 return -1;
             }
             indices[rank] = forced_indices[rank];
         }
-    } else {
-        for (int rank = 0; rank < topk; rank++) {
-            int best = -1;
-            for (int expert = 0; expert < experts; expert++) {
-                if (!selected[expert] &&
-                    (best < 0 || selection[expert] > selection[best]))
-                    best = expert;
-            }
-            indices[rank] = best;
-            selected[best] = 1;
-        }
+    } else if (coli_router_topk(selection, NULL, NULL, experts, topk, indices, NULL, -1, 0) < topk) {
+        /* Shared ranking (moe_router.h). This route fails loud on non-finite scores rather
+         * than degrading: a poisoned router is an error here, never a silent wrong expert. */
+        if (!on_stack) { free(selection); free(scores); }
+        return -1;
     }
     float total = 0.0f;
     for (int rank = 0; rank < topk; rank++)
         total += scores[indices[rank]];
     if (!(total > 0.0f)) {
-        if (!on_stack) { free(selected); free(selection); free(scores); }
+        if (!on_stack) { free(selection); free(scores); }
         return -1;
     }
     for (int rank = 0; rank < topk; rank++)
         weights[rank] = scores[indices[rank]] / total * route_scale;
-    if (!on_stack) { free(selected); free(selection); free(scores); }
+    if (!on_stack) { free(selection); free(scores); }
     return 0;
 }
 
@@ -9392,6 +9385,8 @@ static float route_softplus(float value) {
     return fmaxf(value, 0.0f) + log1pf(expf(-fabsf(value)));
 }
 
+#include "moe_router.h"
+
 int coli_v4_route_bf16(float *weights, int *indices, const float *hidden,
                        const uint16_t *gate, const float *bias,
                        const int *forced_indices, int experts, int dimension,
@@ -9400,14 +9395,11 @@ int coli_v4_route_bf16(float *weights, int *indices, const float *hidden,
         dimension < 1 || topk < 1 || topk > experts) return -1;
     float scores_buf[COLI_V4_ROUTE_STACK_EXPERTS];
     float selection_buf[COLI_V4_ROUTE_STACK_EXPERTS];
-    unsigned char selected_buf[COLI_V4_ROUTE_STACK_EXPERTS];
     int on_stack = experts <= COLI_V4_ROUTE_STACK_EXPERTS;
     float *scores = on_stack ? scores_buf : malloc((size_t)experts * sizeof(*scores));
     float *selection = on_stack ? selection_buf : malloc((size_t)experts * sizeof(*selection));
-    unsigned char *selected = on_stack ? selected_buf : calloc((size_t)experts, 1);
-    if (on_stack) memset(selected, 0, (size_t)experts);
-    if (!scores || !selection || !selected) {
-        if (!on_stack) { free(selected); free(selection); free(scores); }
+    if (!scores || !selection) {
+        if (!on_stack) { free(selection); free(scores); }
         return -1;
     }
     for (int expert = 0; expert < experts; expert++) {
@@ -9421,32 +9413,25 @@ int coli_v4_route_bf16(float *weights, int *indices, const float *hidden,
     if (forced_indices) {
         for (int rank = 0; rank < topk; rank++) {
             if (forced_indices[rank] < 0 || forced_indices[rank] >= experts) {
-                if (!on_stack) { free(selected); free(selection); free(scores); }
+                if (!on_stack) { free(selection); free(scores); }
                 return -1;
             }
             indices[rank] = forced_indices[rank];
         }
-    } else {
-        for (int rank = 0; rank < topk; rank++) {
-            int best = -1;
-            for (int expert = 0; expert < experts; expert++)
-                if (!selected[expert] &&
-                    (best < 0 || selection[expert] > selection[best]))
-                    best = expert;
-            indices[rank] = best;
-            selected[best] = 1;
-        }
+    } else if (coli_router_topk(selection, NULL, NULL, experts, topk, indices, NULL, -1, 0) < topk) {
+        if (!on_stack) { free(selection); free(scores); }   /* non-finite scores: fail loud, as above */
+        return -1;
     }
     float total = 0.0f;
     for (int rank = 0; rank < topk; rank++)
         total += scores[indices[rank]];
     if (!(total > 0.0f)) {
-        if (!on_stack) { free(selected); free(selection); free(scores); }
+        if (!on_stack) { free(selection); free(scores); }
         return -1;
     }
     for (int rank = 0; rank < topk; rank++)
         weights[rank] = scores[indices[rank]] / total * route_scale;
-    if (!on_stack) { free(selected); free(selection); free(scores); }
+    if (!on_stack) { free(selection); free(scores); }
     return 0;
 }
 #endif /* COLI_V4_UNIT_ROUTE_BF16 */

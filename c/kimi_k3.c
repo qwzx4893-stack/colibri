@@ -113,6 +113,7 @@
 #endif
 #include "omp_tune.h"
 #include "route_trace.h"
+#include "moe_router.h"
 #include "kv_prefix.h"
 #include "pin_pool.h"   /* coli_pin_slots_wanted: quanti scatti tenere */
 #include "hybrid_split.h"                    /* KV prefix reuse (shared) */
@@ -1970,18 +1971,9 @@ static void moe_forward(Model *m, Layer *l, int li, const float *x, int C, float
         float *st=sco+(int64_t)t*E;
         for(int e=0;e<E;e++) st[e]=sigmoidf_(st[e]);
         int *idx=idxs+(int64_t)t*K; float *wsel=wsels+(int64_t)t*K;
-        for(int kk=0;kk<K;kk++){
-            int best=-1; float bv=-1e30f;
-            for(int e=0;e<E;e++){
-                int taken=0; for(int j=0;j<kk;j++) if(idx[j]==e){taken=1;break;}
-                float sv=st[e]+o->rbias[e];
-                if(!taken&&sv>bv){ bv=sv; best=e; }
-            }
-            /* SEC: all-NaN scores leave best at -1, and st[-1] is read on the
-             * very next expression. See rt_router_pick in route_trace.h. */
-            best = rt_router_pick(best, kk, E, li);
-            idx[kk]=best; wsel[kk]=st[best];          /* weight = RAW sigmoid score */
-        }
+        /* ranking by score+bias is shared (moe_router.h); the weight stays the RAW sigmoid score */
+        coli_router_topk(st,o->rbias,NULL,E,K,idx,NULL,li,1);
+        for(int kk=0;kk<K;kk++) wsel[kk]=st[idx[kk]];
         { float sm=0; for(int kk=0;kk<K;kk++) sm+=wsel[kk];
           for(int kk=0;kk<K;kk++) wsel[kk]/=(sm+1e-20f); }
         int Kt=K;

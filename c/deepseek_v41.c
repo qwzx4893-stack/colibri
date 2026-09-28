@@ -70,6 +70,7 @@
 #include <immintrin.h>
 #endif
 #include "hyper_connections.h"
+#include "moe_router.h"
 #include "tok.h"
 #include "serve_codec.h"
 #include "serve_poll.h"
@@ -2185,17 +2186,10 @@ static void moe_gate(Model *m, Layer *l, int E, int topk, const float *x,
         float softplus = value > 20.0f ? value : logf(1.0f + expf(value));
         scores[e] = sqrtf(softplus);
     }
-    for (int k = 0; k < topk; k++) {
-        int best = -1;
-        for (int e = 0; e < E; e++) {
-            int taken = 0;
-            for (int u = 0; u < k; u++) if (chosen[u] == e) { taken = 1; break; }
-            if (taken) continue;
-            if (best < 0 || scores[e] + l->gate_bias.w[e] > scores[best] + l->gate_bias.w[best]) best = e;
-        }
-        chosen[k] = best;
-        weights[k] = scores[best];
-    }
+    /* Ranking by score+bias is shared (moe_router.h); the weight is the unbiased score.
+     * The layer index is not known here, so a non-finite-router warning says -1. */
+    coli_router_topk(scores, l->gate_bias.w, NULL, E, topk, chosen, NULL, -1, 1);
+    for (int k = 0; k < topk; k++) weights[k] = scores[chosen[k]];
     if (c->norm_topk_prob && topk > 1) {
         float total = 0.0f;
         for (int k = 0; k < topk; k++) total += weights[k];

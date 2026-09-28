@@ -73,6 +73,7 @@
 #include "decode_batch.h"
 #include "pin_pool.h"   /* piu scatti annidati dello stato */
 #include "route_trace.h"                           /* ROUTE_TRACE + .coli_usage, engine-agnostic (#700) */
+#include "moe_router.h"
 #include "kv_fp8.h"                               /* KV8=1: cache latente in fp8 e4m3 + scala per-riga */
 #include "kv_tq.h"                                /* KV_TQ=3|4: cache latente PolarQuant (rot+polare) */
 #ifdef _OPENMP
@@ -3719,7 +3720,7 @@ static int g_pipe=0;      /* PIPE=1: async expert-load pipeline. Default ON for 
                            * Keeps expert pread off the forward-pass thread so loads overlap
                            * the matmul. PIPE=0 opts back into the blocking serial path. */
 static int g_pipe_nw=8;   /* PIPE_WORKERS=n: I/O worker threads (disk-parallel reads) */
-static int g_uring=0;     /* URING=1: Linux io_uring load/completion backend; implies PIPE */
+static int g_uring __attribute__((unused))=0; /* URING=1: Linux io_uring load/completion backend; implies PIPE. Unused where those paths compile out. */
 static int g_pipe_block=0;/* COLI_PIPE_BLOCK=1: pipe_wait blocca su una condvar invece dello
                            * spin sched_yield (default OFF = spin byte-identico). EN: a yield
                            * storm on the main thread fights the OpenMP team for cycles during
@@ -5357,34 +5358,14 @@ static int expert_is_resident(Model *m, int layer, int eid){
     return pin_indexed(m,layer,eid)!=NULL || ecache_indexed(m,layer,eid,0)!=NULL;
 }
 
-/* I loop di selezione top-K partono da best=-1 e lo usano come indice appena il
- * giro finisce. Se OGNI punteggio candidato e' non finito nessun confronto riesce
- * (NaN>bv e' falso) e best resta -1: logit[-1] e' una lettura fuori range, e
- * idx[]=-1 si propaga a eusage/eheat/elast (tre scritture heap a indice -1) e al
- * VLA seen[] (underflow di stack). Non e' teorico: c/tests/test_logit_nan.c
- * documenta NaN/Inf nei logit da un tile expert corrotto o da un overflow fp al
- * confine di eviction, e ha indurito solo il lato sampling — il router e' a monte.
- * Qui degradiamo a una scelta deterministica e avvisiamo una volta sola. */
-static int router_best_or_fallback(int best, int kk, int E, int layer){
-    if(best>=0) return best;
-    static int warned;
-    if(!warned){ warned=1;
-        fprintf(stderr,"[router] logits non finiti al layer %d: selezione degradata\n",layer); }
-    return kk<E ? kk : 0;
-}
-
-/* Select distinct router choices in-place. Marking a selected score removes the
- * O(K) prefix scan from every pick while preserving the existing fallback for
- * non-finite logits. `choice` is rebuilt for each routed row, so mutating it is
- * local to this selection pass. */
-static void router_select_topk(float *choice, int E, int K, int *idx, int layer){
-    for(int kk=0;kk<K;kk++){
-        int best=-1; float bv=-1e30f;
-        for(int e=0;e<E;e++) if(choice[e]>bv){ bv=choice[e]; best=e; }
-        best=router_best_or_fallback(best,kk,E,layer);
-        idx[kk]=best;
-        choice[best]=-1e30f;
-    }
+/* Hard top-K selection for moe(): every slot is a valid expert id even when the
+ * router logits are not finite (idx[]=-1 would reach eusage/eheat/elast and the
+ * seen[] VLA as heap/stack writes at index -1). See moe_router.h. */
+static void router_select_topk(const float *choice, int E, int K, int *idx, int layer){
+    /* Ranking and the non-finite policy live in moe_router.h, shared by every
+     * MoE engine (this loop was the reference copy the others were fixed from).
+     * `choice` is the bias-augmented score and is left untouched. */
+    coli_router_topk(choice,NULL,NULL,E,K,idx,NULL,layer,1);
 }
 
 #ifdef COLI_METAL
@@ -6688,10 +6669,7 @@ static void la_predict(Model *m, int target, const float *h, int kind){
         matmul(ch, nrm, l->router, 1, D, E);
         for(int e=0;e<E;e++) ch[e] = sigmoidf(ch[e]) + l->router_bias[e];
         int *pred = la_pred[2][target];
-        for(int kk=0;kk<K;kk++){ int best=-1; float bv=-1e30f;
-            for(int e=0;e<E;e++){ int tk=0; for(int j=0;j<kk;j++) if(pred[j]==e){tk=1;break;}
-                if(!tk && ch[e]>bv){bv=ch[e];best=e;} }
-            pred[kk]=best; }
+        coli_router_topk(ch,NULL,NULL,E,K,pred,NULL,target,0);   /* a prediction: -1 = none, never a fallback */
         la_val[2][target]=1;
         free(nrm); free(ch);
         return;
@@ -6702,10 +6680,7 @@ static void la_predict(Model *m, int target, const float *h, int kind){
     matmul(ch,nrm,l->router,1,D,E);
     for(int e=0;e<E;e++) ch[e]=sigmoidf(ch[e])+l->router_bias[e];
     int *pred=la_pred[kind][target];
-    for(int kk=0;kk<K;kk++){ int best=-1; float bv=-1e30f;
-        for(int e=0;e<E;e++){ int tk=0; for(int j=0;j<kk;j++) if(pred[j]==e){tk=1;break;}
-            if(!tk && ch[e]>bv){bv=ch[e];best=e;} }
-        pred[kk]=best; }
+    coli_router_topk(ch,NULL,NULL,E,K,pred,NULL,target,0);
     la_val[kind][target]=1;
     free(nrm); free(ch);
 }

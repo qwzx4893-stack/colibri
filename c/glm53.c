@@ -91,6 +91,7 @@ static int g_vk_ready = 0;
 #include "compat.h"
 #include "serve_poll.h"          /* CANCEL a meta' turno (#1332) */
 #include "route_trace.h"
+#include "moe_router.h"
 #include "decode_batch.h"   /* coli_submit_ext, coli_logprob_tail: canale logprobs */
 #include "pin_pool.h"       /* piu scatti annidati dello stato */
 #include <time.h>
@@ -1796,16 +1797,11 @@ static void ffn_layer(GModel *m, const GLayer *l, int index, const float *x,
         int *mine = chosen + (size_t)t * topk;
         float *mine_w = weight + (size_t)t * topk;
         float total = 0.0f;
+        /* Ranking is shared (moe_router.h), including its non-finite policy:
+         * all-NaN scores used to leave best at -1 and read score[-1] below. */
+        coli_router_topk(score, l->rbias, NULL, c->n_experts, topk, mine, NULL, index, 1);
         for (int k = 0; k < topk; k++) {
-            int best = -1; float value = -INFINITY;
-            for (int e = 0; e < c->n_experts; e++) {
-                int used = 0;
-                for (int j = 0; j < k; j++) if (mine[j] == e) { used = 1; break; }
-                float choice = score[e] + (l->rbias ? l->rbias[e] : 0.0f);
-                if (!used && choice > value) { value = choice; best = e; }
-            }
-            mine[k] = best;
-            mine_w[k] = score[best];
+            mine_w[k] = score[mine[k]];
             total += mine_w[k];
         }
         for (int k = 0; k < topk; k++)

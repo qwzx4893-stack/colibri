@@ -77,6 +77,7 @@ static int qwen38_max_ctx(void) {
 #undef matmul
 #undef matmul_q
 #include "route_trace.h"             /* shared ROUTE_TRACE + .coli_usage contract */
+#include "moe_router.h"           /* shared top-K expert selection */
 #include "serve_codec.h"             /* shared SUBMIT/STOP/CANCEL framing */
 #include "pin_pool.h"                /* piu scatti annidati dello stato */
 /* ---------- tokenizer (optional, for human-readable output) ---------- */

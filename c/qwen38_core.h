@@ -2091,7 +2091,8 @@ static void q38_moe_decode(Model *m,Layer *l,int layer,const float *x,int S,floa
         q38_dense_matmul(m,logits,xs,&l->router,1,H,E);float mx=logits[0];for(int e=1;e<E;e++)if(logits[e]>mx)mx=logits[e];
         double all=0;for(int e=0;e<E;e++){logits[e]=expf(logits[e]-mx);all+=logits[e];}
         int idx[Q38_MAX_TOPK];float val[Q38_MAX_TOPK];
-        for(int z=0;z<K;z++){int best=-1;float bv=-1.f;for(int e=0;e<E;e++){int used=0;for(int j=0;j<z;j++)if(idx[j]==e)used=1;if(!used&&logits[e]>bv){bv=logits[e];best=e;}}idx[z]=rt_router_pick(best,z,E,layer);val[z]=logits[idx[z]];}
+        coli_router_topk(logits,NULL,NULL,E,K,idx,NULL,layer,1); /* shared ranking + non-finite policy (moe_router.h) */
+        for(int z=0;z<K;z++) val[z]=logits[idx[z]];
         double top=0;for(int z=0;z<K;z++)top+=val[z];double den=c->norm_topk?top:all;
         float route_gates[Q38_MAX_TOPK];
         for(int z=0;z<K;z++) route_gates[z]=(float)(val[z]/den);
@@ -2199,8 +2200,8 @@ static void q38_moe_prefill(Model *m,Layer *l,int layer,const float *x,
         memset(group_counts,0,(size_t)E*sizeof(*group_counts));
 
         /* Route the complete chunk with one resident router matmul.  Selection
-         * intentionally mirrors q38_moe_decode, including rt_router_pick's
-         * deterministic fallback for invalid logits. */
+         * intentionally mirrors q38_moe_decode: both call coli_router_topk, so the
+         * deterministic fallback for invalid logits is the same one. */
         q38_dense_matmul(m,logits,x+(int64_t)base*H,&l->router,rows,H,E);
         for(int s=0;s<rows;s++) {
             float *probabilities=logits+(int64_t)s*E;
@@ -2213,19 +2214,9 @@ static void q38_moe_prefill(Model *m,Layer *l,int layer,const float *x,
             }
             int selected[Q38_MAX_TOPK];
             float selected_probability[Q38_MAX_TOPK];
-            for(int rank=0;rank<K;rank++) {
-                int best=-1;float best_value=-1.f;
-                for(int e=0;e<E;e++) {
-                    int used=0;
-                    for(int previous=0;previous<rank;previous++)
-                        if(selected[previous]==e){used=1;break;}
-                    if(!used&&probabilities[e]>best_value){
-                        best_value=probabilities[e];best=e;
-                    }
-                }
-                selected[rank]=rt_router_pick(best,rank,E,layer);
+            coli_router_topk(probabilities,NULL,NULL,E,K,selected,NULL,layer,1);
+            for(int rank=0;rank<K;rank++)
                 selected_probability[rank]=probabilities[selected[rank]];
-            }
             double top=0.0;
             for(int rank=0;rank<K;rank++)top+=selected_probability[rank];
             double denominator=c->norm_topk?top:total;

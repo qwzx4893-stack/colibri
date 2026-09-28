@@ -382,47 +382,7 @@ static int rt_save(const char *path, int quiet){
     return 1;
 }
 
-/* ---- router safety: a top-k pick that is always a valid expert id ----------
- *
- * Every engine selects experts with the same loop:
- *
- *     int best = -1; float bv = -1e30f;
- *     for (e ...) if (!taken && score[e] > bv) { bv = score[e]; best = e; }
- *     idx[kk] = best;
- *
- * If every candidate score is NaN, no comparison succeeds -- NaN > bv is false
- * for any bv -- and `best` stays -1. It is then used directly as an index.
- * Downstream that becomes score[-1] (heap read), usage[-1]++ (heap write) and,
- * because an expert id also picks a file offset, a pread at a negative offset.
- * In a release build none of that faults: the process finishes and returns
- * wrong numbers over quietly corrupted memory, which is worse than a crash.
- *
- * NaN reaches the router from a corrupt or hostile expert tile, or from an fp
- * overflow at an eviction boundary; c/tests/test_logit_nan.c documents both and
- * hardened only the sampling side, which is downstream of this.
- *
- * colibri.c has carried this guard as a private router_best_or_fallback() since
- * that test was written. inkling.c, kimi_k3.c and olmoe.c never received it --
- * the recurring shape of defects in this tree, a fix that lands in one engine
- * and not its siblings. It lives here now because route_trace.h was the one
- * header all four original engines already included (newer integrated engines
- * inherit it too), and because "which expert did we pick" is exactly what this
- * file is about.
- *
- * Degrading deterministically (to kk, the slot's own index) keeps the selection
- * reproducible and in range; the warning fires once so a poisoned tile is
- * visible without flooding a long generation. */
-static int rt_router_pick(int best, int kk, int experts, int layer) {
-    if (best >= 0) return best;
-    static int rt_router_warned;
-    if (!rt_router_warned) {
-        rt_router_warned = 1;
-        fprintf(stderr, "[router] non-finite logits at layer %d: selection degraded "
-                        "(corrupt expert tile, or overflow at an eviction boundary)\n",
-                layer);
-    }
-    return kk < experts ? kk : 0;
-}
+/* Router top-K selection (and its NaN policy) lives in moe_router.h. */
 
 /* ---- SIGTERM in serve mode: reach rt_save instead of dying before it -------
  *

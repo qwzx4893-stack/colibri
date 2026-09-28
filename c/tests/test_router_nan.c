@@ -11,10 +11,11 @@
  *   - a stack buffer underflow on the VLA `unsigned char seen[E]` in FASE B;
  *   - uniq[nu++] = -1 handed to expert_load().
  *
- * Fix under test: router_best_or_fallback() maps a failed scan to a deterministic
- * in-range expert and warns once, while router_select_topk() marks selected
- * scores instead of rescanning the chosen prefix. Degrade + diagnose, never
- * index out of range.
+ * Fix under test: moe_router.h maps a failed scan to a deterministic in-range
+ * expert and warns once (the shared implementation every engine now uses; its
+ * own unit test is tests/test_moe_router.c). This file pins the colibri.c
+ * integration -- router_select_topk(), which moe() calls -- so the wiring, not
+ * only the helper, is covered. Degrade + diagnose, never index out of range.
  *
  * No model file needed: exercises the guard and the exact scan that trips it. */
 #include <assert.h>
@@ -46,28 +47,13 @@ int main(void){
       int taken[1]={7};
       assert(scan_best(choice,E,taken,1)==-1 && "remaining candidates all NaN"); }
 
-    /* --- the guard: passthrough when the scan succeeded --- */
-    assert(router_best_or_fallback(5,0,E,0)==5);
-    assert(router_best_or_fallback(0,3,E,0)==0 && "expert 0 is a valid pick, not a failure");
-
-    /* --- the guard: a failed scan degrades to a deterministic in-range expert --- */
-    for(int kk=0;kk<E;kk++){
-        int b=router_best_or_fallback(-1,kk,E,0);
-        assert(b>=0 && b<E && "fallback must be a valid expert index");
-        assert(b==kk && "distinct kk -> distinct expert, so a slot is never duplicated");
-    }
-    /* Ksel may exceed E on a malformed config: still in range, never -1 */
-    for(int kk=E;kk<E+4;kk++){
-        int b=router_best_or_fallback(-1,kk,E,0);
-        assert(b>=0 && b<E && "fallback stays in range past E");
-    }
-
     /* --- the fast scan preserves the old finite-score ordering --- */
     { float choice[8]={0.11f,0.91f,0.37f,0.63f,NAN,0.22f,0.77f,0.48f};
       float fast_choice[8]; memcpy(fast_choice,choice,sizeof choice);
       int old[5], fast[5];
       for(int kk=0;kk<5;kk++){
-          old[kk]=router_best_or_fallback(scan_best(choice,E,old,kk),kk,E,0);
+          int b=scan_best(choice,E,old,kk);
+          old[kk]=b>=0?b:kk;            /* the old fallback: the slot's own index */
       }
       router_select_topk(fast_choice,E,5,fast,0);
       for(int kk=0;kk<5;kk++) assert(fast[kk]==old[kk] && "fast top-K ordering changed");
@@ -84,10 +70,9 @@ int main(void){
       unsigned char seen[8]; memset(seen,0,sizeof seen);
       int idx[4]; int Ksel=4;
       for(int kk=0;kk<Ksel;kk++){
-          int best=scan_best(choice,E,idx,kk);
-          best=router_best_or_fallback(best,kk,E,0);
-          idx[kk]=best;
+          idx[kk]=scan_best(choice,E,idx,kk);   /* still -1 here: the unguarded loop */
       }
+      router_select_topk(choice,E,Ksel,idx,0);   /* what moe() actually calls */
       for(int kk=0;kk<Ksel;kk++){
           assert(idx[kk]>=0 && idx[kk]<E && "no OOB index reaches eusage/eheat/elast");
           seen[idx[kk]]=1;                 /* would have been seen[-1] before the fix */

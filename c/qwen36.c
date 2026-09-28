@@ -67,6 +67,7 @@ static int qwen36_max_ctx(void) {
 #include "json.h"   /* tokenizer.json parsing (reuse minimal parser) */
 #include "qwen36_tier.h"   /* optional CUDA VRAM expert tier */
 #include "expert_ffn.h"    /* routed experts: planar int4 kernel + layer runner */
+#include "moe_router.h"   /* shared top-K expert selection */
 #include "idot.h"          /* integer dot kernels for the dense trunk (COLI_DENSE_IDOT, COLI_DENSE_BITS) */
 #ifdef COLI_SEGMENT_ADAPTER
 #include "segment_runtime.h"
@@ -2296,17 +2297,8 @@ static void route_select(const float *pr, const uint8_t *keep, int E, int K,
     if (cap > E) cap = E;
     if (cap > ROUTE_RANK_MAX) cap = ROUTE_RANK_MAX;
     int rank[ROUTE_RANK_MAX]; float rw[ROUTE_RANK_MAX]; int8_t rl[ROUTE_RANK_MAX];
-    int n = 0;
-    for (int r = 0; r < cap; r++) {
-        int best = -1; float bv = -1e30f;
-        for (int e = 0; e < E; e++) {
-            if (keep && !keep[e]) continue;
-            int taken = 0; for (int j = 0; j < n; j++) if (rank[j] == e) { taken = 1; break; }
-            if (!taken && pr[e] > bv) { bv = pr[e]; best = e; }
-        }
-        if (best < 0) break;
-        rank[n] = best; rw[n] = bv; n++;
-    }
+    /* ranked candidates inside the keep mask; stops early when fewer than `cap` are eligible */
+    int n = coli_router_topk(pr, NULL, keep, E, cap, rank, rw, 0, 0);
     int Kt = K < n ? K : n;             /* the true top-K is rank[0..Kt) */
     int win = n;
     if (P > 0.f && P < 1.f) {           /* cumulative-mass window: grow past K until P of the ranked mass */
@@ -2421,16 +2413,12 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
             RouteCtx rc = { m, layer };
             route_select(pr, keep, E, K, g_route_j, g_route_m, g_route_p, g_route_alpha,
                          route_level, &rc, idx, val, &m->route);
+            coli_router_fill(idx, val, K, E, layer);   /* route_select leaves -1 for unfilled slots */
         } else {
-            for (int kk = 0; kk < K; kk++) {
-                int best = -1; float bv = -1e30f;
-                for (int e = 0; e < E; e++) {
-                    if (!keep[e]) continue;
-                    int taken = 0; for (int j = 0; j < kk; j++) if (idx[j]==e){taken=1;break;}
-                    if (!taken && pr[e] > bv) { bv = pr[e]; best = e; }
-                }
-                idx[kk] = best; val[kk] = bv;
-            }
+            /* An unfilled slot (fewer eligible experts than K, or non-finite scores) is
+             * filled with an in-range expert at weight 0. It used to be idx=-1, val=-1e30,
+             * and expert_get(m, layer, -1) below indexed the cache at -1. */
+            coli_router_topk(pr, NULL, keep, E, K, idx, val, layer, 1);
             if (g_route_agree) {            /* plain routing: full agreement by construction */
                 m->route.agree_hit += (uint64_t)K; m->route.agree_tot += (uint64_t)K; m->route.kl_n++;
             }
@@ -3038,8 +3026,8 @@ static void pilot_prefetch(Model *m, int lnext, const float *x, int S) {
         float cum_sum = 0.f; int min_cand = c->topk; int max_cand = c->topk * g_wide;
         if (max_cand < min_cand) max_cand = min_cand; if (max_cand > 128) max_cand = 128; if (max_cand > E) max_cand = E;
         for (int kk = 0; kk < max_cand; kk++) {
-            int best = -1; float bv = -1.f;
-            for (int e = 0; e < E; e++) { int taken = 0; for (int j = 0; j < kk; j++) if (idx[j]==e){taken=1;break;} if (!taken && exps[e] > bv) { bv = exps[e]; best = e; } }
+            float bv;
+            int best = coli_router_best(exps, NULL, NULL, E, idx, kk, &bv);
             if (best < 0) break;
             idx[kk] = best; cum_sum += bv; cand++;
             if (cum_sum >= m->pilot_conf_limit * sum_exps && cand >= min_cand) break;

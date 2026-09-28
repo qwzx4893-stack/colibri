@@ -40,6 +40,7 @@
 #endif
 #include "omp_tune.h"
 #include "route_trace.h"
+#include "moe_router.h"
 #include "kv_prefix.h"
 #include "pin_pool.h"                          /* KV prefix reuse (shared) */                          /* shared routing telemetry (#700) */
 #include "serve_codec.h"
@@ -1513,22 +1514,15 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
     Slot **fill = malloc((size_t)S*K*sizeof(Slot*));
     int  *fl    = malloc((size_t)S*K*sizeof(int));
     int nfill = 0;
+    float *rsc  = falloc((int64_t)E);                /* router scores of one position */
     /* pass 1: routing + slot bookkeeping (serial) */
     for (int s = 0; s < S; s++) {
         float *lg = logits + (int64_t)s*ET;
         int *si = idx + (int64_t)s*K;
-        /* selection: sigmoid(routed) + correction bias, top-K */
-        for (int kk = 0; kk < K; kk++) {
-            int best = -1; float bv = -1e30f;
-            for (int e = 0; e < E; e++) {
-                int taken = 0; for (int j = 0; j < kk; j++) if (si[j]==e){taken=1;break;}
-                float ch = sigmoidf(lg[e]) + l->rbias[e];
-                if (!taken && ch > bv) { bv = ch; best = e; }
-            }
-            /* SEC: all-NaN logits leave best at -1, and lg[-1] / eusage[-1] are
-             * next. See rt_router_pick in route_trace.h. */
-            si[kk] = rt_router_pick(best, kk, E, layer);
-        }
+        /* selection: sigmoid(routed) + correction bias, top-K (shared: moe_router.h,
+         * whose non-finite policy keeps lg[si[kk]] / eusage[si[kk]] in range) */
+        for (int e = 0; e < E; e++) rsc[e] = sigmoidf(lg[e]);
+        coli_router_topk(rsc, l->rbias, NULL, E, K, si, NULL, layer, 1);
         /* combine weights: sigmoids of the raw logits of (topK routed + shared),
          * normalized to sum 1 over all K+ns, x route_scale x gate.global_scale */
         float *w = wgt + (int64_t)s*(K+ns); float sum = 0.f;
@@ -1776,7 +1770,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
         shared_experts_cpu(m, l, x, S, out, wgt, g, u, hh);
         m->t_shared += now_s() - ts;
     }
-    free(logits); free(idx); free(keff); free(wgt); free(use); free(fill); free(fl);
+    free(logits); free(idx); free(keff); free(wgt); free(use); free(fill); free(fl); free(rsc);
     free(g); free(hh);              /* u aliases g+I */
 #ifdef COLI_METAL
     if (mxg) {

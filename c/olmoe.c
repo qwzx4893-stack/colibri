@@ -43,6 +43,7 @@
 #endif
 #include "omp_tune.h"
 #include "route_trace.h"                    /* shared routing telemetry (#700) */
+#include "moe_router.h"
 #include "kv_prefix.h"
 #include "pin_pool.h"                       /* piu scatti annidati */   /* riuso del prefisso tra turni (shared) */
 #include "serve_codec.h"
@@ -973,18 +974,10 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
         softmax_row(pr, E);
         /* top-K indici (selezione parziale) */
         int idx[64]; float val[64];
-        for (int kk = 0; kk < K; kk++) {
-            int best = -1; float bv = -1e30f;
-            for (int e = 0; e < E; e++) {
-                int taken = 0; for (int j = 0; j < kk; j++) if (idx[j]==e){taken=1;break;}
-                if (!taken && pr[e] > bv) { bv = pr[e]; best = e; }
-            }
-            /* SEC: all-NaN probabilities leave best at -1, which reaches
-             * expert_get() and then last_access[layer*E - 1] -- a heap write at
-             * a negative index. See rt_router_pick in route_trace.h. */
-            best = rt_router_pick(best, kk, E, layer);
-            idx[kk] = best; val[kk] = pr[best];
-        }
+        /* shared ranking (moe_router.h): all-NaN probabilities must not reach
+         * expert_get() as -1 and then last_access[layer*E - 1] (heap write) */
+        coli_router_topk(pr, NULL, NULL, E, K, idx, NULL, layer, 1);
+        for (int kk = 0; kk < K; kk++) val[kk] = pr[idx[kk]];
         if (c->norm_topk) { float sm=0; for(int kk=0;kk<K;kk++) sm+=val[kk]; for(int kk=0;kk<K;kk++) val[kk]/=sm; }
         /* IMPROVEMENT 2 activation heatmap AND the ROUTE_TRACE stream, in one
          * call. The counters were the only thing this engine recorded, and it
@@ -1296,11 +1289,8 @@ static void pilot_prefetch(Model *m, int lnext, const float *x, int S) {
         if (max_cand > E) max_cand = E;
 
         for (int kk = 0; kk < max_cand; kk++) {
-            int best = -1; float bv = -1.f;
-            for (int e = 0; e < E; e++) {
-                int taken = 0; for (int j = 0; j < kk; j++) if (idx[j] == e) { taken=1; break; }
-                if (!taken && exps[e] > bv) { bv = exps[e]; best = e; }
-            }
+            float bv;
+            int best = coli_router_best(exps, NULL, NULL, E, idx, kk, &bv);
             if (best < 0) break;
             idx[kk] = best;
             cum_sum += bv;

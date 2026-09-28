@@ -22,7 +22,7 @@ static int select_old(const float *choice, int E, int K, int *idx, int layer){
             for(int j=0;j<kk;j++) if(idx[j]==e){ taken=1; break; }
             if(!taken && choice[e]>bv){ bv=choice[e]; best=e; }
         }
-        idx[kk]=router_best_or_fallback(best,kk,E,layer);
+        idx[kk]=best>=0?best:kk; (void)layer;
     }
     return idx[0];
 }
