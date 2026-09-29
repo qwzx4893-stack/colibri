@@ -8,11 +8,14 @@
  *  3) matmul_q_idot_v3 / matmul_q_idot_pair_v3: v2 + vectorized quant, plus a
  *     gate/up pair that quantizes the shared input ONCE instead of twice.
  *
- * Numerics: all integer dots are exact (sign-extend + madd, as dot_i8_16);
- * activation quantization is byte-exact vs the scalar path, so v3/pair-v3
- * outputs are bit-identical to the stock matmul_q calls — verified by
- * memcmp in tests/bench_fused3.c. The flag only changes instruction
- * scheduling, never values.
+ * Numerics: the integer dots are exact (sign-extend + madd, as dot_i8_16) and
+ * the activation quantization is byte-exact vs the SCALAR IDOT loop, so
+ * v3/pair-v3 are bit-identical to matmul_q's IDOT=1 branch (memcmp in
+ * tests/bench_fused3.c, and end-to-end on real OLMoE: FUSED3=1 == IDOT=1).
+ * They are NOT identical to matmul_q's default path: IDOT quantizes the
+ * activations to int8 (issue #1044), a lossy approximation. Treat this whole
+ * header as a High-Fidelity option, never as Exact Mode; olmoe.c only calls
+ * it when IDOT=1 is set explicitly.
  *
  * Header-only, all static, no dependencies beyond immintrin — mirrors quant.h
  * conventions. Guarded by __AVX2__; callers keep the stock fallback.
