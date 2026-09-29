@@ -1,5 +1,5 @@
 /* Model-free regression for Qwen3.6's expert -> slot index. */
-#define COLI_CACHE_INDEX_TEST 1
+#define LMA_CACHE_INDEX_TEST 1
 #define main qwen36_main_unused
 #include "../qwen36.c"
 #undef main

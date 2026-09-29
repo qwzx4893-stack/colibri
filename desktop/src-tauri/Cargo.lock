@@ -313,7 +313,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "colibri-desktop"
+name = "lmatomic-desktop"
 version = "0.1.0"
 dependencies = [
  "tauri",

@@ -3,8 +3,8 @@
  * And a slot whose slab was freed by rss_guard (#1034) is only reusable
  * while the row's live-slab count stays under ecap: reusing it re-allocates
  * a slab, which is growth, not eviction. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <stdio.h>

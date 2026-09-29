@@ -5,7 +5,7 @@ histogram, and turns them into a per-expert topic-affinity vector.
 
 ```bash
 cd c
-export COLI_MODEL=/path/to/glm52_i4
+export LMA_MODEL=/path/to/glm52_i4
 ./tools/expert_atlas/sweep.sh                             # 30 probes (10 topics x 3 prompts)
 python3 tools/expert_atlas/analyze.py  --stats atlas_out/stats --out atlas_out/experts.json \
         --web web/dist/experts.json                       # optional: feed the web dashboard Atlas
@@ -15,7 +15,7 @@ python3 tools/expert_atlas/validate.py atlas_out/stats 200 # leave-one-prompt-ou
 `--web` writes the same atlas in the shape the web dashboard consumes (the Atlas galaxy and the
 Brain hover tooltips): keyed `"layer:expert"` with `affinity`/`entropy`/`top`/`label`. It replaces
 the retired `tools/expert_atlas.py`, whose API-driven probing ran through a live server and was
-exposed to exactly the traps above (server-side `--topp`, speculative drafts, shared `.coli_usage`).
+exposed to exactly the traps above (server-side `--topp`, speculative drafts, shared `.lma_usage`).
 
 ## Read this before you trust any atlas
 
@@ -26,7 +26,7 @@ roll your own, don't skip them.
 |---|---|---|
 | **`--topp`** | prunes experts by cumulative probability — measured: it hides **38% of the distinct experts** (7,587 → 4,687). It is also the *recommended speed setting*. | `TOPP=0` |
 | **speculative drafts** | `eusage` is incremented inside `moe()`, *before* verification, so **rejected** drafts count. Those are experts routed for text the model never emitted. | `MTP=0 DRAFT=0` |
-| **`.coli_usage`** | is loaded at startup and accumulates, so a naive `STATS` dump contains **all prior history**, not this run. | remove per run (script backs it up and restores) |
+| **`.lma_usage`** | is loaded at startup and accumulates, so a naive `STATS` dump contains **all prior history**, not this run. | remove per run (script backs it up and restores) |
 | **autocorrelation** | routing inside one run is highly correlated — the same context routes to the same experts token after token. An expert firing 38 times during one prompt is **one** observation, not 38. Chi-square/entropy on raw selections will certify single-prompt flukes as perfect specialists. | `analyze.py` requires the affinity to **replicate across a category's independent prompts** |
 
 The CUDA expert tier is also not run-to-run deterministic, so the sweep uses `--gpu none`. Tier

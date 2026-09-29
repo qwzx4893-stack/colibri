@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="assets/colibri-logo.svg" width="560" alt="colibrì — 小さなエンジン、巨大なモデル">
+  <img src="assets/lmatomic-logo.svg" width="560" alt="LM Atomic — 小さなエンジン、巨大なモデル">
 </p>
 
 <p align="center">
-  <a href="https://justvugg.github.io/colibri"><img src="https://img.shields.io/badge/website-justvugg.github.io%2Fcolibri-1f6feb" alt="Website"></a>
+  <a href="https://justvugg.github.io/colibri"><img src="https://img.shields.io/badge/website-justvugg.github.io%2Flmatomic-1f6feb" alt="Website"></a>
   <a href="https://github.com/JustVugg/colibri/releases"><img src="https://img.shields.io/github/v/release/JustVugg/colibri?color=2ea043" alt="Latest release"></a>
 </p>
 
@@ -21,16 +21,16 @@
 ビジョン対応）、**Inkling**（975B）、**Kimi K3**（2.8T）、**DeepSeek V4 Flash**（284B）、**DeepSeek V4.1 Flash**（552B、ビジョン対応）、
 **Qwen3.8-Flash-Next**（125B + 51B n-gram）、**Qwen3.6**（35B-A3B）、そして
 **OLMoE**（7B）——
-それぞれが C ファイル 1 つで、同じ `coli chat` / `coli serve` / `coli web` フロントエンドを共有します。
+それぞれが C ファイル 1 つで、同じ `lmatomic chat` / `lmatomic serve` / `lmatomic web` フロントエンドを共有します。
 [全モデル一覧 ↓](#other-supported-models)
 
-> **Colibrì は今日すぐに動かせる推論エンジンであり、同時にオープンな研究
+> **LM Atomic は今日すぐに動かせる推論エンジンであり、同時にオープンな研究
 > プラットフォームでもあります。** 主な目標は、ソフトウェアとハードウェアの境界全体——
 > モデルフォーマット、メモリ階層、ストレージ I/O、配置、スケジューリング、カーネル、
 > 投機的デコード、CPU/GPU のオーバーラップ——にわたって推論側の性能を追求し、
 > 大規模モデルが希少なハードウェアに依存せず、より低コストで動くようにすることです。
 
-Colibrì は VRAM・RAM・ストレージを単一のマルチティア階層として扱い、意図的に
+LM Atomic は VRAM・RAM・ストレージを単一のマルチティア階層として扱い、意図的に
 攻めたシステム上のアイデアを試す場となっています。そのため **速度に SLA はありませんが、
 セマンティクスは厳格に保証します**。実験は再現可能なエンドツーエンドの計測によって
 採用に値することを示さなければならず、デフォルトのポリシーは **モデルの精度やルーターの
@@ -38,8 +38,8 @@ Colibrì は VRAM・RAM・ストレージを単一のマルチティア階層と
 落ちるかもしれませんが、それによってモデルが密かに別物になることはあってはなりません。
 
 ```
-$ ./coli chat
-  🐦 colibri v1.12.1 — GLM-5.2 · 744B MoE · int4 · streaming CPU
+$ ./lmatomic chat
+  🐦 lmatomic v1.12.1 — GLM-5.2 · 744B MoE · int4 · streaming CPU
   ✓ ready in 32s · resident 9.9 GB
   › ciao!
   ◆ Ciao! 😊 Come posso aiutarti oggi?
@@ -48,14 +48,14 @@ $ ./coli chat
 ## 動作の様子
 
 <p align="center">
-  <img src="docs/media/colibri-dashboard.png" width="900" alt="colibrì Web ダッシュボード — ライブメトリクス、ハードウェアパネル、エキスパートのティア">
+  <img src="docs/media/lmatomic-dashboard.png" width="900" alt="LM Atomic Web ダッシュボード — ライブメトリクス、ハードウェアパネル、エキスパートのティア">
 </p>
-<p align="center"><em>Web ダッシュボード（<code>./coli web</code>）: 744B モデルが <strong>4 tok/s、TTFT 1.6 秒、ディスク 0</strong> で動作 —
+<p align="center"><em>Web ダッシュボード（<code>./lmatomic web</code>）: 744B モデルが <strong>4 tok/s、TTFT 1.6 秒、ディスク 0</strong> で動作 —
 6× RTX 5090 上でエキスパートを完全常駐させ、ライブのトークンメトリクス、ターンごとの時間内訳、
 VRAM/RAM/ディスクのティアバー、隅にはライブのミニ脳を表示しています。</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-brain.png" width="900" alt="Brain ページ — GLM-5.2 の計測されたエキスパートアトラスを皮質として描画、入れる 10 の領域">
+  <img src="docs/media/lmatomic-brain.png" width="900" alt="Brain ページ — GLM-5.2 の計測されたエキスパートアトラスを皮質として描画、入れる 10 の領域">
 </p>
 <p align="center"><em><strong>Brain</strong> ページの <strong>Explore</strong> 表示: GLM-5.2 の<a href="https://github.com/JustVugg/colibri/issues/175">計測されたエキスパートアトラス</a>を皮質として描画します。
 特性が明らかになった 13,260 個のエキスパートが 10 の領域（Python、SQL、数学、詩、法律、中国語…）に分かれ、位置は学習された埋め込みではなく
@@ -63,14 +63,14 @@ VRAM/RAM/ディスクのティアバー、隅にはライブのミニ脳を表�
 エキスパートごとに 1 セル、色はストレージのティア、1 ターンでルーティングされたエキスパートは白く光ります。</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-brain-region.png" width="900" alt="Python 領域の内部 — 1,142 個のエキスパート、選択した 1 つとその計測された親和性">
+  <img src="docs/media/lmatomic-brain-region.png" width="900" alt="Python 領域の内部 — 1,142 個のエキスパート、選択した 1 つとその計測された親和性">
 </p>
 <p align="center"><em><strong>Python</strong> 領域の内部: 1,142 個のエキスパートが星座として並び、それぞれにレイヤーと番号のラベルが付きます。パネルはその 1 つ、
 レイヤー 17 のエキスパート 178 を表示しています。エントロピー 3.13 のジェネラリストで、計測された親和性は Python 20.2%、JSON 14.6%、
 会話 14.2%、SQL 13.3% です。</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-profiling.png" width="900" alt="Profiling ページ — エンジンが各ターンで時間を使う場所">
+  <img src="docs/media/lmatomic-profiling.png" width="900" alt="Profiling ページ — エンジンが各ターンで時間を使う場所">
 </p>
 <p align="center"><em><strong>Profiling</strong> ページ: エンジンが各ターンで時間を使う場所をフェーズごとに示し、直近 30 ターンを推移として表示します。
 ここでは CPU マシン上の Qwen3.6: プロンプト 36 トークンと生成 55 トークンで壁時計時間 19.0 秒、2.9 tok/s、
@@ -78,9 +78,9 @@ VRAM/RAM/ディスクのティアバー、隅にはライブのミニ脳を表�
 
 ## 研究のミッション
 
-Colibrì があれば、プライベートなフロンティアモデルへのアクセスが、ハイパースケーラー級ハードウェアの入手可能性に制限されることはありません。
+LM Atomic があれば、プライベートなフロンティアモデルへのアクセスが、ハイパースケーラー級ハードウェアの入手可能性に制限されることはありません。
 
-マルチティア機能によって、Colibrì は **推論エンジンのパイプラインを積極的に最適化し、
+マルチティア機能によって、LM Atomic は **推論エンジンのパイプラインを積極的に最適化し、
 プロプライエタリなハードウェアへの依存を取り除きます**。
 
 私たちの実務上のミッションには、重みの表現方法と移動方法を変えること、何を VRAM・RAM・
@@ -121,7 +121,7 @@ Colibrì があれば、プライベートなフロンティアモデルへの�
 
 ## 未検証の仮説、実験、そして協力の方法
 
-Colibrì は、制御されたエンドツーエンドの A/B が示すまで、最適化を仮説として扱います。
+LM Atomic は、制御されたエンドツーエンドの A/B が示すまで、最適化を仮説として扱います。
 現在の主な問いは次のとおりです:
 
 | 仮説 | これまでのエビデンス | まだ必要な実験 |
@@ -161,7 +161,7 @@ TTFT、エキスパートヒット率、読み込みバイト数、品質チェ�
 
 コアアルゴリズムは **重みのための JIT** だと考えてください。コンパイラの JIT は
 プログラム全体をコンパイルすることはなく、実際に実行される部分を観察して、ホットパスを
-ジャストインタイムでコンパイルします。colibrì は 744B のパラメータ空間に対して同じ賭けをします。
+ジャストインタイムでコンパイルします。LM Atomic は 744B のパラメータ空間に対して同じ賭けをします。
 パラメータは保持すべき常駐状態ではなく、ルーターが必要だと証明したまさにそのときに、
 異種混在のストレージ階層（VRAM / RAM / NVMe）にわたって **ステージングされるデータ** なのです。
 計測されたルーティングの熱量がどのエキスパートをどのティアに置くかを決め、ルーターは
@@ -171,7 +171,7 @@ TTFT、エキスパートヒット率、読み込みバイト数、品質チェ�
 [エキスパートアトラス](https://github.com/JustVugg/colibri/issues/175) を参照）。
 そして構造はキャッシュ可能です。
 
-エンジンは単一の C ファイル（`c/colibri.c`）と小さなヘッダ群だけで構成されています。BLAS も、
+エンジンは単一の C ファイル（`c/glm52.c`）と小さなヘッダ群だけで構成されています。BLAS も、
 実行時の Python も、GPU も必要ありません。
 
 ### ローカルクラスタモード
@@ -184,13 +184,13 @@ TTFT、エキスパートヒット率、読み込みバイト数、品質チェ�
 オプションの登録サービスを起動します:
 
 ```bash
-./coli cluster coordinator --host 0.0.0.0 --port 8765
+./lmatomic cluster coordinator --host 0.0.0.0 --port 8765
 ```
 
 各ワーカーで、同じ変換済みモデルをローカルに用意したうえで:
 
 ```bash
-./coli cluster worker --model /nvme/glm52_i4 --port 9100 \
+./lmatomic cluster worker --model /nvme/glm52_i4 --port 9100 \
   --coordinator http://COORDINATOR:8765 --advertise-host WORKER_IP
 ```
 
@@ -198,7 +198,7 @@ TTFT、エキスパートヒット率、読み込みバイト数、品質チェ�
 HOST:PORT,...` を指定します:
 
 ```bash
-./coli serve --model /nvme/glm52_i4 \
+./lmatomic serve --model /nvme/glm52_i4 \
   --cluster-coordinator http://127.0.0.1:8765
 ```
 
@@ -228,14 +228,14 @@ HOST:PORT,...` を指定します:
 ほとんどのマシンでデコードはディスク律速であり、エキスパートの読み込みは読み取り専用です。そこで **2 台目の SSD** があるなら、そこにモデルの完全なコピーを置き、エンジンに両方のドライブから同時にストリーミングさせましょう:
 
 ```bash
-COLI_MODEL=/fast/glm52_i4 COLI_MODEL_MIRROR=/second/glm52_i4 ./coli chat
-COLI_DISK_WEIGHTS=9,3 ...   # オプション: プライマリ,ミラーの帯域幅比（未指定なら起動時に計測）
+LMA_MODEL=/fast/glm52_i4 LMA_MODEL_MIRROR=/second/glm52_i4 ./lmatomic chat
+LMA_DISK_WEIGHTS=9,3 ...   # オプション: プライマリ,ミラーの帯域幅比（未指定なら起動時に計測）
 ```
 
 各エキスパートは、2 台のドライブの計測された（または宣言された）帯域幅で重み付けされた決定論的ハッシュによって一方のドライブに割り当てられます。そのため readahead/PILOT のプリフェッチと要求時の読み込みは常に同じドライブに当たり、二重にキャッシュされることはありません。合計帯域幅は両ドライブの和になります — 9 GB/s + 3 GB/s の組み合わせでは、高速なドライブ単体よりもエキスパートの読み込みが約 33% 速くなり、OMP 並列のピン留め/ウォームアップのロードも両方からストリーミングされます。知っておくべき詳細:
 
 - ミラーは **起動時に検証** されます（ファイルごとのサイズと safetensors ヘッダがプライマリとバイト単位で一致する必要があります）。一致しない、または欠けているファイルは黙ってプライマリのままになるので、**部分的なミラーでも問題ありません** — 一部のシャードしか置けない小さめの 2 台目 SSD でも効果があります。
-- ミラーには **一切書き込まれません**: `.coli_usage`、`.coli_kv` およびすべてのサイドカーファイルはプライマリに残ります。
+- ミラーには **一切書き込まれません**: `.lma_usage`、`.lma_kv` およびすべてのサイドカーファイルはプライマリに残ります。
 - ミラーでの読み込みエラーはプライマリにフォールバックします（警告 1 回、クラッシュなし）。そのため実行中に 2 台目のドライブを抜いても、サーバーが落ちるのではなく性能が低下するだけです。
 - ルーティングがトークンを変えることはありません — 両コピーはバイト単位で同一であり、実行ごとの `MIRROR:` 統計行にはドライブごとに提供した GB 数が表示されます。
 
@@ -243,24 +243,24 @@ COLI_DISK_WEIGHTS=9,3 ...   # オプション: プライマリ,ミラーの帯�
 ストリーミングされ（遅いが正しい）、大きなホストではエキスパート全体が常駐し
 （`CUDA_EXPERT_GB=auto PIN_GB=all`）、ディスクはデコード経路から完全に外れます。
 ティアの間には **学習キャッシュ** があります。エンジンは *あなたの* ワークロードがどの
-エキスパートにルーティングされるかを記録し（`.coli_usage`、ターンごとに更新）、最もホットな
-ものを自動でピン留めします — colibrì は文字どおり、使えば使うほど速くなります。マルチソケットの
-ホストでは、`COLI_NUMA=1` によって常駐する重みをメモリコントローラ間でインターリーブします
+エキスパートにルーティングされるかを記録し（`.lma_usage`、ターンごとに更新）、最もホットな
+ものを自動でピン留めします — LM Atomic は文字どおり、使えば使うほど速くなります。マルチソケットの
+ホストでは、`LMA_NUMA=1` によって常駐する重みをメモリコントローラ間でインターリーブします
 （[#82](https://github.com/JustVugg/colibri/issues/82)）。
 
-モデル全体を置けない 2 台目のドライブ向けに、Colibri はすでに学習しているエキスパート履歴から
-部分ミラーの優先順位を付けられます。まずいくつかの代表的なプロンプトを実行して `.coli_usage` に
+モデル全体を置けない 2 台目のドライブ向けに、LM Atomic はすでに学習しているエキスパート履歴から
+部分ミラーの優先順位を付けられます。まずいくつかの代表的なプロンプトを実行して `.lma_usage` に
 ワークロードを反映させてから、ミラーを計画・ステージング・検証します:
 
 ```bash
-./c/coli mirror plan  --model /fast/glm52_i4 --mirror /second/glm52_i4 \
+./c/lmatomic mirror plan  --model /fast/glm52_i4 --mirror /second/glm52_i4 \
   --budget-gib 200 --reserve-gib 20
-./c/coli mirror stage --model /fast/glm52_i4 --mirror /second/glm52_i4 \
+./c/lmatomic mirror stage --model /fast/glm52_i4 --mirror /second/glm52_i4 \
   --budget-gib 200 --reserve-gib 20
-./c/coli mirror verify --model /fast/glm52_i4 --mirror /second/glm52_i4
+./c/lmatomic mirror verify --model /fast/glm52_i4 --mirror /second/glm52_i4
 ```
 
-プランナーは safetensors ヘッダを直接読み、`COLI_MODEL_DIRS` から分割モデルのディレクトリをたどり、
+プランナーは safetensors ヘッダを直接読み、`LMA_MODEL_DIRS` から分割モデルのディレクトリをたどり、
 最もホットなルーティングエキスパートを提供できるシャードを優先します。ステージングがプライマリの
 モデルを変更することはありません。一時ファイル経由でコピーし、指定された空き容量の予備を確保し、
 すべてのシャードを SHA-256 で検証し、既存のミラーシャードを削除することはなく、選択された
@@ -274,7 +274,7 @@ COLI_DISK_WEIGHTS=9,3 ...   # オプション: プライマリ,ミラーの帯�
 欠けているエキスパートをロードします。バッチ化された位置では一意なエキスパートを 1 回だけ読み込み
 （**batch-union**）、ルーター先読みスレッド（`PILOT=1`）が次のレイヤーのエキスパートを
 プリフェッチします — ルーティングは **1 レイヤー先を 71.6% の精度で予測可能** であることが計測されています。
-GPU では、常駐パイプライン（`COLI_CUDA_PIPE=2`）が残差ストリームをレイヤーをまたいでデバイス上に
+GPU では、常駐パイプライン（`LMA_CUDA_PIPE=2`）が残差ストリームをレイヤーをまたいでデバイス上に
 保持するため、CPU のエキスパートループは中断されずに実行されます。Apple Silicon では実験的な
 [Metal バックエンド](docs/metal.md) がユニファイドメモリ GPU 上でバッチ化されたエキスパート演算を行い、
 [Vulkan バックエンド](docs/vulkan.md) はエキスパートティア、密な射影、MLA アテンションのコアを、
@@ -293,7 +293,7 @@ RDNA4 では ROCm と互角です — [ベンチマークに関するメモ](doc
 フォワードパスは `transformers` のオラクルに対して検証されています（teacher-forcing で
 通常 30〜32/32。小さなオラクルの 2 つの位置は浮動小数点上のほぼ同値で、ツールチェーンに依存します）。
 MLA アテンションは圧縮された KV 状態を保存します — 1 トークンあたり 32,768 個ではなく 576 個の
-浮動小数点数（**57 分の 1**）— そしてそれを再起動をまたいで永続化します（`.coli_kv`）。
+浮動小数点数（**57 分の 1**）— そしてそれを再起動をまたいで永続化します（`.lma_kv`）。
 会話は再プリフィルなしでウォームな状態から再開され、中断されなかったセッションとバイト単位で同一です。
 DSA スパースアテンション（GLM-5.2 の lightning indexer）は忠実に実装されており、全キーを強制的に
 選択させたときに密なアテンションを正確に再現することで検証されています。
@@ -336,19 +336,19 @@ GLM-5.2 のネイティブ MTP ヘッドがトークンをドラフトし、メ�
 必要なものは 2 つです: **プログラム**（数百 KB）と **モデル**（372 GB）。
 全プラットフォーム向けの手順は [クイックスタートガイド](docs/quickstart.md) にあります。
 
-### 1. colibri を入手する
+### 1. LM Atomic を入手する
 
 **ビルド済みリリースをダウンロード** — Linux、macOS、Windows に対応し、コンパイラは不要です。
 [Releases](https://github.com/JustVugg/colibri/releases) から自分のプラットフォーム用の
 アーカイブを取得して展開します:
 
 ```bash
-mkdir colibri && tar xzf colibri-v1.8.0-linux-x86_64.tar.gz -C colibri && cd colibri
-python3 coli info                         # engine ready ✓
+mkdir lmatomic && tar xzf colibri-v1.8.0-linux-x86_64.tar.gz -C lmatomic && cd lmatomic
+python3 lmatomic info                         # engine ready ✓
 ```
 
-中にはエンジン（`colibri`、Windows では `colibri.exe`）、`coli` ランチャー、その Python
-ヘルパーが入っています。名前の変更や設定は不要です — `coli` は自分の隣にあるエンジンを見つけます。
+中にはエンジン（`lmatomic`、Windows では `glm52.exe`）、`lmatomic` ランチャー、その Python
+ヘルパーが入っています。名前の変更や設定は不要です — `lmatomic` は自分の隣にあるエンジンを見つけます。
 必要なのは [Python 3](https://www.python.org/downloads/) のインストールだけです。ランチャーと
 API ゲートウェイは Python スクリプトですが、エンジン自体は依存ゼロの純粋な C です。
 
@@ -359,7 +359,7 @@ git clone https://github.com/JustVugg/colibri && cd colibri/c
 ./setup.sh                                # gcc/OpenMP を確認し、ビルドとセルフテストを実行
 ```
 
-`coli` を PATH に置きたい場合は、チェックアウトから `pip install -e .` を実行すると登録されます
+`lmatomic` を PATH に置きたい場合は、チェックアウトから `pip install -e .` を実行すると登録されます
 （エンジンは引き続き `c/` にあります — wheel ではなく、クローンからの editable インストールです）。
 
 ### 2. モデルを入手する
@@ -386,7 +386,7 @@ git clone https://github.com/JustVugg/colibri && cd colibri/c
 再開可能なコマンド 1 つで行えます:
 
 ```bash
-./coli convert --model /nvme/glm52_i4     # シャードごとにダウンロード+変換（python、初回のみ）
+./lmatomic convert --model /nvme/glm52_i4     # シャードごとにダウンロード+変換（python、初回のみ）
 ```
 
 <a id="other-supported-models"></a>
@@ -394,7 +394,7 @@ git clone https://github.com/JustVugg/colibri && cd colibri/c
 
 GLM-5.2 がリファレンスモデルですが、同じストリーミング手法でさらに 6 つのファミリーが動作します。
 それぞれが **兄弟エンジン** です — C ファイル 1 つで独自のアーキテクチャを持ち、同じ
-`coli chat` / `coli serve` / `coli web` フロントエンドを使います（ランチャーはモデルの
+`lmatomic chat` / `lmatomic serve` / `lmatomic web` フロントエンドを使います（ランチャーはモデルの
 `config.json` からバイナリを選びます）:
 
 > **それぞれに必要なもの。** これらは大きく異なり、2 つを並べて読んだ人が要件が矛盾していると
@@ -438,8 +438,8 @@ KAT-Coder は同じエンジンでそのまま動きます — アーキテク�
 
 Kimi K3 は変換不要です。QAT で学習された MXFP4 エキスパートはオリジナルの Hugging Face シャードから
 直接ストリーミングされ、bf16 の密な重みセットはロード時に量子化されます。長いエージェントセッションでは、
-リカレント状態のチェックポイントをオプトインできます（RAM 上に `COLI_K3_CKPT=N` スロット、または
-`COLI_K3_CKPT_DIR` でディスクに退避）。編集されたプロンプトやフォローアッププロンプトは、残っている
+リカレント状態のチェックポイントをオプトインできます（RAM 上に `LMA_K3_CKPT=N` スロット、または
+`LMA_K3_CKPT_DIR` でディスクに退避）。編集されたプロンプトやフォローアッププロンプトは、残っている
 最も深いチェックポイントを復元して末尾だけを再プリフィルするため、会話全体を SSM レイヤーで
 再生し直す必要がありません。Vulkan ホストでは `K3_VK_UP=auto` が、計測された帯域幅から
 エキスパートティアのアップロード量を決めます。エンジンの KDA と MLA の経路は、CI でベンダー実装に
@@ -452,18 +452,18 @@ Inkling は int4 のエキスパートと **bf16 の密な重み**（常駐 49.4
 ### 3. 実行する
 
 ```bash
-COLI_MODEL=/nvme/glm52_i4 ./coli chat     # RAM 予算、キャッシュ、MTP を自動検出
-COLI_MODEL=/nvme/glm52_i4 ./coli plan     # 計画された VRAM/RAM/ディスクの配置を確認
-COLI_MODEL=/nvme/glm52_i4 ./coli doctor   # 読み取り専用の準備状況チェック
-COLI_MODEL=/nvme/glm52_i4 ./coli doctor --deep  # テンソル/シャード/インデックス/ミラーの厳密な事前チェック
-COLI_MODEL=/nvme/glm52_i4 ./coli tune     # このマシンで最速かつ安全な実行プロファイルを計測して保存
-./coli web  --model /nvme/glm52_i4        # API + ダッシュボード、ブラウザを開く
-./coli serve --model /nvme/glm52_i4       # API + ダッシュボード、ブラウザなし（ヘッドレス）
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic chat     # RAM 予算、キャッシュ、MTP を自動検出
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic plan     # 計画された VRAM/RAM/ディスクの配置を確認
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic doctor   # 読み取り専用の準備状況チェック
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic doctor --deep  # テンソル/シャード/インデックス/ミラーの厳密な事前チェック
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic tune     # このマシンで最速かつ安全な実行プロファイルを計測して保存
+./lmatomic web  --model /nvme/glm52_i4        # API + ダッシュボード、ブラウザを開く
+./lmatomic serve --model /nvme/glm52_i4       # API + ダッシュボード、ブラウザなし（ヘッドレス）
 ```
 
-Windows ではリリースアーカイブに `coli.cmd` が同梱されています。ダブルクリックでクイックスタート、
-または cmd や PowerShell から `coli.cmd chat --model D:\glm52_i4` を実行してください。
-ソースのチェックアウトからは、同じコマンドを `python coli chat --model
+Windows ではリリースアーカイブに `lmatomic.cmd` が同梱されています。ダブルクリックでクイックスタート、
+または cmd や PowerShell から `lmatomic.cmd chat --model D:\glm52_i4` を実行してください。
+ソースのチェックアウトからは、同じコマンドを `python lmatomic chat --model
 D:\glm52_i4` として実行できます。`.exe` ファイルはエンジンでありランチャーではありません。
 単体で起動するとロードするモデルがないため、すぐに終了します。
 実行時のエンジンは純粋な C です — Python は初回のみの変換ツールとオプションの
@@ -471,32 +471,32 @@ API ゲートウェイでしか使われません。
 
 #### 同じコマンドでどのモデルも動く
 
-`coli` はモデルの `config.json` を読み、対応するエンジンバイナリを選び、そのファミリーの
+`lmatomic` はモデルの `config.json` を読み、対応するエンジンバイナリを選び、そのファミリーの
 チャットテンプレートを適用します — そのため **モデルが変わってもコマンドラインは何も変わりません**。
-使いたいエンジンを一度ビルドしたら、あとは `COLI_MODEL` を適切なディレクトリに向けるだけです:
+使いたいエンジンを一度ビルドしたら、あとは `LMA_MODEL` を適切なディレクトリに向けるだけです:
 
 ```bash
 make -C c glm                                     # GLM-5.2
 make -C c inkling                                 # Inkling
 make -C c kimi_k3                                 # Kimi K3
 
-COLI_MODEL=/nvme/glm52_i4      ./coli chat        # TUI
-COLI_MODEL=/nvme/inkling_i4    ./coli chat
-COLI_MODEL=/nvme/kimi_k3       ./coli chat
+LMA_MODEL=/nvme/glm52_i4      ./lmatomic chat        # TUI
+LMA_MODEL=/nvme/inkling_i4    ./lmatomic chat
+LMA_MODEL=/nvme/kimi_k3       ./lmatomic chat
 
-./coli web --model /nvme/inkling_i4               # API + ダッシュボード、ブラウザを開く
-./coli web --model /nvme/kimi_k3
-./coli serve --model /nvme/inkling_i4             # API + ダッシュボード、ブラウザなし
+./lmatomic web --model /nvme/inkling_i4               # API + ダッシュボード、ブラウザを開く
+./lmatomic web --model /nvme/kimi_k3
+./lmatomic serve --model /nvme/inkling_i4             # API + ダッシュボード、ブラウザなし
 ```
 
-GLM 以外のエンジンでは、`coli chat` がローカルでゲートウェイを起動して TUI をそれに接続します。
+GLM 以外のエンジンでは、`lmatomic chat` がローカルでゲートウェイを起動して TUI をそれに接続します。
 そのため TUI、API、ダッシュボードはすべて同じアーキテクチャ対応のチャットテンプレートを通り、
 テンプレートを自分で指定する必要はありません。
 
 モデルごとに異なる点が 2 つあり、どちらも各モデルのページに記載されています:
 
 - **RAM に余裕のないホストでの Inkling** には、int4 の密コンテナと小さなエキスパートキャッシュが
-  必要です: `./coli chat --model /nvme/inkling_i4 --cap 2`
+  必要です: `./lmatomic chat --model /nvme/inkling_i4 --cap 2`
   （[inkling.md](docs/inkling.md) を参照 — デフォルトの `--cap 8` では、常駐セットに加えて
   約 14 GB のキャッシュが必要です）。
 - **Kimi K3** は MXFP4 エキスパートをオリジナルのチェックポイントからストリーミングするため、
@@ -532,15 +532,15 @@ WSL2 で検証済み）は、すべてのステージを CPU 基準に保ちつ�
 ```bash
 cd c
 make deepseek-v4
-python ./coli chat --model /path/to/DeepSeek-V4-Flash --ram 32
-# coli run / coli serve / coli web も可
+python ./lmatomic chat --model /path/to/DeepSeek-V4-Flash --ram 32
+# lmatomic run / lmatomic serve / lmatomic web も可
 # Windows CUDA ティア: make cuda-dsv4-dll CUDA_ARCH=portable  （RTX 50 では + make cuda-dsv4-dg-dll）
 ```
 
 新しく追加された 2 つのオプトイン GPU レバーがあり、コミュニティによる計測値を求めています。
 どちらもデフォルトでオフで、未設定時はバイト単位で同一です。`DSV4_HYBRID=1` は、実行時に計測した
 帯域幅を使って、VRAM ティアのミスを GPU のフィル分岐と CPU の分岐に振り分けます。
-`COLI_CUDA_MOE_DOUBLE=1`（`COLI_CUDA_MOE_BATCH=1` と併用）は、現在のレイヤーを計算している間に
+`LMA_CUDA_MOE_DOUBLE=1`（`LMA_CUDA_MOE_BATCH=1` と併用）は、現在のレイヤーを計算している間に
 次のレイヤーのエキスパートセット全体を 2 つ目の VRAM バンクにプリフェッチし、VRAM が足りなければ
 単一バンクにフォールバックします。
 CUDA ティアは Pascal と Turing のカード（GTX 10 / RTX 20 シリーズ）でも動作するようになりました:
@@ -587,7 +587,7 @@ CUDA ティア（ビルド、DLL の選択、GPU の対応範囲）、環境変�
 
 ## プロジェクトへの支援
 
-colibrì は、RAM 25 GB の 12 コアのラップトップ上で、1 人のプロジェクトとして始まりました。
+LM Atomic は、RAM 25 GB の 12 コアのラップトップ上で、1 人のプロジェクトとして始まりました。
 今ではその数値は、実機を持つコミュニティから集まっています。役に立ったと感じたら:
 
 - ⭐ リポジトリにスターを付けて共有してください。
@@ -602,7 +602,7 @@ colibrì は、RAM 25 GB の 12 コアのラップトップ上で、1 人のプ�
 ```
 Makefile                  ルートのビルド/チェックのエントリポイント
 c/
-├── colibri.c             GLM-5.2 エンジン  (make glm)
+├── glm52.c             GLM-5.2 エンジン  (make glm)
 ├── inkling.c             Inkling エンジン  (make inkling)
 ├── kimi_k3.c             Kimi K3 エンジン  (make kimi_k3)
 ├── deepseek_v4.c         DeepSeek V4 Flash エンジン  (make deepseek-v4)
@@ -616,7 +616,7 @@ c/
 ├── tok.h, json.h         トークナイザと JSON パーサ
 ├── compat.h              Windows/macOS 用シム（POSIX 名を一か所に）
 ├── expert_store.h        ストリーミングエキスパートキャッシュ
-├── route_trace.h         ルーティングのテレメトリと .coli_usage（エンジン非依存）
+├── route_trace.h         ルーティングのテレメトリと .lma_usage（エンジン非依存）
 ├── kv_prefix.h           ターンをまたいだ KV プレフィックスの再利用
 │
 ├── backend_cuda.*        オプションの CUDA ティア   (CUDA=1)
@@ -624,9 +624,9 @@ c/
 ├── backend_vulkan.*      オプションの Vulkan ティア (VULKAN=1)
 │
 ├── Makefile              ビルドとローカルチェック
-├── coli                  ユーザー向け CLI
+├── lmatomic                  ユーザー向け CLI
 ├── openai_server.py      OpenAI 互換 HTTP ゲートウェイ
-├── resource_plan.py      `coli plan` と `coli doctor` の背後にある RAM/VRAM プランナー
+├── resource_plan.py      `lmatomic plan` と `lmatomic doctor` の背後にある RAM/VRAM プランナー
 ├── tools/                オフライン変換、フィクスチャ、ベンチマーク
 ├── scripts/              長時間実行の変換ヘルパー
 └── tests/                依存関係のない C と Python のテスト
@@ -644,15 +644,15 @@ docs/                     リファレンスドキュメント、実験、メデ
 
 リポジトリのルートからは、`make`、`make check`、`make clean` がエンジンの Makefile に委譲されます。
 
-## なぜ「colibrì」なのか
+## なぜ「LM Atomic」なのか
 
-ハチドリ（イタリア語で colibrì）は体重わずか数グラムで、空中にとどまり、1 日に千もの花を訪れます。
+ハチドリ（イタリア語で LM Atomic）は体重わずか数グラムで、空中にとどまり、1 日に千もの花を訪れます。
 このエンジンは、7,440 億パラメータの巨人をハチドリの食事量で生かし続けます: RAM 25 GB、
 CPU 12 コア、そしてディスクへのたっぷりの忍耐です。
 
 ## 謝辞
 
-colibrì はエンジンにすぎず、それが動かす知性は贈り物です。フロンティア級の重みをオープンに
+LM Atomic はエンジンにすぎず、それが動かす知性は贈り物です。フロンティア級の重みをオープンに
 公開しているチーム — **Z.ai**（GLM）、**Moonshot AI**（Kimi）、**Alibaba Qwen**、**MiniMax**、
 **Allen AI**（OLMoE）— そして、ベンチマークを取り、バイセクトし、アトラスの実行を再現し、
 パッチを送ってくれたすべてのコントリビューターに感謝します。
@@ -697,7 +697,7 @@ colibrì はエンジンにすぎず、それが動かす知性は贈り物で�
 - [transformers](https://github.com/huggingface/transformers) — オラクル:
   CI はランダム初期化モデルをこれに対してトークン単位で再現します。
 - [DietGPU](https://github.com/facebookresearch/dietgpu) — 実験的な圧縮エキスパートティア
-  （`COLI_ANS`）の背後にある GPU ANS コーデック。
+  （`LMA_ANS`）の背後にある GPU ANS コーデック。
 - [rocWMMA](https://github.com/ROCm/rocWMMA) — HIP バックエンドは CUDA の
   `nvcuda::wmma` の fragment/mma_sync API をこれにマッピングしており（`c/backend_gpu_compat.h`）、
   それによって 1 つの .cu ソースを両ベンダー向けにコンパイルできます。

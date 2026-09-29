@@ -29,8 +29,8 @@
  * completabile qui). gr_forced() estende il prefisso finche' esiste UN SOLO byte
  * legale e il parse non e' terminabile: quel prefisso e' il draft forzato.
  */
-#ifndef COLI_GRAMMAR_H
-#define COLI_GRAMMAR_H
+#ifndef LMA_GRAMMAR_H
+#define LMA_GRAMMAR_H
 
 #include <stdint.h>
 #include <stdio.h>
@@ -367,4 +367,4 @@ static int gr_forced(const GrState *S, char *out, int max){
     return n;
 }
 
-#endif /* COLI_GRAMMAR_H */
+#endif /* LMA_GRAMMAR_H */

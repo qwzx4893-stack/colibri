@@ -9,7 +9,7 @@
 #include "../backend_vulkan.h"
 
 int main(void){
-    if(!coli_vk_init("shaders/qmatmul.spv")||!coli_vk_available()){
+    if(!lma_vk_init("shaders/qmatmul.spv")||!lma_vk_available()){
         fprintf(stderr,"vk-mxfp4: no Vulkan device — skipped\n"); return 0;
     }
     srand(7);
@@ -25,9 +25,9 @@ int main(void){
 
     matmul_mxfp4(yc,x,q4,e8,S,I,O);
 
-    ColiVkTensor *t=NULL;
-    if(!coli_vk_matmul(&t,yg,x,q4,sc,7,S,I,O,32)){
-        fprintf(stderr,"vk-mxfp4: FAIL coli_vk_matmul fmt=7 refused\n"); return 1;
+    LmaVkTensor *t=NULL;
+    if(!lma_vk_matmul(&t,yg,x,q4,sc,7,S,I,O,32)){
+        fprintf(stderr,"vk-mxfp4: FAIL lma_vk_matmul fmt=7 refused\n"); return 1;
     }
     double num=0,den=0,mx=0;
     for(int i=0;i<S*O;i++){
@@ -38,6 +38,6 @@ int main(void){
     printf("vk-mxfp4: rel_l2 %.3e  max_rel %.3e  (S=%d I=%d O=%d)\n",rel,mx,S,I,O);
     if(rel>1e-5){ fprintf(stderr,"vk-mxfp4: FAIL rel_l2 %.3e\n",rel); return 1; }
     printf("vk-mxfp4: OK\n");
-    coli_vk_shutdown();
+    lma_vk_shutdown();
     return 0;
 }

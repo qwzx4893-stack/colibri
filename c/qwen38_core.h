@@ -7,8 +7,8 @@
  * text model's `model` namespace are both accepted.  Vision and MTP tensors are
  * indexed by st.h but are never read.
  */
-#ifndef COLI_QWEN38_CORE_H
-#define COLI_QWEN38_CORE_H
+#ifndef LMA_QWEN38_CORE_H
+#define LMA_QWEN38_CORE_H
 #include "kv_prefix.h"
 #include <pthread.h>   /* q38_ehit_mark publishes the lazy HITS table under a lock */
 
@@ -1200,7 +1200,7 @@ static void q38_load_native_fp8_ranges(Model *m,int layer,int expert,Slot *slot,
     Cfg *c=&m->c;
     Q38ExpertScaleCache *cache=&m->expert_scales[layer];
     float *scales=cache->values+(int64_t)expert*3*cache->scale_count;
-    /* Se i tre intervalli sono mappati (COLI_MAP_EXPERTS=1), lo slot li PUNTA
+    /* Se i tre intervalli sono mappati (LMA_MAP_EXPERTS=1), lo slot li PUNTA
      * invece di copiarli: niente slab, niente 14 MB per miss. */
     {
         const uint8_t *pg=(const uint8_t*)st_map_shard_range(weight[0]->fd,weight[0]->off,weight[0]->nbytes);
@@ -2057,12 +2057,12 @@ static void q38_trunk_place_all(Model *m) {
                 placed,g_trunk_n,placed_bytes/1073741824.0,now_s()-t0);
 }
 
-/* Start the tier after the model is loaded. COLI_CUDA=1 turns it on (the
+/* Start the tier after the model is loaded. LMA_CUDA=1 turns it on (the
  * tier reads that itself); it needs every layer's experts in native FP8 with
  * the block-scale bank resident, because the GPU kernels consume exactly the
  * checkpoint layout (e4m3 bytes + [ceil(O/128), ceil(I/128)] scales). */
 static void q38_tier_start(Model *m,int cap) {
-    const char *on=getenv("COLI_CUDA");
+    const char *on=getenv("LMA_CUDA");
     if(!on||on[0]!='1'||on[1])return;
     Cfg *c=&m->c;
     if(!m->native_fp8){
@@ -2091,7 +2091,7 @@ static void q38_moe_decode(Model *m,Layer *l,int layer,const float *x,int S,floa
         q38_dense_matmul(m,logits,xs,&l->router,1,H,E);float mx=logits[0];for(int e=1;e<E;e++)if(logits[e]>mx)mx=logits[e];
         double all=0;for(int e=0;e<E;e++){logits[e]=expf(logits[e]-mx);all+=logits[e];}
         int idx[Q38_MAX_TOPK];float val[Q38_MAX_TOPK];
-        coli_router_topk(logits,NULL,NULL,E,K,idx,NULL,layer,1); /* shared ranking + non-finite policy (moe_router.h) */
+        lma_router_topk(logits,NULL,NULL,E,K,idx,NULL,layer,1); /* shared ranking + non-finite policy (moe_router.h) */
         for(int z=0;z<K;z++) val[z]=logits[idx[z]];
         double top=0;for(int z=0;z<K;z++)top+=val[z];double den=c->norm_topk?top:all;
         float route_gates[Q38_MAX_TOPK];
@@ -2200,7 +2200,7 @@ static void q38_moe_prefill(Model *m,Layer *l,int layer,const float *x,
         memset(group_counts,0,(size_t)E*sizeof(*group_counts));
 
         /* Route the complete chunk with one resident router matmul.  Selection
-         * intentionally mirrors q38_moe_decode: both call coli_router_topk, so the
+         * intentionally mirrors q38_moe_decode: both call lma_router_topk, so the
          * deterministic fallback for invalid logits is the same one. */
         q38_dense_matmul(m,logits,x+(int64_t)base*H,&l->router,rows,H,E);
         for(int s=0;s<rows;s++) {
@@ -2214,7 +2214,7 @@ static void q38_moe_prefill(Model *m,Layer *l,int layer,const float *x,
             }
             int selected[Q38_MAX_TOPK];
             float selected_probability[Q38_MAX_TOPK];
-            coli_router_topk(probabilities,NULL,NULL,E,K,selected,NULL,layer,1);
+            lma_router_topk(probabilities,NULL,NULL,E,K,selected,NULL,layer,1);
             for(int rank=0;rank<K;rank++)
                 selected_probability[rank]=probabilities[selected[rank]];
             double top=0.0;
@@ -2399,7 +2399,7 @@ static const char *g_echo_id = NULL;
 static const float *g_echo_pin_logit = NULL;   /* logit dell'ultima posizione riusata */
 
 static void q38_echo(const char *id, int pos, int token, const float *lo, int V, int k){
-    char tail[1024]; coli_logprob_tail(tail, sizeof tail, lo, V, token, k);
+    char tail[1024]; lma_logprob_tail(tail, sizeof tail, lo, V, token, k);
     unsigned char *piece=NULL; int n=0;
     if(decode_id_alloc(token,&piece,&n)) { piece=NULL; n=0; }
     if(n<0) n=0;
@@ -2463,7 +2463,7 @@ static float *step(Model *m,const int *ids,int S,int pos_base) {
 }
 
 static int q38_tm_enabled(void) {
-    const char *enabled=getenv("COLI_TIMERS");
+    const char *enabled=getenv("LMA_TIMERS");
     return enabled&&enabled[0]=='1'&&enabled[1]=='\0';
 }
 
@@ -2554,4 +2554,4 @@ static void q38_model_free(Model *m) {
     memset(m,0,sizeof(*m));
 }
 
-#endif /* COLI_QWEN38_CORE_H */
+#endif /* LMA_QWEN38_CORE_H */

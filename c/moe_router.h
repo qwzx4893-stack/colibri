@@ -16,7 +16,7 @@
  * an fp overflow at an eviction boundary (c/tests/test_logit_nan.c documents
  * both and hardened only the sampling side, downstream of this).
  *
- * The fix landed in colibri.c first, then in four sibling engines, and stayed
+ * The fix landed in glm52.c first, then in four sibling engines, and stayed
  * missing in glm53.c -- the recurring shape of defects in this tree, a fix that
  * reaches one engine and not its siblings. So it lives here, once.
  *
@@ -42,20 +42,20 @@
  *                For callers that already handle "none" (prefetch predictions,
  *                keep-masked windows) or that treat it as an error.
  */
-#ifndef COLI_MOE_ROUTER_H
-#define COLI_MOE_ROUTER_H
+#ifndef LMA_MOE_ROUTER_H
+#define LMA_MOE_ROUTER_H
 
 #include <stdint.h>
 #include <stdio.h>
 
-#define COLI_ROUTER_BITMAP_EXPERTS 4096   /* above this, "taken" is a prefix scan */
+#define LMA_ROUTER_BITMAP_EXPERTS 4096   /* above this, "taken" is a prefix scan */
 
 /* One pick: the best eligible candidate that is not in taken[0..ntaken), or -1
  * when none is finite. For incremental callers (prefetch predictions that stop
  * once enough probability mass is covered) that would waste work selecting all
- * K up front. Same ranking and tie-break as coli_router_topk. *val gets the
+ * K up front. Same ranking and tie-break as lma_router_topk. *val gets the
  * ranking value picked (may be NULL). */
-static inline int coli_router_best(const float *score, const float *bias,
+static inline int lma_router_best(const float *score, const float *bias,
                                    const unsigned char *keep, int E,
                                    const int *taken, int ntaken, float *val)
 {
@@ -74,10 +74,10 @@ static inline int coli_router_best(const float *score, const float *bias,
 /* Replace every unfilled slot (idx[k] < 0) with the lowest expert id that is not
  * already present, and zero its val. Slots that are already filled are never
  * touched. This is the "degrade" step on its own, for callers that ran a
- * selection with "none" semantics (coli_router_topk(..., degrade = 0), or a
+ * selection with "none" semantics (lma_router_topk(..., degrade = 0), or a
  * keep-masked window) and then hand idx[] to code that indexes tables with it.
  * One warning is printed the first time it fires. */
-static inline void coli_router_fill(int *idx, float *val, int K, int E, int layer)
+static inline void lma_router_fill(int *idx, float *val, int K, int E, int layer)
 {
     for (int kk = 0; kk < K; kk++) {
         if (idx[kk] >= 0) continue;
@@ -110,13 +110,13 @@ static inline void coli_router_fill(int *idx, float *val, int K, int E, int laye
  *
  * Returns how many slots were filled by a real (finite, eligible) candidate.
  * With degrade = 1 the remaining slots are still filled, with in-range ids
- * (coli_router_fill); with degrade = 0 they are -1 and val is 0. */
-static inline int coli_router_topk(const float *score, const float *bias,
+ * (lma_router_fill); with degrade = 0 they are -1 and val is 0. */
+static inline int lma_router_topk(const float *score, const float *bias,
                                    const unsigned char *keep, int E, int K,
                                    int *idx, float *val, int layer, int degrade)
 {
-    uint64_t bits[COLI_ROUTER_BITMAP_EXPERTS / 64];
-    int use_bits = E <= COLI_ROUTER_BITMAP_EXPERTS;
+    uint64_t bits[LMA_ROUTER_BITMAP_EXPERTS / 64];
+    int use_bits = E <= LMA_ROUTER_BITMAP_EXPERTS;
     int picked = 0;
     if (use_bits) for (int w = 0; w < (E + 63) / 64; w++) bits[w] = 0;
 
@@ -138,8 +138,8 @@ static inline int coli_router_topk(const float *score, const float *bias,
         if (val) val[kk] = bv;
         if (use_bits) bits[best >> 6] |= (uint64_t)1 << (best & 63);
     }
-    if (degrade && picked < K) coli_router_fill(idx, val, K, E, layer);
+    if (degrade && picked < K) lma_router_fill(idx, val, K, E, layer);
     return picked;
 }
 
-#endif /* COLI_MOE_ROUTER_H */
+#endif /* LMA_MOE_ROUTER_H */

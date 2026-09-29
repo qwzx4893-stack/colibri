@@ -132,7 +132,7 @@ design): 32-bit state, byte renormalization, `L = 2^23`,
 ### Shared table, in shard metadata
 
 The table ships **once per shard** in
-`__metadata__["colibri.int4-rans256-g0.table"]`, a JSON string:
+`__metadata__["lma.int4-rans256-g0.table"]`, a JSON string:
 
 ```json
 {
@@ -158,7 +158,7 @@ would ship as `g1`); readers never resolve it externally.
 
 ## THE STAMP IS MANDATORY (the load-bearing difference from fmt=8)
 
-`__metadata__["colibri.fmt"]` maps each entropy-coded **weight** tensor
+`__metadata__["lma.fmt"]` maps each entropy-coded **weight** tensor
 name (never `.qs`) to the string `int4-rans256-g0`, JSON-encoded with
 sorted keys.
 

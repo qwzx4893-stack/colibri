@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fmt=4 -> fmt=2 converter: GLM-5.2 colibri container, grouped int4 (gs=64) -> per-row int4.
+"""fmt=4 -> fmt=2 converter: GLM-5.2 lmatomic container, grouped int4 (gs=64) -> per-row int4.
 
 Motivation: the Metal backend rejects fmt=4 at its attention/dispatch entry points
 (#585/#587); fmt=2 (per-row int4) is the format with full backend support. Converted
@@ -8,7 +8,7 @@ container benchmarked in docs/METAL-M1ULTRA-FMT2-REPORT.md.
 Container layout (both formats): every quantized tensor is a FLAT 1-D U8 array `name` (packed
 nibbles, offset binary: value = nibble - 8, LOW nibble = even element) plus a FLAT 1-D F32
 companion `name.qs`. The engine detects the format purely by byte counts (qt_resolve_fmt,
-c/colibri.c:1027): int4 weight bytes = O*I/2; `.qs` of O floats -> fmt=2, O*ceil(I/64) floats
+c/glm52.c:1027): int4 weight bytes = O*I/2; `.qs` of O floats -> fmt=2, O*ceil(I/64) floats
 -> fmt=4. So conversion = rewrite each fmt=4 tensor with exactly O per-row scales.
 
 Per-tensor classification by element-count ratio nb/ns (weight bytes / scale floats):

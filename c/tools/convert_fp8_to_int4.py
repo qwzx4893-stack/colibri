@@ -33,7 +33,7 @@ _positioned_write_lock = threading.Lock()
 
 
 # ---------- guardia di famiglia (#1304) ----------
-# Questo convertitore serve UNA famiglia: GLM-5.2. Ma `coli convert` accetta
+# Questo convertitore serve UNA famiglia: GLM-5.2. Ma `lmatomic convert` accetta
 # qualunque --repo, e in una settimana due utenti gli hanno dato Qwen3.8:
 # i tensori BF16 che non riconosce come esperti GLM passano upcastati a f32,
 # ogni shard raddoppia, e #1304 si e' fermato a 424 GB scritti su 360 di
@@ -185,7 +185,7 @@ def quant_int4_grouped(w, bits, gs=128):
     return out.reshape(-1), s_flat
 
 def quant_int3_g64(w, bits=3, group=64):        # -> (qbytes U8 [O*ceil(I/64)*24], scales f32 [O*ceil(I/64)])
-    """int3 with PER-GROUP scales (fmt=5 in colibri.c): per 64-input group, symmetric absmax
+    """int3 with PER-GROUP scales (fmt=5 in glm52.c): per 64-input group, symmetric absmax
     (qmax=3, clamp [-4,3], stored v+4), packed as 16B low plane (2 bits/val, int2 layout)
     + 8B high plane (1 bit/val). Same math as quant_ablation._quant_last_dim(bits=3,
     group=64) (#132), here with real packing. 3.5 bits/weight effective."""
@@ -210,7 +210,7 @@ def quant_int3_g64(w, bits=3, group=64):        # -> (qbytes U8 [O*ceil(I/64)*24
 E8 = "e8"                                       # CLI/bits-plumbing marker for fmt=6 (not a bit width)
 
 def quant_e8(w):                                # -> (qbytes U8 [O*ceil(I/256)*98], tag f32 [1])
-    """E8/IQ3 lattice (fmt=6 in colibri.c, #452): rotate the rows first (W@Q,
+    """E8/IQ3 lattice (fmt=6 in glm52.c, #452): rotate the rows first (W@Q,
     block-diagonal FWHT with regenerated signs — iq3_pack.rotate_rows mirrors
     quant.h e8_rot_rows), then pack with the iq3 codec: 98B per 256 weights,
     3.0625 bpw, every scale in-block. The .qs companion is a single float,
@@ -369,7 +369,7 @@ PROJ_BITS = {}
 # as f32, and abs/divide/rint/clip each materialise another copy (~15 GB peak) on a
 # box with 13 GB free. E8 is excluded — it is already blocked inside iq3_pack.encode,
 # and its ".qs" companion is a single format tag, not a per-row scale.
-QUANT_ROWS = int(os.environ.get("COLI_QUANT_ROWS", "8192"))
+QUANT_ROWS = int(os.environ.get("LMA_QUANT_ROWS", "8192"))
 
 def _rowwise(fn, w, *args):
     O = w.shape[0]
@@ -660,7 +660,7 @@ def main():
         print(f"[nvfp4] round-trip encode->dequant: max abs err = {maxerr:.3e} "
               f"({'OK' if maxerr < 1e-9 else 'FAIL'})")
         assert maxerr < 1e-9
-        # 3) requant colibri int4 su valori dequantati -> errore piccolo atteso
+        # 3) requant lmatomic int4 su valori dequantati -> errore piccolo atteso
         q, s = quant_int4(got.astype(np.float32), 4)
         rb = (I + 1)//2; qb = q.reshape(O, rb)
         lo = (qb & 0x0F).astype(np.int32) - 8; hi = ((qb >> 4) & 0x0F).astype(np.int32) - 8
@@ -671,7 +671,7 @@ def main():
         # spaziano 16x per il block-scale costa ~0.17 di errore relativo di suo. La soglia
         # larga becca solo una corruzione grossolana, non e' un bound di precisione.
         # EN: informational — per-row int4 requant of 16x-block-range data inherently ~0.17.
-        print(f"[nvfp4] dequant->colibri int4->dequant: errore rel medio = {rel:.4f} "
+        print(f"[nvfp4] dequant->lmatomic int4->dequant: errore rel medio = {rel:.4f} "
               f"(atteso ~0.17; {'OK' if rel < 0.30 else 'ANOMALO'})")
         assert rel < 0.30, f"requant rel err {rel:.3f} troppo alto: dequant probabilmente corrotto"
         print("[nvfp4] SELFTEST OK")
@@ -888,16 +888,16 @@ def main():
 
     def download_retry(repo, fn, dest, tries=999):
         """Downloader multi-stream con resume via Range. Apre N segmenti concorrenti
-        (default 2, COLI_DL_STREAMS per cambiarli) e salva lo stato per-segmento in un
+        (default 2, LMA_DL_STREAMS per cambiarli) e salva lo stato per-segmento in un
         sidecar .seg -> NESSUN byte perso comunque muoia la connessione. Un singolo stream
         HF e' limitato a ~2 MB/s (misurato); 2 stream ~ raddoppiano il throughput senza
-        saturare una linea domestica. File piccoli, COLI_DL_STREAMS=1 o un vecchio .part
+        saturare una linea domestica. File piccoli, LMA_DL_STREAMS=1 o un vecchio .part
         legacy -> percorso a stream singolo (_download_single).
         EN: multi-stream Range-resume downloader. Opens N concurrent segments (default 2,
-        EN: COLI_DL_STREAMS to change) and saves per-segment state in a .seg sidecar -> NO
+        EN: LMA_DL_STREAMS to change) and saves per-segment state in a .seg sidecar -> NO
         EN: byte is lost however the connection dies. A single HF stream is paced at
         EN: ~2 MB/s (measured); 2 streams roughly double throughput without saturating a
-        EN: home line. Small files, COLI_DL_STREAMS=1 or a legacy .part -> single-stream
+        EN: home line. Small files, LMA_DL_STREAMS=1 or a legacy .part -> single-stream
         EN: path (_download_single)."""
         import time as _t, threading, urllib.request, urllib.error
         url = f"https://huggingface.co/{repo}/resolve/main/{fn}"
@@ -906,7 +906,7 @@ def main():
         expected = SIZES.get(fn)
         if os.path.exists(out) and (expected is None or os.path.getsize(out) == expected):
             return out
-        NS = max(1, min(8, int(os.environ.get("COLI_DL_STREAMS", "2"))))
+        NS = max(1, min(8, int(os.environ.get("LMA_DL_STREAMS", "2"))))
         # un .part senza sidecar l'ha scritto una versione precedente a stream singolo.
         # EN: a .part without a sidecar was written by an older single-stream version.
         legacy = os.path.exists(part) and not os.path.exists(side)
@@ -931,7 +931,7 @@ def main():
             s0, s1 = segs[t]
             while done[t] < s1 - s0 and not stopfail:
                 pos = s0 + done[t]
-                _hdrs = {"User-Agent": "colibri-convert", "Range": f"bytes={pos}-{s1-1}"}
+                _hdrs = {"User-Agent": "lmatomic-convert", "Range": f"bytes={pos}-{s1-1}"}
                 if os.environ.get("HF_TOKEN"): _hdrs["Authorization"] = f"Bearer {os.environ['HF_TOKEN']}"
                 req = urllib.request.Request(url, headers=_hdrs)
                 try:
@@ -983,10 +983,10 @@ def main():
 
     def _download_single(url, fn, out, part, expected):
         """Percorso a stream singolo con resume via Range (file piccoli / .part legacy /
-        COLI_DL_STREAMS=1). Un EOF corto ma pulito conta come ripresa; se non arriva
+        LMA_DL_STREAMS=1). Un EOF corto ma pulito conta come ripresa; se non arriva
         NESSUN byte nuovo, backoff invece di girare a vuoto.
         EN: single-stream path with Range resume (small files / legacy .part /
-        EN: COLI_DL_STREAMS=1). A clean short EOF counts as a resume; if NO new byte
+        EN: LMA_DL_STREAMS=1). A clean short EOF counts as a resume; if NO new byte
         EN: arrives, back off instead of spinning."""
         import time as _t, urllib.request, urllib.error
         t0 = _t.time(); nres = 0; mark = 0; tmark = t0
@@ -994,7 +994,7 @@ def main():
             have = os.path.getsize(part) if os.path.exists(part) else 0
             if expected is not None and have >= expected: break
             have0 = have
-            req = urllib.request.Request(url, headers={"User-Agent": "colibri-convert"})
+            req = urllib.request.Request(url, headers={"User-Agent": "lmatomic-convert"})
             if have: req.add_header("Range", f"bytes={have}-")
             if os.environ.get("HF_TOKEN"): req.add_header("Authorization", f"Bearer {os.environ['HF_TOKEN']}")
             try:

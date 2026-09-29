@@ -53,11 +53,11 @@ int main(void) {
     FILE *f=fopen(path,"wb");if(!f) return 1;
     uint32_t data[]={0x51544831u,1,2,8,4};
     if(fwrite(data,sizeof data,1,f)!=1){fclose(f);remove(path);return 1;}fclose(f);
-    setenv("COLI_CUDA","1",1);setenv("COLI_GPUS","0",1);
+    setenv("LMA_CUDA","1",1);setenv("LMA_GPUS","0",1);
     setenv("HEAT_FILE",path,1);setenv("CUDA_EXPERT_GB","0.0625",1);
     int failed=0;
     for(fail_stage=0;fail_stage<=5;fail_stage++) for(int retry=0;retry<2;retry++) {
-        setenv("COLI_PLACE",fail_stage==0?"experts=cpu,lmhead=0":"experts=0,lmhead=0",1);
+        setenv("LMA_PLACE",fail_stage==0?"experts=cpu,lmhead=0":"experts=0,lmhead=0",1);
         sync_step=0;
         int rc=qt_init(1,2,64,32,2,1,0,1);
         if(rc || G.on || G.slot || G.heat0 || G.is_x || G.is_x_floats ||

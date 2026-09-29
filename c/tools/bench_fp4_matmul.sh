@@ -25,7 +25,7 @@ case "$(uname -m)" in
     *) echo "unsupported arch $(uname -m)"; exit 1 ;;
 esac
 
-UNIT="-DCOLI_V4_UNIT_NATIVE_QUANT"
+UNIT="-DLMA_V4_UNIT_NATIVE_QUANT"
 COMMON="-O2 -fopenmp -I."
 # Apple clang lacks -fopenmp; prefer a real gcc when present.
 CC=gcc

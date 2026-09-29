@@ -1,5 +1,5 @@
 """
-GLM-5.3-Flash (zai-org/GLM-5.3-Flash) -> contenitore colibri.
+GLM-5.3-Flash (zai-org/GLM-5.3-Flash) -> contenitore lmatomic.
 
 Strategia DISK-SAFE, la stessa di convert_fp8_to_int4.py: scarica UNO shard,
 lo converte, lo CANCELLA, passa al prossimo. Il picco su disco e' l'output che
@@ -37,7 +37,7 @@ import numpy as np
 
 REPO = "zai-org/GLM-5.3-Flash"
 # chat_template.jinja e' il template ufficiale delle conversazioni: senza,
-# `coli chat` renderebbe i turni a modo suo e il modello risponderebbe a un
+# `lmatomic chat` renderebbe i turni a modo suo e il modello risponderebbe a un
 # prompt che non e' quello per cui e' stato addestrato.
 META_FILES = ("config.json", "generation_config.json", "tokenizer.json",
               "tokenizer_config.json", "processor_config.json",
@@ -233,11 +233,11 @@ def fetch_hf(repo, filename, dest_dir, token, expected_size=0,
         "import os,sys\n"
         "from huggingface_hub import hf_hub_download\n"
         "hf_hub_download(sys.argv[1], sys.argv[2], local_dir=sys.argv[3],\n"
-        "                token=os.environ.get('COLI_HF_TOKEN') or False)\n"
+        "                token=os.environ.get('LMA_HF_TOKEN') or False)\n"
     )
     environment = dict(os.environ)
     if token:
-        environment["COLI_HF_TOKEN"] = token
+        environment["LMA_HF_TOKEN"] = token
     def complete():
         """Un file c'e' solo se e' INTERO: un troncamento (un tentativo
         precedente interrotto) sarebbe accettato come buono e poi esploderebbe

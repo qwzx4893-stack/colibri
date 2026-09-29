@@ -13,13 +13,13 @@
 
 int main(void) {
     jval *root = json_parse(
-        "{\"name\":\"Colibri\\nCPU\",\"enabled\":true,\"empty\":null,"
+        "{\"name\":\"LM Atomic\\nCPU\",\"enabled\":true,\"empty\":null,"
         "\"values\":[1,-2.5,3e2],\"unicode\":\"\\u03bb \\uD83D\\uDE80\"}",
         NULL
     );
 
     CHECK(root && root->t == J_OBJ);
-    CHECK(strcmp(json_get(root, "name")->str, "Colibri\nCPU") == 0);
+    CHECK(strcmp(json_get(root, "name")->str, "LM Atomic\nCPU") == 0);
     CHECK(json_get(root, "enabled")->boolean == 1);
     CHECK(json_get(root, "empty")->t == J_NULL);
     CHECK(json_get(root, "missing") == NULL);

@@ -4,15 +4,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define COLI_EDGE_MAX_ADAPTERS 16
+#define LMA_EDGE_MAX_ADAPTERS 16
 
-struct ColiEdgeEngine {
-    const ColiEdgeAdapter *adapter;
+struct LmaEdgeEngine {
+    const LmaEdgeAdapter *adapter;
     void *impl;
-    ColiEdgeCapabilities capabilities;
+    LmaEdgeCapabilities capabilities;
 };
 
-static const ColiEdgeAdapter *g_adapters[COLI_EDGE_MAX_ADAPTERS];
+static const LmaEdgeAdapter *g_adapters[LMA_EDGE_MAX_ADAPTERS];
 static int g_adapter_count;
 
 static int set_error(char *error, size_t error_size, const char *message) {
@@ -23,7 +23,7 @@ static int set_error(char *error, size_t error_size, const char *message) {
 static int id_valid(const char *id) {
     if (!id || !*id) return 0;
     size_t length = strlen(id);
-    if (length >= COLI_EDGE_ENGINE_ID_CAP) return 0;
+    if (length >= LMA_EDGE_ENGINE_ID_CAP) return 0;
     for (size_t i = 0; i < length; i++) {
         unsigned char c = (unsigned char)id[i];
         if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
@@ -38,18 +38,18 @@ static int fixed_string_valid(const char *value, size_t capacity) {
 
 static size_t dtype_size(uint32_t dtype) {
     switch (dtype) {
-        case COLI_EDGE_DTYPE_F32: return 4;
-        case COLI_EDGE_DTYPE_F16:
-        case COLI_EDGE_DTYPE_BF16: return 2;
+        case LMA_EDGE_DTYPE_F32: return 4;
+        case LMA_EDGE_DTYPE_F16:
+        case LMA_EDGE_DTYPE_BF16: return 2;
         default: return 0;
     }
 }
 
-static int capabilities_valid(const ColiEdgeCapabilities *capabilities,
-                              const ColiEdgeAdapter *adapter) {
+static int capabilities_valid(const LmaEdgeCapabilities *capabilities,
+                              const LmaEdgeAdapter *adapter) {
     int tokenizer = adapter->tokenize && adapter->detokenize;
     return capabilities->struct_size == sizeof(*capabilities) &&
-           capabilities->abi_version == COLI_EDGE_ABI_VERSION &&
+           capabilities->abi_version == LMA_EDGE_ABI_VERSION &&
            fixed_string_valid(capabilities->engine_id,
                               sizeof(capabilities->engine_id)) &&
            strcmp(capabilities->engine_id, adapter->engine_id) == 0 &&
@@ -62,17 +62,17 @@ static int capabilities_valid(const ColiEdgeCapabilities *capabilities,
            dtype_size(capabilities->state_dtype) != 0 &&
            capabilities->state_width && capabilities->vocab_size &&
            capabilities->num_layers &&
-           !!(capabilities->flags & COLI_EDGE_CAP_TOKENIZE) == tokenizer &&
-           !!(capabilities->flags & COLI_EDGE_CAP_DETOKENIZE) == tokenizer &&
-           !!(capabilities->flags & COLI_EDGE_CAP_GREEDY) ==
+           !!(capabilities->flags & LMA_EDGE_CAP_TOKENIZE) == tokenizer &&
+           !!(capabilities->flags & LMA_EDGE_CAP_DETOKENIZE) == tokenizer &&
+           !!(capabilities->flags & LMA_EDGE_CAP_GREEDY) ==
                !!adapter->select &&
-           !!(capabilities->flags & COLI_EDGE_CAP_LOGITS) ==
+           !!(capabilities->flags & LMA_EDGE_CAP_LOGITS) ==
                !!adapter->logits;
 }
 
-int coli_edge_adapter_register(const ColiEdgeAdapter *adapter) {
+int lma_edge_adapter_register(const LmaEdgeAdapter *adapter) {
     if (!adapter || adapter->struct_size < sizeof(*adapter) ||
-        adapter->abi_version != COLI_EDGE_ABI_VERSION ||
+        adapter->abi_version != LMA_EDGE_ABI_VERSION ||
         !id_valid(adapter->engine_id) || !adapter->engine_open ||
         !adapter->engine_destroy || !adapter->embed ||
         !!adapter->tokenize != !!adapter->detokenize)
@@ -80,12 +80,12 @@ int coli_edge_adapter_register(const ColiEdgeAdapter *adapter) {
     for (int i = 0; i < g_adapter_count; i++)
         if (strcmp(g_adapters[i]->engine_id, adapter->engine_id) == 0)
             return -1;
-    if (g_adapter_count >= COLI_EDGE_MAX_ADAPTERS) return -1;
+    if (g_adapter_count >= LMA_EDGE_MAX_ADAPTERS) return -1;
     g_adapters[g_adapter_count++] = adapter;
     return 0;
 }
 
-const ColiEdgeAdapter *coli_edge_adapter_lookup(const char *engine_id) {
+const LmaEdgeAdapter *lma_edge_adapter_lookup(const char *engine_id) {
     if (!engine_id) return NULL;
     for (int i = 0; i < g_adapter_count; i++)
         if (strcmp(g_adapters[i]->engine_id, engine_id) == 0)
@@ -93,11 +93,11 @@ const ColiEdgeAdapter *coli_edge_adapter_lookup(const char *engine_id) {
     return NULL;
 }
 
-int coli_edge_adapter_count(void) { return g_adapter_count; }
+int lma_edge_adapter_count(void) { return g_adapter_count; }
 
-int coli_edge_engine_open(const char *engine_id,
-                          const ColiEdgeEngineOptions *options,
-                          ColiEdgeEngine **engine,
+int lma_edge_engine_open(const char *engine_id,
+                          const LmaEdgeEngineOptions *options,
+                          LmaEdgeEngine **engine,
                           char *error, size_t error_size) {
     if (!engine) return set_error(error, error_size,
                                   "missing edge engine output");
@@ -105,16 +105,16 @@ int coli_edge_engine_open(const char *engine_id,
     if (!options || options->struct_size < sizeof(*options) ||
         !options->model_dir || !*options->model_dir)
         return set_error(error, error_size, "invalid edge engine options");
-    const ColiEdgeAdapter *adapter = coli_edge_adapter_lookup(engine_id);
+    const LmaEdgeAdapter *adapter = lma_edge_adapter_lookup(engine_id);
     if (!adapter)
         return set_error(error, error_size, "edge engine is not registered");
 
-    ColiEdgeEngine *created = calloc(1, sizeof(*created));
+    LmaEdgeEngine *created = calloc(1, sizeof(*created));
     if (!created)
         return set_error(error, error_size, "out of memory opening edge engine");
     created->adapter = adapter;
     created->capabilities.struct_size = sizeof(created->capabilities);
-    created->capabilities.abi_version = COLI_EDGE_ABI_VERSION;
+    created->capabilities.abi_version = LMA_EDGE_ABI_VERSION;
     if (adapter->engine_open(&created->impl, &created->capabilities, options,
                              error, error_size) || !created->impl) {
         if (created->impl) adapter->engine_destroy(created->impl);
@@ -131,8 +131,8 @@ int coli_edge_engine_open(const char *engine_id,
     return 0;
 }
 
-int coli_edge_engine_capabilities(const ColiEdgeEngine *engine,
-                                  ColiEdgeCapabilities *capabilities,
+int lma_edge_engine_capabilities(const LmaEdgeEngine *engine,
+                                  LmaEdgeCapabilities *capabilities,
                                   char *error, size_t error_size) {
     if (!engine || !capabilities ||
         capabilities->struct_size < sizeof(*capabilities))
@@ -143,13 +143,13 @@ int coli_edge_engine_capabilities(const ColiEdgeEngine *engine,
     return 0;
 }
 
-void coli_edge_engine_close(ColiEdgeEngine *engine) {
+void lma_edge_engine_close(LmaEdgeEngine *engine) {
     if (!engine) return;
     engine->adapter->engine_destroy(engine->impl);
     free(engine);
 }
 
-int coli_edge_tokenize(ColiEdgeEngine *engine,
+int lma_edge_tokenize(LmaEdgeEngine *engine,
                        const char *text, size_t text_bytes,
                        int32_t *token_ids, size_t token_capacity,
                        size_t *token_count,
@@ -164,7 +164,7 @@ int coli_edge_tokenize(ColiEdgeEngine *engine,
                                      error, error_size);
 }
 
-int coli_edge_detokenize(ColiEdgeEngine *engine,
+int lma_edge_detokenize(LmaEdgeEngine *engine,
                          const int32_t *token_ids, size_t token_count,
                          char *text, size_t text_capacity, size_t *text_bytes,
                          char *error, size_t error_size) {
@@ -179,7 +179,7 @@ int coli_edge_detokenize(ColiEdgeEngine *engine,
                                        error, error_size);
 }
 
-static int activation_bytes(const ColiEdgeEngine *engine, uint32_t rows,
+static int activation_bytes(const LmaEdgeEngine *engine, uint32_t rows,
                             size_t *bytes) {
     size_t element_size = dtype_size(engine->capabilities.state_dtype);
     if (!rows || !element_size ||
@@ -191,8 +191,8 @@ static int activation_bytes(const ColiEdgeEngine *engine, uint32_t rows,
     return 0;
 }
 
-int coli_edge_embed(ColiEdgeEngine *engine,
-                    const ColiEdgeEmbedRequest *request,
+int lma_edge_embed(LmaEdgeEngine *engine,
+                    const LmaEdgeEmbedRequest *request,
                     char *error, size_t error_size) {
     size_t expected = 0;
     if (!engine || !request || request->struct_size < sizeof(*request) ||
@@ -210,8 +210,8 @@ int coli_edge_embed(ColiEdgeEngine *engine,
     return engine->adapter->embed(engine->impl, request, error, error_size);
 }
 
-int coli_edge_select(ColiEdgeEngine *engine,
-                     const ColiEdgeSelectRequest *request,
+int lma_edge_select(LmaEdgeEngine *engine,
+                     const LmaEdgeSelectRequest *request,
                      char *error, size_t error_size) {
     size_t expected = 0;
     if (!engine || !request || request->struct_size < sizeof(*request) ||
@@ -233,8 +233,8 @@ int coli_edge_select(ColiEdgeEngine *engine,
     return engine->adapter->select(engine->impl, request, error, error_size);
 }
 
-int coli_edge_logits(ColiEdgeEngine *engine,
-                     const ColiEdgeLogitsRequest *request,
+int lma_edge_logits(LmaEdgeEngine *engine,
+                     const LmaEdgeLogitsRequest *request,
                      char *error, size_t error_size) {
     size_t expected = 0;
     if (!engine || !request || request->struct_size < sizeof(*request) ||

@@ -1,6 +1,6 @@
 # Frozen-corpus speculative drafts
 
-*The canonical reference for the `COLI_DRAFT_CORPUS=` draft source. It is the
+*The canonical reference for the `LMA_DRAFT_CORPUS=` draft source. It is the
 existing n-gram draft (method E) taken off the live context and pointed at a
 persistent file of previously generated token ids — the retrieval-based
 speculative decoding idea, reusing this engine's verification unchanged.*
@@ -47,16 +47,16 @@ On genuinely novel text the corpus has nothing to propose, drafts fall back to
 MTP/n-gram, and the gain approaches zero (the lookup itself is cheap, but it is
 not free). A general chat assistant answering new questions is the case where
 this buys the least. The feature is opt-in for exactly that reason — unset
-`COLI_DRAFT_CORPUS` and nothing about decoding changes.
+`LMA_DRAFT_CORPUS` and nothing about decoding changes.
 
 Related: deep drafts from this source are what surfaced
 [#689](https://github.com/JustVugg/colibri/issues/689) — speculative verify
 batches at `S>=8` diverging from the unbatched path by a near-tie token on CUDA.
 That is a separate, open bug in the verify path rather than in this draft
-source, but a large `COLI_DRAFT_CORPUS` hit rate is the easiest way to reach it.
+source, but a large `LMA_DRAFT_CORPUS` hit rate is the easiest way to reach it.
 
 Drafts that are *rejected* cost real time, so the source pauses itself below
-`COLI_CORPUS_MINACC` acceptance (default 50%, the measured break-even: 90%
+`LMA_CORPUS_MINACC` acceptance (default 50%, the measured break-even: 90%
 acceptance gave +22%, 19% gave −25%). A prompt with no relation to the corpus
 costs nothing at all — the suffix match simply finds nothing and the source
 stays inert (measured: identical forward count to a run with no corpus). The
@@ -67,19 +67,19 @@ produce spurious matches; that is what the guard is for.
 
 ```bash
 # 1. freeze a run's output ids (TOKENS=1 already dumps them to stderr)
-TOKENS=1 COLI_TEMP=0 ./coli run --ngen 96 "..." 2>&1 |
+TOKENS=1 LMA_TEMP=0 ./lmatomic run --ngen 96 "..." 2>&1 |
   sed -n 's/.*\[TOKENS\][0-9 ]*generated://p' > corpus.txt
 
 # 2. draft from it on later runs
-COLI_DRAFT_CORPUS=corpus.txt COLI_CORPUS_K=8 COLI_TEMP=0 ./coli run --ngen 96 "..."
+LMA_DRAFT_CORPUS=corpus.txt LMA_CORPUS_K=8 LMA_TEMP=0 ./lmatomic run --ngen 96 "..."
 ```
 
-- `COLI_DRAFT_CORPUS=<file>` — whitespace-separated token ids. `-1` separates
+- `LMA_DRAFT_CORPUS=<file>` — whitespace-separated token ids. `-1` separates
   spans; a proposal never crosses one. Absent or unreadable = source off.
-- `COLI_CORPUS_K=n` — proposal depth (default 8, capped at 48 by the verify
+- `LMA_CORPUS_K=n` — proposal depth (default 8, capped at 48 by the verify
   batch). Deeper proposals raise the forward multiplier and the per-forward
   cost; 8 was the best measured trade on GLM-5.2.
-- `COLI_CORPUS_MINACC=pct` — pause threshold (default 50). Below this acceptance
+- `LMA_CORPUS_MINACC=pct` — pause threshold (default 50). Below this acceptance
   over a 24-proposal window the source pauses for 256 tokens, then re-arms.
 - The engine reports at end of run:
   `corpus drafts: NN% acceptance (a/b proposed from N frozen ids)`.
@@ -94,7 +94,7 @@ loop accepts a token solely when it matches what the model itself produced. Two
 independent checks:
 
 - the token-exact oracle passes with the source **armed** (`SNAP=./glm_tiny
-  COLI_DRAFT_CORPUS=... ./colibri 64 16 16` → 20/20, same as unarmed);
+  LMA_DRAFT_CORPUS=... ./glm52 64 16 16` → 20/20, same as unarmed);
 - a 96-token CPU generation with 100% acceptance at depth 8 is **byte-identical**
   to the same generation with the source off.
 

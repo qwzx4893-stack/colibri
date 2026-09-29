@@ -78,7 +78,7 @@ describe("chat request extensions", () => {
     expect(await requestBody()).not.toHaveProperty("cache_slot")
   })
 
-  it("sends cache_slot zero when colibrì advertises KV slots", async () => {
+  it("sends cache_slot zero when LM Atomic advertises KV slots", async () => {
     expect(await requestBody(0)).toMatchObject({ cache_slot: 0 })
   })
 })

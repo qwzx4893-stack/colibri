@@ -11,5 +11,5 @@ WORKDIR /app
 RUN git clone https://github.com/JustVugg/colibri.git .
 WORKDIR /app/c
 # It's time to compile
-RUN ./setup.sh && ./coli build
+RUN ./setup.sh && ./lmatomic build
 

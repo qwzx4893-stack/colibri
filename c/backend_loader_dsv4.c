@@ -3,13 +3,13 @@
  * Why this exists: deepseek-v4.exe is built with MinGW-w64 (gcc), but the
  * DeepSeek V4 CUDA kernels in backend_cuda_dsv4.cu must be compiled with
  * MSVC + nvcc. The MSVC/MinGW ABI split means we cannot link a CUDA .o into a
- * gcc binary, so the kernels are built into a standalone coli_cuda_dsv4.dll
+ * gcc binary, so the kernels are built into a standalone lma_cuda_dsv4.dll
  * (nvcc + MSVC, symbols exported via dsv4.def) and resolved here at runtime
  * through LoadLibrary/GetProcAddress. The host never links cudart directly.
  *
  * This mirrors backend_loader.c, which does the same for the GLM engine's
- * coli_cuda.dll. The two loaders are separate files on purpose: the dsv4 ABI
- * (dsv4_cuda_*) is entirely different from the GLM ABI (coli_cuda_*), and the
+ * lma_cuda.dll. The two loaders are separate files on purpose: the dsv4 ABI
+ * (dsv4_cuda_*) is entirely different from the GLM ABI (lma_cuda_*), and the
  * dsv4 host is a different executable that must be able to load the V4 backend
  * even when the GLM backend is absent.
  *
@@ -36,14 +36,14 @@
 
 #include "backend_cuda_dsv4.h"
 
-/* Two builds of the same source ship side by side: coli_cuda_dsv4_dg.dll
- * (DeepGEMM, sm_120a tensor-core paths) and coli_cuda_dsv4.dll (portable
+/* Two builds of the same source ship side by side: lma_cuda_dsv4_dg.dll
+ * (DeepGEMM, sm_120a tensor-core paths) and lma_cuda_dsv4.dll (portable
  * generic kernels, sm_80+). The loader tries the DeepGEMM one first and asks
  * it whether the device fits (dsv4_cuda_backend_arch_ok); on refusal it
  * unloads and takes the generic one, so one install adapts to whatever GPU
- * is present. COLI_DSV4_DLL=<file name> forces a specific DLL. */
-#define DSV4_BACKEND_DLL "coli_cuda_dsv4.dll"
-#define DSV4_BACKEND_DLL_DG "coli_cuda_dsv4_dg.dll"
+ * is present. LMA_DSV4_DLL=<file name> forces a specific DLL. */
+#define DSV4_BACKEND_DLL "lma_cuda_dsv4.dll"
+#define DSV4_BACKEND_DLL_DG "lma_cuda_dsv4_dg.dll"
 #define DSV4_VENDOR_TAG  "[DSV4 CUDA]"
 
 /* Function-pointer typedefs matching each exported symbol in dsv4.def. */
@@ -344,7 +344,7 @@ static struct {
     fn_tensor_device   tensor_device;
 } g_dsv4;
 
-/* One-shot loader: mirror of coli_cuda_load(). The DLL is loaded from the
+/* One-shot loader: mirror of lma_cuda_load(). The DLL is loaded from the
  * engine's OWN directory by absolute path — never a bare name — so the
  * dependency search anchors to the trusted install directory and an attacker
  * cannot plant a same-named DLL in the CWD (classic DLL hijacking). */
@@ -371,7 +371,7 @@ static int dsv4_cuda_resolve(const char *dllname);
 static int dsv4_cuda_load(void){
     if(g_dsv4.loaded) return g_dsv4.available;
     g_dsv4.loaded = 1;
-    const char *forced = getenv("COLI_DSV4_DLL");
+    const char *forced = getenv("LMA_DSV4_DLL");
     const char *candidates[3];
     int n = 0;
     if(forced && *forced) candidates[n++] = forced;

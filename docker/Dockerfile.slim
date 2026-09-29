@@ -1,14 +1,14 @@
-# colibri — CPU inference image (multi-stage: build then a slim runtime)
+# lmatomic — CPU inference image (multi-stage: build then a slim runtime)
 #
 # The engine is portable C with a Python launcher/gateway. This image ships
 # ONLY the inference path (chat/serve/run/info/plan/doctor) — the ~372 GB
 # model is mounted, never baked in, and the converter (which needs torch) is
 # deliberately out of scope; convert from a source checkout instead.
 #
-#   docker build -t colibri -f docker/Dockerfile.slim .
-#   docker run --rm -v /nvme/glm52_i4:/model colibri info
-#   docker run --rm -it -v /nvme/glm52_i4:/model colibri chat --ram 24
-#   docker run --rm -p 5000:5000 -v /nvme/glm52_i4:/model colibri \
+#   docker build -t lmatomic -f docker/Dockerfile.slim .
+#   docker run --rm -v /nvme/glm52_i4:/model lmatomic info
+#   docker run --rm -it -v /nvme/glm52_i4:/model lmatomic chat --ram 24
+#   docker run --rm -p 5000:5000 -v /nvme/glm52_i4:/model lmatomic \
 #       serve --host 0.0.0.0 --model-id glm-5.2
 #
 # --------------------------------------------------------------------------
@@ -22,7 +22,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY c/ ./c/
-RUN make -C c colibri ARCH=${ARCH}
+RUN make -C c glm52 ARCH=${ARCH}
 
 # --------------------------------------------------------------------------
 # Stage 2: runtime. openai_server.py and the launcher use only the Python
@@ -32,24 +32,24 @@ FROM debian:stable-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 libgomp1 && \
     rm -rf /var/lib/apt/lists/* && \
-    useradd -m -u 1000 colibri
+    useradd -m -u 1000 lmatomic
 WORKDIR /app
 
 # The engine binary plus the launcher and the files it resolves at runtime
 # (version.py, the gateway, resource planner, doctor, tokenizer headers, tools).
-COPY --from=build /src/c/colibri            ./colibri
-COPY c/coli c/version.py c/openai_server.py c/v4_dsml.py c/v41_dsml.py c/family_registry.py c/resource_plan.py c/doctor.py c/autotune.py ./
+COPY --from=build /src/c/glm52            ./glm52
+COPY c/lmatomic c/version.py c/openai_server.py c/v4_dsml.py c/v41_dsml.py c/family_registry.py c/resource_plan.py c/doctor.py c/autotune.py ./
 COPY c/tools/ ./tools/
 
-ENV COLI_MODEL=/model \
-    COLI_ENGINE=/app/colibri \
-    COLI_DOCKER_GLM_ONLY=1 \
+ENV LMA_MODEL=/model \
+    LMA_ENGINE=/app/glm52 \
+    LMA_DOCKER_GLM_ONLY=1 \
     PYTHONUNBUFFERED=1
 # A bind-mounted model lands here; declaring the volume documents the contract.
 VOLUME ["/model"]
-# `coli serve` default port.
+# `lmatomic serve` default port.
 EXPOSE 5000
 
-USER colibri
-ENTRYPOINT ["python3", "/app/coli"]
+USER lmatomic
+ENTRYPOINT ["python3", "/app/lmatomic"]
 CMD ["info"]

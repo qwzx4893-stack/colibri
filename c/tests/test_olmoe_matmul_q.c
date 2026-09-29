@@ -23,7 +23,7 @@
  * Build: make -C c tests/test_olmoe_matmul_q
  */
 #define OLMOE_TESTING 1
-#define main coli_olmoe_main_unused
+#define main lma_olmoe_main_unused
 #include "../olmoe.c"
 #undef main
 

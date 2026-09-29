@@ -20,13 +20,13 @@ static bool measure(int I,int O,int S,int device) {
     for(size_t i=0;i<q.size();i++) q[i]=(int)((i*17+i/I*13)%31)-15;
     for(int o=0;o<O;o++) scale[o]=(o%3+1)/128.f;
     for(size_t i=0;i<x.size();i++) x[i]=(int(i%17)-8)/64.f;
-    ColiCudaTensor *tensor=nullptr;
-    if(!coli_cuda_tensor_upload(&tensor,q.data(),scale.data(),1,I,O,device)) return false;
+    LmaCudaTensor *tensor=nullptr;
+    if(!lma_cuda_tensor_upload(&tensor,q.data(),scale.data(),1,I,O,device)) return false;
     auto run = [&](bool batched) {
         float *out=batched?batch.data():serial.data();
-        if(batched) return coli_cuda_matmul(&tensor,out,x.data(),nullptr,nullptr,1,S,I,O,device,0)!=0;
+        if(batched) return lma_cuda_matmul(&tensor,out,x.data(),nullptr,nullptr,1,S,I,O,device,0)!=0;
         for(int row=0;row<S;row++)
-            if(!coli_cuda_matmul(&tensor,out+(size_t)row*O,x.data()+(size_t)row*I,
+            if(!lma_cuda_matmul(&tensor,out+(size_t)row*O,x.data()+(size_t)row*I,
                                  nullptr,nullptr,1,1,I,O,device,0)) return false;
         return true;
     };
@@ -58,7 +58,7 @@ static bool measure(int I,int O,int S,int device) {
         max_error=std::max(max_error,error);
         if(error>1e-5*(1+std::fabs(reference))) ok=false;
     }
-    coli_cuda_tensor_free(tensor);
+    lma_cuda_tensor_free(tensor);
     if(!ok){std::fprintf(stderr,"FAIL: resident batch I=%d O=%d S=%d\n",I,O,S);return false;}
     std::printf("{\"input\":%d,\"output\":%d,\"rows\":%d,\"pairs\":9,"
                 "\"serial_median_ms\":%.6f,\"batch_median_ms\":%.6f,"
@@ -73,8 +73,8 @@ static bool measure(int I,int O,int S,int device) {
 
 int main() {
     int device=0;
-    if(!coli_cuda_init(&device,1)) return 77;
+    if(!lma_cuda_init(&device,1)) return 77;
     bool ok=measure(512,1024,32,device) && measure(2048,2048,32,device) && measure(2048,2048,128,device);
-    coli_cuda_shutdown();
+    lma_cuda_shutdown();
     return ok?0:1;
 }

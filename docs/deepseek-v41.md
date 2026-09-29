@@ -22,14 +22,14 @@ Two numbers decide whether this model is servable on a machine you own:
 ## Running it
 
 No conversion. The released checkpoint is already fp8 (dense) and fp4 (experts), and
-colibri reads both formats natively -- the fp4 expert layout is byte-identical to the
+LM Atomic reads both formats natively -- the fp4 expert layout is byte-identical to the
 mxfp4 it already reads for Kimi K3.
 
 ```sh
 hf download deepseek-ai/DeepSeek-V4.1-Flash --local-dir ~/Models/DeepSeek-V4.1-Flash
 python3 c/tools/prepare_dsv41.py --model ~/Models/DeepSeek-V4.1-Flash   # ~1 MB sidecar, once
 make -C c deepseek_v41
-coli chat --model ~/Models/DeepSeek-V4.1-Flash
+lmatomic chat --model ~/Models/DeepSeek-V4.1-Flash
 ```
 
 `prepare_dsv41.py` writes the three tables the engine cannot derive at load time and
@@ -41,7 +41,7 @@ decimal **strings**: they run past a double's 53-bit mantissa, and a rounded
 multiplier would silently hash every n-gram into a different -- and perfectly
 valid-looking -- row.
 
-When `--cap` is omitted, `coli chat`, `coli serve`, and `coli web` size the expert
+When `--cap` is omitted, `lmatomic chat`, `lmatomic serve`, and `lmatomic web` size the expert
 cache from the resource plan. `--ram 120` (or `RAM_GB=120`) supplies its RAM budget;
 without either, the planner uses available memory. Dense weights, context state,
 and runtime reserves are subtracted before choosing slots per layer. `--cap N`
@@ -201,7 +201,7 @@ of one layer.
 Two things move expert bytes that the V4 and GLM engines already had and this one did
 not, and both are about the same fact: an expert is read once and never wanted again.
 
-**A second drive.** `COLI_MODEL_MIRROR=<dir>[;<dir>...]` registers read-only copies of
+**A second drive.** `LMA_MODEL_MIRROR=<dir>[;<dir>...]` registers read-only copies of
 the checkpoint on other drives; experts are split across the primary and every replica,
 each drive answering for a deterministic subset. A copy is accepted only when its size
 and safetensors header are byte-identical to the primary's, so the data offsets match
@@ -211,7 +211,7 @@ a header compare and not a filename. Partial mirrors are legal: a smaller SSD ho
 only the routed-expert shards is the case this exists for, and a shard a replica does
 not carry simply stays on the primary.
 
-The split follows `COLI_DISK_WEIGHTS`, or is measured at startup with this engine's own
+The split follows `LMA_DISK_WEIGHTS`, or is measured at startup with this engine's own
 access pattern. Splitting is the point and also the risk: two independent drives
 answer in parallel, but one drive serving two copies of itself answers no faster than
 one drive, so the split is a measurement rather than an assumption.
@@ -230,16 +230,16 @@ with `O_DIRECT` instead.
 
 There is a second, cheaper way to put the container on more than one drive, and for a
 510 GB checkpoint it is the one most people can actually build.
-`COLI_MODEL_DIRS=<dir>` names directories holding **distinct** shards -- no
+`LMA_MODEL_DIRS=<dir>` names directories holding **distinct** shards -- no
 duplication, combined capacity, each shard read from the one drive that has it -- so
 the same container can live on two 256 GB drives instead of one 512 GB drive. It is
 the same split the GLM, V4 and Kimi K3 engines already accept. It composes with the
 mirror: a mirror directory may copy any subset of the split's shards.
 
-The two mechanisms answer different questions. `COLI_MODEL_DIRS` asks whether the
-bytes can be *stored* across drives; `COLI_MODEL_MIRROR` asks whether they can be
+The two mechanisms answer different questions. `LMA_MODEL_DIRS` asks whether the
+bytes can be *stored* across drives; `LMA_MODEL_MIRROR` asks whether they can be
 *read* from more than one place at once. With the CPU side in order -- the OpenMP team
-sized, which `c/coli` already does at launch -- the second one is worth a fifth of the
+sized, which `c/lmatomic` already does at launch -- the second one is worth a fifth of the
 expert disk phase and the engine reaches the device's own ceiling; the measurements,
 and the regime in which neither is worth anything, are in
 [the experiment record](experiments/dsv41-expert-io-2026-09-14.md).
@@ -260,7 +260,7 @@ mkdir -p /dev/shm/dsv41_ram
 cd <container> && ls model-*.safetensors | grep -v -E -- '-0004[78]-' \
     | xargs cp -t /dev/shm/dsv41_ram/
 
-COLI_MODEL_MIRROR=/dev/shm/dsv41_ram COLI_DISK_WEIGHTS=1,1000 \
+LMA_MODEL_MIRROR=/dev/shm/dsv41_ram LMA_DISK_WEIGHTS=1,1000 \
     SNAP=<container> ./c/deepseek_v41 8 ref.json
 ```
 
@@ -344,12 +344,12 @@ and costs the contention. Anything that tries again has to start from that.
 
 | variable | default | what it does |
 |---|---|---|
-| `COLI_KV_PREFIX` | **off on this engine** | `1` reuses the previous turn's state when the new prompt begins with what that state was built from, instead of re-reading the transcript. Off by default here and on nowhere else: see "Reusing a turn" below for what it costs. |
-| `V41_STATS` | off | per-turn accounting on stderr: the n-gram cache, the expert bytes and their rate, and how many drafts were accepted. Off by default because `coli chat` shows the engine's stderr next to the answer. |
+| `LMA_KV_PREFIX` | **off on this engine** | `1` reuses the previous turn's state when the new prompt begins with what that state was built from, instead of re-reading the transcript. Off by default here and on nowhere else: see "Reusing a turn" below for what it costs. |
+| `V41_STATS` | off | per-turn accounting on stderr: the n-gram cache, the expert bytes and their rate, and how many drafts were accepted. Off by default because `lmatomic chat` shows the engine's stderr next to the answer. |
 | `V41_READ_DEPTH` | 8 | expert tensors read at once when a step misses the cache (see above). `1` restores the serial read the engine used to do, for an A/B. |
-| `COLI_MODEL_MIRROR` | unset | `;`/`,`-separated read-only copies of the checkpoint on other drives; expert reads split across the primary and every replica (see above). `SNAP_MIRROR` is the legacy alias. |
-| `COLI_MODEL_DIRS` | unset | `;`/`,`-separated directories holding **distinct** shards of the same container, so it can be split across drives with no second copy (see above). |
-| `COLI_DISK_WEIGHTS` | unset (startup probe) | the split ratio, one positive weight per drive (`1,1` for an even pair). Unset measures each drive with the engine's own access pattern. |
+| `LMA_MODEL_MIRROR` | unset | `;`/`,`-separated read-only copies of the checkpoint on other drives; expert reads split across the primary and every replica (see above). `SNAP_MIRROR` is the legacy alias. |
+| `LMA_MODEL_DIRS` | unset | `;`/`,`-separated directories holding **distinct** shards of the same container, so it can be split across drives with no second copy (see above). |
+| `LMA_DISK_WEIGHTS` | unset (startup probe) | the split ratio, one positive weight per drive (`1,1` for an even pair). Unset measures each drive with the engine's own access pattern. |
 | `V41_DIRECT` | 1 | read experts with `O_DIRECT` instead of through the page cache. `0` is the buffered arm and the escape hatch; the two paths return identical bytes. |
 | `V41_ENGRAM_ROWS` | 65536 | rows of engram cache per table. The traffic is Zipfian: common 2-grams repeat constantly, so a small cache absorbs most of it. 65536 rows is 64 MB per table on the released head_dim. |
 | `V41_INDEX_OWNER` | unset | each layer scores against its own owner's index keys (see above). Changes the model's behaviour. |
@@ -383,7 +383,7 @@ attends when it is prefilled cold. A resumed conversation and the same
 conversation re-read from scratch can answer differently. The resumed state is
 the sequential one, so it is not the wrong answer -- it is a different one, and
 that is a trade the person running the engine makes, not one the engine makes
-for them. `COLI_KV_PREFIX=1` asks for it.
+for them. `LMA_KV_PREFIX=1` asks for it.
 
 What is exact, and gated in CI, is a resumed **prefill**: a prompt that grows
 without generated text in between -- an agent resending a document, a tool loop

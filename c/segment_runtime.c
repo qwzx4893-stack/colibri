@@ -4,23 +4,23 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define COLI_SEGMENT_MAX_ADAPTERS 16
+#define LMA_SEGMENT_MAX_ADAPTERS 16
 
-struct ColiSegmentEngine {
-    const ColiSegmentAdapter *adapter;
+struct LmaSegmentEngine {
+    const LmaSegmentAdapter *adapter;
     void *impl;
-    ColiSegmentCapabilities capabilities;
+    LmaSegmentCapabilities capabilities;
     uint32_t context_tokens;
     unsigned active_sessions;
 };
 
-struct ColiSegmentSession {
-    ColiSegmentEngine *engine;
+struct LmaSegmentSession {
+    LmaSegmentEngine *engine;
     void *impl;
     uint32_t context_tokens;
 };
 
-static const ColiSegmentAdapter *g_adapters[COLI_SEGMENT_MAX_ADAPTERS];
+static const LmaSegmentAdapter *g_adapters[LMA_SEGMENT_MAX_ADAPTERS];
 static int g_adapter_count;
 
 static int set_error(char *error, size_t error_size, const char *message) {
@@ -31,7 +31,7 @@ static int set_error(char *error, size_t error_size, const char *message) {
 static int id_valid(const char *id) {
     if (!id || !*id) return 0;
     size_t length = strlen(id);
-    if (length >= COLI_SEGMENT_ENGINE_ID_CAP) return 0;
+    if (length >= LMA_SEGMENT_ENGINE_ID_CAP) return 0;
     for (size_t i = 0; i < length; i++) {
         unsigned char c = (unsigned char)id[i];
         if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
@@ -47,18 +47,18 @@ static int fixed_string_valid(const char *value, size_t capacity) {
 
 static size_t dtype_size(uint32_t dtype) {
     switch (dtype) {
-        case COLI_SEGMENT_DTYPE_F32: return 4;
-        case COLI_SEGMENT_DTYPE_F16:
-        case COLI_SEGMENT_DTYPE_BF16: return 2;
+        case LMA_SEGMENT_DTYPE_F32: return 4;
+        case LMA_SEGMENT_DTYPE_F16:
+        case LMA_SEGMENT_DTYPE_BF16: return 2;
         default: return 0;
     }
 }
 
-static int capabilities_valid(const ColiSegmentCapabilities *capabilities,
-                              const ColiSegmentAdapter *adapter) {
+static int capabilities_valid(const LmaSegmentCapabilities *capabilities,
+                              const LmaSegmentAdapter *adapter) {
     int has_snapshot = adapter->session_snapshot && adapter->session_restore;
     return capabilities->struct_size == sizeof(*capabilities) &&
-           capabilities->abi_version == COLI_SEGMENT_ABI_VERSION &&
+           capabilities->abi_version == LMA_SEGMENT_ABI_VERSION &&
            fixed_string_valid(capabilities->engine_id,
                               sizeof(capabilities->engine_id)) &&
            strcmp(capabilities->engine_id, adapter->engine_id) == 0 &&
@@ -68,12 +68,12 @@ static int capabilities_valid(const ColiSegmentCapabilities *capabilities,
                               sizeof(capabilities->numeric_class)) &&
            dtype_size(capabilities->state_dtype) != 0 &&
            capabilities->state_width && capabilities->num_layers &&
-           !!(capabilities->flags & COLI_SEGMENT_CAP_SNAPSHOT) == has_snapshot;
+           !!(capabilities->flags & LMA_SEGMENT_CAP_SNAPSHOT) == has_snapshot;
 }
 
-int coli_segment_adapter_register(const ColiSegmentAdapter *adapter) {
+int lma_segment_adapter_register(const LmaSegmentAdapter *adapter) {
     if (!adapter || adapter->struct_size < sizeof(*adapter) ||
-        adapter->abi_version != COLI_SEGMENT_ABI_VERSION ||
+        adapter->abi_version != LMA_SEGMENT_ABI_VERSION ||
         !id_valid(adapter->engine_id) || !adapter->engine_open ||
         !adapter->engine_destroy ||
         !adapter->session_create || !adapter->session_destroy ||
@@ -83,12 +83,12 @@ int coli_segment_adapter_register(const ColiSegmentAdapter *adapter) {
     for (int i = 0; i < g_adapter_count; i++)
         if (strcmp(g_adapters[i]->engine_id, adapter->engine_id) == 0)
             return -1;
-    if (g_adapter_count >= COLI_SEGMENT_MAX_ADAPTERS) return -1;
+    if (g_adapter_count >= LMA_SEGMENT_MAX_ADAPTERS) return -1;
     g_adapters[g_adapter_count++] = adapter;
     return 0;
 }
 
-const ColiSegmentAdapter *coli_segment_adapter_lookup(const char *engine_id) {
+const LmaSegmentAdapter *lma_segment_adapter_lookup(const char *engine_id) {
     if (!engine_id) return NULL;
     for (int i = 0; i < g_adapter_count; i++)
         if (strcmp(g_adapters[i]->engine_id, engine_id) == 0)
@@ -96,11 +96,11 @@ const ColiSegmentAdapter *coli_segment_adapter_lookup(const char *engine_id) {
     return NULL;
 }
 
-int coli_segment_adapter_count(void) { return g_adapter_count; }
+int lma_segment_adapter_count(void) { return g_adapter_count; }
 
-int coli_segment_engine_open(const char *engine_id,
-                             const ColiSegmentEngineOptions *options,
-                             ColiSegmentEngine **engine,
+int lma_segment_engine_open(const char *engine_id,
+                             const LmaSegmentEngineOptions *options,
+                             LmaSegmentEngine **engine,
                              char *error, size_t error_size) {
     if (!engine) return set_error(error, error_size, "missing segment engine output");
     *engine = NULL;
@@ -108,15 +108,15 @@ int coli_segment_engine_open(const char *engine_id,
         !options->model_dir || !*options->model_dir ||
         options->layer_begin >= options->layer_end || !options->context_tokens)
         return set_error(error, error_size, "invalid segment engine options");
-    const ColiSegmentAdapter *adapter = coli_segment_adapter_lookup(engine_id);
+    const LmaSegmentAdapter *adapter = lma_segment_adapter_lookup(engine_id);
     if (!adapter)
         return set_error(error, error_size, "segment engine is not registered");
 
-    ColiSegmentEngine *created = (ColiSegmentEngine *)calloc(1, sizeof(*created));
+    LmaSegmentEngine *created = (LmaSegmentEngine *)calloc(1, sizeof(*created));
     if (!created) return set_error(error, error_size, "out of memory opening segment engine");
     created->adapter = adapter;
     created->capabilities.struct_size = sizeof(created->capabilities);
-    created->capabilities.abi_version = COLI_SEGMENT_ABI_VERSION;
+    created->capabilities.abi_version = LMA_SEGMENT_ABI_VERSION;
     if (adapter->engine_open(&created->impl, &created->capabilities, options,
                              error, error_size) ||
         !created->impl) {
@@ -138,8 +138,8 @@ int coli_segment_engine_open(const char *engine_id,
     return 0;
 }
 
-int coli_segment_engine_capabilities(const ColiSegmentEngine *engine,
-                                     ColiSegmentCapabilities *capabilities,
+int lma_segment_engine_capabilities(const LmaSegmentEngine *engine,
+                                     LmaSegmentCapabilities *capabilities,
                                      char *error, size_t error_size) {
     if (!engine || !capabilities ||
         capabilities->struct_size < sizeof(*capabilities))
@@ -151,7 +151,7 @@ int coli_segment_engine_capabilities(const ColiSegmentEngine *engine,
     return 0;
 }
 
-int coli_segment_engine_close(ColiSegmentEngine *engine,
+int lma_segment_engine_close(LmaSegmentEngine *engine,
                               char *error, size_t error_size) {
     if (!engine) return 0;
     if (engine->active_sessions)
@@ -162,9 +162,9 @@ int coli_segment_engine_close(ColiSegmentEngine *engine,
     return 0;
 }
 
-int coli_segment_session_create(ColiSegmentEngine *engine,
-                                const ColiSegmentSessionOptions *options,
-                                ColiSegmentSession **session,
+int lma_segment_session_create(LmaSegmentEngine *engine,
+                                const LmaSegmentSessionOptions *options,
+                                LmaSegmentSession **session,
                                 char *error, size_t error_size) {
     if (!session) return set_error(error, error_size, "missing segment session output");
     *session = NULL;
@@ -172,8 +172,8 @@ int coli_segment_session_create(ColiSegmentEngine *engine,
         !options->context_tokens ||
         options->context_tokens > engine->context_tokens)
         return set_error(error, error_size, "invalid segment session options");
-    ColiSegmentSession *created =
-        (ColiSegmentSession *)calloc(1, sizeof(*created));
+    LmaSegmentSession *created =
+        (LmaSegmentSession *)calloc(1, sizeof(*created));
     if (!created)
         return set_error(error, error_size, "out of memory creating segment session");
     created->engine = engine;
@@ -189,29 +189,29 @@ int coli_segment_session_create(ColiSegmentEngine *engine,
     return 0;
 }
 
-void coli_segment_session_destroy(ColiSegmentSession *session) {
+void lma_segment_session_destroy(LmaSegmentSession *session) {
     if (!session) return;
-    ColiSegmentEngine *engine = session->engine;
+    LmaSegmentEngine *engine = session->engine;
     engine->adapter->session_destroy(session->impl);
     if (engine->active_sessions) engine->active_sessions--;
     free(session);
 }
 
-int coli_segment_run(ColiSegmentSession *session,
-                     const ColiSegmentRunRequest *request,
+int lma_segment_run(LmaSegmentSession *session,
+                     const LmaSegmentRunRequest *request,
                      char *error, size_t error_size) {
     if (!session || !request || request->struct_size < sizeof(*request) ||
         !request->rows || !request->input || !request->output ||
         !request->input_bytes || !request->output_bytes)
         return set_error(error, error_size, "invalid segment run request");
 
-    const ColiSegmentCapabilities *capabilities = &session->engine->capabilities;
+    const LmaSegmentCapabilities *capabilities = &session->engine->capabilities;
     if (capabilities->max_batch_rows && request->rows > capabilities->max_batch_rows)
         return set_error(error, error_size, "segment batch exceeds capabilities");
     if (!!request->token_ids != !!request->token_count)
         return set_error(error, error_size,
                          "segment token IDs and count must both be present");
-    if ((capabilities->flags & COLI_SEGMENT_CAP_TOKEN_IDS) &&
+    if ((capabilities->flags & LMA_SEGMENT_CAP_TOKEN_IDS) &&
         request->token_count != request->rows)
         return set_error(error, error_size, "segment engine requires one token ID per row");
     if (request->token_count && request->token_count != request->rows)
@@ -236,8 +236,8 @@ int coli_segment_run(ColiSegmentSession *session,
                                                   error, error_size);
 }
 
-int coli_segment_snapshot(ColiSegmentSession *session,
-                          ColiSegmentWriteFn write_fn, void *write_user_data,
+int lma_segment_snapshot(LmaSegmentSession *session,
+                          LmaSegmentWriteFn write_fn, void *write_user_data,
                           char *error, size_t error_size) {
     if (!session || !write_fn)
         return set_error(error, error_size, "invalid segment snapshot request");
@@ -247,8 +247,8 @@ int coli_segment_snapshot(ColiSegmentSession *session,
         session->impl, write_fn, write_user_data, error, error_size);
 }
 
-int coli_segment_restore(ColiSegmentSession *session,
-                         ColiSegmentReadFn read_fn, void *read_user_data,
+int lma_segment_restore(LmaSegmentSession *session,
+                         LmaSegmentReadFn read_fn, void *read_user_data,
                          char *error, size_t error_size) {
     if (!session || !read_fn)
         return set_error(error, error_size, "invalid segment restore request");

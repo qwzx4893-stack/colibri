@@ -1,5 +1,5 @@
-#ifndef COLIBRI_DELTA_ATTENTION_H
-#define COLIBRI_DELTA_ATTENTION_H
+#ifndef LMA_DELTA_ATTENTION_H
+#define LMA_DELTA_ATTENTION_H
 
 /*
  * Kimi Delta Attention (KDA): the gated delta rule that the linear-attention
@@ -37,13 +37,13 @@
 #include <omp.h>
 #endif
 
-/* Scratch needed by coli_kda_step, in floats.
+/* Scratch needed by lma_kda_step, in floats.
  *
  * The `memory` accumulator is per-thread: the head loop below runs in
  * parallel and each head needs its own, so the tail is v_dim per thread
  * rather than one v_dim. Sized from omp_get_max_threads() at call time,
  * which is what the head loop's omp_get_thread_num() indexes into. */
-static inline int coli_kda_threads(void) {
+static inline int lma_kda_threads(void) {
 #ifdef _OPENMP
     int t = omp_get_max_threads();
     return t > 0 ? t : 1;
@@ -52,12 +52,12 @@ static inline int coli_kda_threads(void) {
 #endif
 }
 
-static inline int coli_kda_scratch_floats(int heads, int k_dim, int v_dim) {
+static inline int lma_kda_scratch_floats(int heads, int k_dim, int v_dim) {
     int mixed = 3 * heads * (k_dim > v_dim ? k_dim : v_dim);
-    return mixed + coli_kda_threads() * v_dim;
+    return mixed + lma_kda_threads() * v_dim;
 }
 
-static inline float coli_kda_silu(float value) {
+static inline float lma_kda_silu(float value) {
     return value / (1.0f + expf(-value));
 }
 
@@ -70,19 +70,19 @@ static inline float coli_kda_silu(float value) {
  *   conv_w  [3 * heads * k_dim * kernel] depthwise taps, oldest first
  *   gate    [heads * k_dim]        log-decay, already gated by the engine
  *   beta    [heads]                already through its sigmoid
- *   scratch [coli_kda_scratch_floats()]
+ *   scratch [lma_kda_scratch_floats()]
  *
  * k_dim and v_dim are equal in every model shipping today; they are separate
  * arguments because the recurrence does not require them to be.
  *
  * Two conditions on `scratch`, both satisfied by the one caller today
  * (glm53.c, which sizes it at session open and calls from serial code):
- * it must have been sized by coli_kda_scratch_floats() under the same
+ * it must have been sized by lma_kda_scratch_floats() under the same
  * OpenMP thread count this call will see, and this function must NOT be
  * called from inside a parallel region -- the head loop indexes the scratch
  * tail by omp_get_thread_num(), so an outer team's larger ids would run off
  * the end of the buffer. */
-static inline int coli_kda_step(float *out, float *state, float *window,
+static inline int lma_kda_step(float *out, float *state, float *window,
                                 const float *qkv, const float *conv_w,
                                 const float *gate, const float *beta,
                                 int heads, int k_dim, int v_dim, int kernel,
@@ -100,7 +100,7 @@ static inline int coli_kda_step(float *out, float *state, float *window,
      * element of `mixed`, and reads `qkv`/`conv_w` without writing them.
      * This loop carries 3*width SiLU calls -- 24,576 expf per call at GLM's
      * shape -- which is why it is worth a team of its own: parallelising only
-     * the head loop below leaves coli_kda_step flat at 1.03 ms/call, because
+     * the head loop below leaves lma_kda_step flat at 1.03 ms/call, because
      * this loop is then the serial half. Both need a team. */
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
@@ -112,7 +112,7 @@ static inline int coli_kda_step(float *out, float *state, float *window,
         const float *taps = conv_w + (size_t)channel * kernel;
         float sum = 0.0f;
         for (int tap = 0; tap < kernel; tap++) sum += taps[tap] * history[tap];
-        mixed[channel] = coli_kda_silu(sum);
+        mixed[channel] = lma_kda_silu(sum);
     }
 
     const float query_scale = 1.0f / sqrtf((float)k_dim);
@@ -176,4 +176,4 @@ static inline int coli_kda_step(float *out, float *state, float *window,
     return 0;
 }
 
-#endif /* COLIBRI_DELTA_ATTENTION_H */
+#endif /* LMA_DELTA_ATTENTION_H */

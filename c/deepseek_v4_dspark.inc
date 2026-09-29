@@ -1,4 +1,4 @@
-/* ================= Colibri DSpark-SSD: complete native drafter =============
+/* ================= LM Atomic DSpark-SSD: complete native drafter =============
  *
  * This is an original C implementation of the architecture described by the
  * DeepSeek-V4 checkpoint's own inference/model.py.  It intentionally does not
@@ -41,10 +41,10 @@ typedef struct {
     float *wq_a_s, *wq_b_s, *wkv_s, *wo_a_s, *wo_b_s;
     float *sh1_s, *sh2_s, *sh3_s;
 
-    ColiFloatTensor q_norm, kv_norm, attn_norm, ffn_norm, attn_sink;
-    ColiFloatTensor hc_attn_fn, hc_attn_base, hc_attn_scale;
-    ColiFloatTensor hc_ffn_fn,  hc_ffn_base,  hc_ffn_scale;
-    ColiFloatTensor gate_w, gate_b;
+    LmaFloatTensor q_norm, kv_norm, attn_norm, ffn_norm, attn_sink;
+    LmaFloatTensor hc_attn_fn, hc_attn_base, hc_attn_scale;
+    LmaFloatTensor hc_ffn_fn,  hc_ffn_base,  hc_ffn_scale;
+    LmaFloatTensor gate_w, gate_b;
 
     /* Context injection KV is independent for every MTP stage. */
     float *kv;                         /* [window][head_dim] */
@@ -55,7 +55,7 @@ typedef struct {
     int nslots, cap_slots;
     int64_t slab_bytes;
     uint64_t clock;
-    const ColiSafetensorsTensor *ew[256][3], *es[256][3];
+    const LmaSafetensorsTensor *ew[256][3], *es[256][3];
     int64_t hits, misses, aborted;
 } V4DSparkStage;
 
@@ -66,10 +66,10 @@ static struct {
     uint8_t *main_proj_w;
     float *main_proj_s;
     int64_t main_proj_rows, main_proj_cols;
-    ColiFloatTensor main_norm;
+    LmaFloatTensor main_norm;
 
-    ColiFloatTensor head_fn, head_base, head_scale, norm;
-    ColiFloatTensor confidence_proj;
+    LmaFloatTensor head_fn, head_base, head_scale, norm;
+    LmaFloatTensor confidence_proj;
     uint16_t *markov_w1, *markov_w2;   /* [vocab][256], BF16 */
     size_t markov_w1_bytes, markov_w2_bytes;
 
@@ -81,7 +81,7 @@ static struct {
 } g_v4ds_core;
 
 static void v4_ds_bf16(float *values, size_t count) {
-    coli_bf16_round_array(values, count);
+    lma_bf16_round_array(values, count);
 }
 
 static void v4_ds_rmsnorm(float *out, const float *in, const float *weight,
@@ -93,12 +93,12 @@ static void v4_ds_rmsnorm(float *out, const float *in, const float *weight,
     v4_ds_bf16(out, (size_t)n);
 }
 
-static int v4_ds_read_raw(const ColiSafetensorsIndex *index, const char *name,
+static int v4_ds_read_raw(const LmaSafetensorsIndex *index, const char *name,
                           int dtype, void **output, size_t *bytes) {
-    const ColiSafetensorsTensor *tensor = coli_st_find(index, name);
+    const LmaSafetensorsTensor *tensor = lma_st_find(index, name);
     if (!tensor || tensor->dtype != dtype || !tensor->nbytes) return -1;
     void *data = malloc((size_t)tensor->nbytes);
-    if (!data || coli_st_read_tensor(index, tensor, data)) {
+    if (!data || lma_st_read_tensor(index, tensor, data)) {
         free(data);
         return -1;
     }
@@ -133,28 +133,28 @@ static int v4_ds_pack_rows8(uint8_t *data, int64_t rows, int64_t columns) {
 #endif
 }
 
-static int v4_ds_load_fp8(const ColiSafetensorsIndex *index,
+static int v4_ds_load_fp8(const LmaSafetensorsIndex *index,
                           const char *weight_name, const char *scale_name,
                           uint8_t **weight, float **scale) {
-    const ColiSafetensorsTensor *weight_tensor = coli_st_find(index, weight_name);
-    const ColiSafetensorsTensor *scale_tensor = coli_st_find(index, scale_name);
+    const LmaSafetensorsTensor *weight_tensor = lma_st_find(index, weight_name);
+    const LmaSafetensorsTensor *scale_tensor = lma_st_find(index, scale_name);
     size_t wb = 0;
-    if (!weight_tensor || weight_tensor->dtype != COLI_ST_F8_E4M3 ||
+    if (!weight_tensor || weight_tensor->dtype != LMA_ST_F8_E4M3 ||
         weight_tensor->rank != 2 ||
         weight_tensor->nbytes != weight_tensor->shape[0] *
                                   weight_tensor->shape[1] ||
         !scale_tensor || scale_tensor->rank != 2 ||
-        scale_tensor->dtype != COLI_ST_F8_E8M0 ||
+        scale_tensor->dtype != LMA_ST_F8_E8M0 ||
         scale_tensor->shape[0] != (weight_tensor->shape[0] + 127) / 128 ||
         scale_tensor->shape[1] != (weight_tensor->shape[1] + 127) / 128 ||
         scale_tensor->numel < 1)
         return -1;
-    if (v4_ds_read_raw(index, weight_name, COLI_ST_F8_E4M3,
+    if (v4_ds_read_raw(index, weight_name, LMA_ST_F8_E4M3,
                        (void **)weight, &wb))
         return -1;
     *scale = malloc((size_t)scale_tensor->numel * sizeof(**scale));
     if (!*scale ||
-        st_read_scale_f32((ColiSafetensorsIndex *)index, scale_name, *scale,
+        st_read_scale_f32((LmaSafetensorsIndex *)index, scale_name, *scale,
                           scale_tensor->numel, 0) != scale_tensor->numel) {
         free(*weight);
         free(*scale);
@@ -178,7 +178,7 @@ static int v4_ds_name(char *out, size_t size, int stage, const char *suffix) {
     return n < 0 || (size_t)n >= size ? -1 : 0;
 }
 
-static int v4_ds_load_fp8_suffix(const ColiSafetensorsIndex *index, int stage,
+static int v4_ds_load_fp8_suffix(const LmaSafetensorsIndex *index, int stage,
                                  const char *stem,
                                  uint8_t **weight, float **scale) {
     char wn[160], sn[160];
@@ -189,31 +189,31 @@ static int v4_ds_load_fp8_suffix(const ColiSafetensorsIndex *index, int stage,
 }
 
 /* SEC (GHSA-9gjf): every F32 sidecar loaded here is later indexed linearly by
- * config-derived dimensions, but coli_tensor_load_f32 does no shape accounting —
+ * config-derived dimensions, but lma_tensor_load_f32 does no shape accounting —
  * an undersized snapshot tensor became a heap OOB read. `expected` is the numel
  * the consumer will index; require at least that many (-1 = skip). `<` (not `!=`)
  * so a legitimately padded checkpoint is never false-rejected. */
-static int v4_ds_load_f32_suffix(ColiFloatTensor *output,
-                                 const ColiSafetensorsIndex *index, int stage,
+static int v4_ds_load_f32_suffix(LmaFloatTensor *output,
+                                 const LmaSafetensorsIndex *index, int stage,
                                  const char *suffix, int64_t expected) {
     char name[160], error[256];
     if (v4_ds_name(name, sizeof(name), stage, suffix)) return -1;
-    if (coli_tensor_load_f32(output, index, name, error, sizeof(error))) return -1;
+    if (lma_tensor_load_f32(output, index, name, error, sizeof(error))) return -1;
     if (expected >= 0 && (int64_t)output->count < expected) {
         fprintf(stderr, "[MTP] shape mismatch: %s (numel %llu, need >= %lld)\n",
                 name, (unsigned long long)output->count, (long long)expected);
-        coli_float_tensor_free(output);
+        lma_float_tensor_free(output);
         return -1;
     }
     return 0;
 }
 
-static void v4_ds_fp8_view(ColiTensorView *view,
+static void v4_ds_fp8_view(LmaTensorView *view,
                            const uint8_t *weight, const float *scale,
                            int64_t rows, int64_t columns) {
     memset(view, 0, sizeof(*view));
-    view->format = COLI_TENSOR_FP8_E4M3_BLOCK;
-    view->scale_format = COLI_SCALE_F32;
+    view->format = LMA_TENSOR_FP8_E4M3_BLOCK;
+    view->scale_format = LMA_SCALE_F32;
     view->data = weight;
     view->scales = scale;
     view->data_bytes = (size_t)(rows * columns);
@@ -234,15 +234,15 @@ static void v4_ds_fp8_view(ColiTensorView *view,
  * faster than the scalar, unquantized prototype. */
 static int v4_ds_mm(float *out, const uint8_t *weight, const float *scale,
                     int64_t rows, int64_t columns, const float *input) {
-    ColiTensorView view;
+    LmaTensorView view;
     v4_ds_fp8_view(&view, weight, scale, rows, columns);
-    if (coli_fp8_matvec_ref(out, &view, input)) return -1;
+    if (lma_fp8_matvec_ref(out, &view, input)) return -1;
     v4_ds_bf16(out, (size_t)rows);
     return 0;
 }
 
-static int v4_ds_core_load(const ColiSafetensorsIndex *index,
-                           const ColiDeepSeekV4Config *config) {
+static int v4_ds_core_load(const LmaSafetensorsIndex *index,
+                           const LmaDeepSeekV4Config *config) {
     if (g_v4ds_core.ready) return g_v4ds_core.ready > 0;
     g_v4ds_core.ready = -1;
     if (config->hc_mult < 1 || config->hc_mult > 16 ||
@@ -251,12 +251,12 @@ static int v4_ds_core_load(const ColiSafetensorsIndex *index,
         config->num_experts_per_tok > 16)
         return 0;
 
-    const ColiSafetensorsTensor *mp =
-        coli_st_find(index, "mtp.0.main_proj.weight");
-    const ColiSafetensorsTensor *ms =
-        coli_st_find(index, "mtp.0.main_proj.scale");
-    if (!mp || !ms || mp->dtype != COLI_ST_F8_E4M3 ||
-        ms->dtype != COLI_ST_F8_E8M0 || mp->rank != 2)
+    const LmaSafetensorsTensor *mp =
+        lma_st_find(index, "mtp.0.main_proj.weight");
+    const LmaSafetensorsTensor *ms =
+        lma_st_find(index, "mtp.0.main_proj.scale");
+    if (!mp || !ms || mp->dtype != LMA_ST_F8_E4M3 ||
+        ms->dtype != LMA_ST_F8_E8M0 || mp->rank != 2)
         return 0;
     g_v4ds_core.main_proj_rows = config->hidden_size;
     g_v4ds_core.main_proj_cols =
@@ -283,10 +283,10 @@ static int v4_ds_core_load(const ColiSafetensorsIndex *index,
                               "confidence_head.proj.weight",
                               (int64_t)config->hidden_size + V4_DSPARK_RANK) ||
         v4_ds_read_raw(index, "mtp.2.markov_head.markov_w1.weight",
-                       COLI_ST_BF16, (void **)&g_v4ds_core.markov_w1,
+                       LMA_ST_BF16, (void **)&g_v4ds_core.markov_w1,
                        &g_v4ds_core.markov_w1_bytes) ||
         v4_ds_read_raw(index, "mtp.2.markov_head.markov_w2.weight",
-                       COLI_ST_BF16, (void **)&g_v4ds_core.markov_w2,
+                       LMA_ST_BF16, (void **)&g_v4ds_core.markov_w2,
                        &g_v4ds_core.markov_w2_bytes))
         return 0;
 
@@ -314,8 +314,8 @@ static int v4_ds_core_load(const ColiSafetensorsIndex *index,
     return 1;
 }
 
-static int v4_ds_stage_load(const ColiSafetensorsIndex *index,
-                            const ColiDeepSeekV4Config *config, int stage_id) {
+static int v4_ds_stage_load(const LmaSafetensorsIndex *index,
+                            const LmaDeepSeekV4Config *config, int stage_id) {
     V4DSparkStage *stage = &g_v4ds[stage_id];
     if (stage->ready) return stage->ready > 0;
     stage->ready = -1;
@@ -372,10 +372,10 @@ static int v4_ds_stage_load(const ColiSafetensorsIndex *index,
             char name[192];
             snprintf(name, sizeof(name), "mtp.%d.ffn.experts.%d.%s.weight",
                      stage_id, expert, matrices[matrix]);
-            stage->ew[expert][matrix] = coli_st_find(index, name);
+            stage->ew[expert][matrix] = lma_st_find(index, name);
             snprintf(name, sizeof(name), "mtp.%d.ffn.experts.%d.%s.scale",
                      stage_id, expert, matrices[matrix]);
-            stage->es[expert][matrix] = coli_st_find(index, name);
+            stage->es[expert][matrix] = lma_st_find(index, name);
             if (!stage->ew[expert][matrix] || !stage->es[expert][matrix])
                 return 0;
             expert_bytes += stage->ew[expert][matrix]->nbytes +
@@ -386,7 +386,7 @@ static int v4_ds_stage_load(const ColiSafetensorsIndex *index,
     if (stage->slab_bytes < 1) return 0;
 
     /* V4_MTP_GB is intentionally total, not per stage. */
-    double total_gb = coli_v4_dspark_cache_gb();
+    double total_gb = lma_v4_dspark_cache_gb();
     double stage_bytes = total_gb * 1e9 / V4_DSPARK_STAGES;
     stage->cap_slots = (int)(stage_bytes / (double)stage->slab_bytes);
     if (stage->cap_slots < 4) stage->cap_slots = 4;
@@ -406,17 +406,17 @@ static int v4_ds_stage_load(const ColiSafetensorsIndex *index,
     return 1;
 }
 
-static int v4_ds_load_all(const ColiSafetensorsIndex *index,
-                          const ColiDeepSeekV4Config *config) {
+static int v4_ds_load_all(const LmaSafetensorsIndex *index,
+                          const LmaDeepSeekV4Config *config) {
     if (!v4_ds_core_load(index, config)) return 0;
     for (int stage = 0; stage < V4_DSPARK_STAGES; stage++)
         if (!v4_ds_stage_load(index, config, stage)) return 0;
     return 1;
 }
 
-static int v4_ds_expert(const ColiSafetensorsIndex *index,
+static int v4_ds_expert(const LmaSafetensorsIndex *index,
                         V4DSparkStage *stage, int expert,
-                        ColiExpertView *view, int *miss_budget,
+                        LmaExpertView *view, int *miss_budget,
                         void *gpu_mirrors) {
     int slot = -1;
     int lru = 0;
@@ -444,22 +444,22 @@ static int v4_ds_expert(const ColiSafetensorsIndex *index,
         uint8_t *cursor = stage->slots[slot].slab;
         uint8_t *slab_end = cursor + stage->slab_bytes;
         for (int matrix = 0; matrix < 3; matrix++) {
-            const ColiSafetensorsTensor *scale = stage->es[expert][matrix];
-            const ColiSafetensorsTensor *weight = stage->ew[expert][matrix];
+            const LmaSafetensorsTensor *scale = stage->es[expert][matrix];
+            const LmaSafetensorsTensor *weight = stage->ew[expert][matrix];
             /* SEC (GHSA-8p69): defence in depth — never write past the slab even
              * if the max-sizing above is ever defeated (shape drift within a
              * stage). Fail closed rather than overflow. */
             if (scale->nbytes < 0 || weight->nbytes < 0 ||
                 (size_t)(slab_end - cursor) < (size_t)scale->nbytes)
                 return 0;
-            if (coli_st_read_tensor(index, scale, cursor))
+            if (lma_st_read_tensor(index, scale, cursor))
                 return 0;
             cursor += scale->nbytes;
             if ((size_t)(slab_end - cursor) < (size_t)weight->nbytes)
                 return 0;
-            int shard = coli_st_tensor_shard(index, weight);
+            int shard = lma_st_tensor_shard(index, weight);
             if (shard < 0 || weight->off < 0 ||
-                coli_st_read_at_streaming(
+                lma_st_read_at_streaming(
                     index, shard, (uint64_t)weight->off,
                     (size_t)weight->nbytes, cursor))
                 return 0;
@@ -470,14 +470,14 @@ static int v4_ds_expert(const ColiSafetensorsIndex *index,
     stage->slots[slot].used = ++stage->clock;
 
     uint8_t *cursor = stage->slots[slot].slab;
-    ColiTensorView *views[3] = {&view->gate, &view->down, &view->up};
+    LmaTensorView *views[3] = {&view->gate, &view->down, &view->up};
     for (int matrix = 0; matrix < 3; matrix++) {
-        const ColiSafetensorsTensor *scale = stage->es[expert][matrix];
-        const ColiSafetensorsTensor *weight = stage->ew[expert][matrix];
-        ColiTensorView *tensor = views[matrix];
+        const LmaSafetensorsTensor *scale = stage->es[expert][matrix];
+        const LmaSafetensorsTensor *weight = stage->ew[expert][matrix];
+        LmaTensorView *tensor = views[matrix];
         memset(tensor, 0, sizeof(*tensor));
-        tensor->format = COLI_TENSOR_FP4_NATIVE_BLOCK;
-        tensor->scale_format = COLI_SCALE_UE8M0;
+        tensor->format = LMA_TENSOR_FP4_NATIVE_BLOCK;
+        tensor->scale_format = LMA_SCALE_UE8M0;
         tensor->scales = cursor;
         cursor += scale->nbytes;
         tensor->data = cursor;
@@ -490,7 +490,7 @@ static int v4_ds_expert(const ColiSafetensorsIndex *index,
         tensor->block_columns = 32;
     }
     view->lease = NULL;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     /* Mirrors the target model's resident fp4 tier: upload this expert's
      * gate/up/down byte-for-byte on first use so the fp4 matvecs dispatch
      * through the CUDA kernels. block_rows==1 + UE8M0 is exactly the layout
@@ -498,7 +498,7 @@ static int v4_ds_expert(const ColiSafetensorsIndex *index,
     if (gpu_mirrors) {
         view->key.layer = stage->stage;
         view->key.expert = expert;
-        coli_v4_gpu_dspark_expert_attach(gpu_mirrors, view);
+        lma_v4_gpu_dspark_expert_attach(gpu_mirrors, view);
     }
 #endif
     return 1;
@@ -552,10 +552,10 @@ static void v4_ds_sinkhorn(const float *mix, const float *scale,
 }
 
 static void v4_ds_hc_pre(float *out, const float *state,
-                         const ColiFloatTensor *function,
-                         const ColiFloatTensor *base,
-                         const ColiFloatTensor *scale,
-                         const ColiDeepSeekV4Config *config,
+                         const LmaFloatTensor *function,
+                         const LmaFloatTensor *base,
+                         const LmaFloatTensor *scale,
+                         const LmaDeepSeekV4Config *config,
                          float *post, float *comb) {
     int hc = config->hc_mult;
     int hidden = config->hidden_size;
@@ -579,14 +579,14 @@ static void v4_ds_hc_pre(float *out, const float *state,
         float sum = 0.0f;
         for (int copy = 0; copy < hc; copy++)
             sum += pre[copy] * state[(size_t)copy * hidden + i];
-        out[i] = coli_bf16_round(sum);
+        out[i] = lma_bf16_round(sum);
     }
 }
 
 static void v4_ds_hc_post(float *out, const float *branch,
                           const float *residual, const float *post,
                           const float *comb,
-                          const ColiDeepSeekV4Config *config) {
+                          const LmaDeepSeekV4Config *config) {
     int hc = config->hc_mult;
     int hidden = config->hidden_size;
     for (int dst = 0; dst < hc; dst++) {
@@ -595,13 +595,13 @@ static void v4_ds_hc_post(float *out, const float *branch,
             for (int src = 0; src < hc; src++)
                 sum += comb[src * hc + dst] *
                        residual[(size_t)src * hidden + i];
-            out[(size_t)dst * hidden + i] = coli_bf16_round(sum);
+            out[(size_t)dst * hidden + i] = lma_bf16_round(sum);
         }
     }
 }
 
 static int v4_ds_main_x(float *out, int64_t position,
-                        const ColiDeepSeekV4Config *config) {
+                        const LmaDeepSeekV4Config *config) {
     if (position < 0 || !g_v4ds_core.main_x) return 0;
     int slot = (int)(position % V4_DSPARK_WIN);
     float *cached = g_v4ds_core.main_x +
@@ -650,13 +650,13 @@ static int v4_ds_kv_qdq(float *kv, int head_dim, int rope_dim) {
     int nope = head_dim - rope_dim;
     uint8_t scales[16];
     if (nope < 1 || nope > 1024 ||
-        coli_fp8_activation_qdq_ref(kv, scales, kv, (size_t)nope, 64))
+        lma_fp8_activation_qdq_ref(kv, scales, kv, (size_t)nope, 64))
         return -1;
     v4_ds_bf16(kv, (size_t)head_dim);
     return 0;
 }
 
-static int v4_ds_backfill_context(const ColiDeepSeekV4Config *config,
+static int v4_ds_backfill_context(const LmaDeepSeekV4Config *config,
                                   int64_t position,
                                   const float *cosines, const float *sines) {
     int hidden = config->hidden_size;
@@ -685,7 +685,7 @@ static int v4_ds_backfill_context(const ColiDeepSeekV4Config *config,
             }
             v4_ds_rmsnorm(kv, kv, stage->kv_norm.data, head_dim,
                           config->rms_norm_eps);
-            coli_v4_rope_apply(kv + head_dim - rope_dim, 1, rope_dim,
+            lma_v4_rope_apply(kv + head_dim - rope_dim, 1, rope_dim,
                                cosines + (size_t)absolute * pairs,
                                sines + (size_t)absolute * pairs, 0);
             v4_ds_bf16(kv + head_dim - rope_dim, (size_t)rope_dim);
@@ -705,7 +705,7 @@ static int v4_ds_backfill_context(const ColiDeepSeekV4Config *config,
 static int v4_ds_attention(float *out, V4DSparkStage *stage,
                            const float *input, int64_t query_position,
                            const float *block_kv, int block_count,
-                           const ColiDeepSeekV4Config *config,
+                           const LmaDeepSeekV4Config *config,
                            const float *cosines, const float *sines) {
     int hidden = config->hidden_size;
     int head_dim = config->head_dim;
@@ -738,8 +738,8 @@ static int v4_ds_attention(float *out, V4DSparkStage *stage,
         float inverse = 1.0f /
             sqrtf(square / head_dim + config->rms_norm_eps);
         for (int d = 0; d < head_dim; d++)
-            row[d] = coli_bf16_round(row[d] * inverse);
-        coli_v4_rope_apply(row + head_dim - rope_dim, 1, rope_dim,
+            row[d] = lma_bf16_round(row[d] * inverse);
+        lma_v4_rope_apply(row + head_dim - rope_dim, 1, rope_dim,
                            cosines + (size_t)query_position * pairs,
                            sines + (size_t)query_position * pairs, 0);
         v4_ds_bf16(row + head_dim - rope_dim, (size_t)rope_dim);
@@ -784,7 +784,7 @@ static int v4_ds_attention(float *out, V4DSparkStage *stage,
                 result[d] += probability * keys[item][d];
         }
         v4_ds_bf16(result, (size_t)head_dim);
-        coli_v4_rope_apply(result + head_dim - rope_dim, 1, rope_dim,
+        lma_v4_rope_apply(result + head_dim - rope_dim, 1, rope_dim,
                            cosines + (size_t)query_position * pairs,
                            sines + (size_t)query_position * pairs, 1);
         v4_ds_bf16(result + head_dim - rope_dim, (size_t)rope_dim);
@@ -795,12 +795,12 @@ static int v4_ds_attention(float *out, V4DSparkStage *stage,
     int scale_columns = (group_width + 127) / 128;
     int scale_rows = (o_rank + 127) / 128;
     for (int group = 0; group < groups; group++) {
-        ColiTensorView view;
+        LmaTensorView view;
         v4_ds_fp8_view(&view,
             stage->wo_a_w + (size_t)group * o_rank * group_width,
             stage->wo_a_s + (size_t)group * scale_rows * scale_columns,
             o_rank, group_width);
-        if (coli_fp8_matvec_ref(oa + (size_t)group * o_rank, &view,
+        if (lma_fp8_matvec_ref(oa + (size_t)group * o_rank, &view,
                                 attended + (size_t)group * group_width))
             goto fail;
         v4_ds_bf16(oa + (size_t)group * o_rank, (size_t)o_rank);
@@ -818,28 +818,28 @@ fail:
 
 static int v4_ds_moe(float *out, V4DSparkStage *stage,
                      const float *input,
-                     const ColiSafetensorsIndex *index,
-                     const ColiDeepSeekV4Config *config,
+                     const LmaSafetensorsIndex *index,
+                     const LmaDeepSeekV4Config *config,
                      int *miss_budget, void *gpu_mirrors) {
     int hidden = config->hidden_size;
     int intermediate = config->moe_intermediate_size;
     int topk = config->num_experts_per_tok;
     float weights[16];
     int experts[16];
-    if (topk > 16 || coli_v4_route(weights, experts, input,
+    if (topk > 16 || lma_v4_route(weights, experts, input,
             stage->gate_w.data, stage->gate_b.data, NULL,
             config->n_routed_experts, hidden, topk,
             config->routed_scaling_factor))
         return -1;
 
-    ColiTensorView shared_gate, shared_down, shared_up;
+    LmaTensorView shared_gate, shared_down, shared_up;
     v4_ds_fp8_view(&shared_gate, stage->sh1_w, stage->sh1_s,
                    intermediate, hidden);
     v4_ds_fp8_view(&shared_down, stage->sh2_w, stage->sh2_s,
                    hidden, intermediate);
     v4_ds_fp8_view(&shared_up, stage->sh3_w, stage->sh3_s,
                    intermediate, hidden);
-    if (coli_v4_shared_expert_forward_ref(out, &shared_gate, &shared_down,
+    if (lma_v4_shared_expert_forward_ref(out, &shared_gate, &shared_down,
                                           &shared_up, input,
                                           config->swiglu_limit))
         return -1;
@@ -847,13 +847,13 @@ static int v4_ds_moe(float *out, V4DSparkStage *stage,
     float *branch = malloc((size_t)hidden * sizeof(float));
     if (!branch) return -1;
     for (int rank = 0; rank < topk; rank++) {
-        ColiExpertView expert;
+        LmaExpertView expert;
         if (!v4_ds_expert(index, stage, experts[rank], &expert, miss_budget,
                           gpu_mirrors)) {
             free(branch);
             return 1;                   /* bounded cold-start abort */
         }
-        if (coli_v4_expert_forward_ref(branch, &expert, input,
+        if (lma_v4_expert_forward_ref(branch, &expert, input,
                                        weights[rank],
                                        config->swiglu_limit)) {
             free(branch);
@@ -871,8 +871,8 @@ static int v4_ds_moe(float *out, V4DSparkStage *stage,
  * entire block, exactly as the parallel reference does. */
 static int v4_ds_stage_forward(float *state, V4DSparkStage *stage,
                                int64_t first_position,
-                               const ColiSafetensorsIndex *index,
-                               const ColiDeepSeekV4Config *config,
+                               const LmaSafetensorsIndex *index,
+                               const LmaDeepSeekV4Config *config,
                                const float *cosines, const float *sines,
                                int *miss_budget, void *gpu_mirrors) {
     int hidden = config->hidden_size;
@@ -913,7 +913,7 @@ static int v4_ds_stage_forward(float *state, V4DSparkStage *stage,
         v4_ds_rmsnorm(kv, kv, stage->kv_norm.data, head_dim,
                       config->rms_norm_eps);
         int64_t absolute = first_position + item;
-        coli_v4_rope_apply(kv + head_dim - rope_dim, 1, rope_dim,
+        lma_v4_rope_apply(kv + head_dim - rope_dim, 1, rope_dim,
                            cosines + (size_t)absolute * pairs,
                            sines + (size_t)absolute * pairs, 0);
         v4_ds_bf16(kv + head_dim - rope_dim, (size_t)rope_dim);
@@ -965,7 +965,7 @@ fail:
 }
 
 static int v4_ds_final_hidden(float *out, const float *state,
-                              const ColiDeepSeekV4Config *config) {
+                              const LmaDeepSeekV4Config *config) {
     int hidden = config->hidden_size;
     int hc = config->hc_mult;
     int flat = hidden * hc;
@@ -987,7 +987,7 @@ static int v4_ds_final_hidden(float *out, const float *state,
         float sum = 0.0f;
         for (int copy = 0; copy < hc; copy++)
             sum += pre[copy] * state[(size_t)copy * hidden + i];
-        out[i] = coli_bf16_round(sum);
+        out[i] = lma_bf16_round(sum);
     }
     v4_ds_rmsnorm(out, out, g_v4ds_core.norm.data, hidden,
                   config->rms_norm_eps);
@@ -997,20 +997,20 @@ static int v4_ds_final_hidden(float *out, const float *state,
 static void v4_ds_markov_embed(float out[V4_DSPARK_RANK], int token) {
     const uint16_t *row = g_v4ds_core.markov_w1 +
                           (size_t)token * V4_DSPARK_RANK;
-    for (int i = 0; i < V4_DSPARK_RANK; i++) out[i] = coli_bf16_decode(row[i]);
+    for (int i = 0; i < V4_DSPARK_RANK; i++) out[i] = lma_bf16_decode(row[i]);
 }
 
 /* Compute all backbone logits in one vocabulary sweep so head.weight is read
  * once for the five positions.  The small Markov correction remains serial,
  * which is the defining semi-autoregressive part of DSpark. */
-static int v4_ds_heads(ColiV4Engine *engine,
-                       const ColiSafetensorsIndex *index,
-                       const ColiDeepSeekV4Config *config,
+static int v4_ds_heads(LmaV4Engine *engine,
+                       const LmaSafetensorsIndex *index,
+                       const LmaDeepSeekV4Config *config,
                        const float *state, int anchor_token,
                        int *draft, float *confidence) {
-    const ColiSafetensorsTensor *head = coli_st_find(index, "head.weight");
-    if (!head || head->dtype != COLI_ST_BF16) return -1;
-    int head_shard = coli_st_tensor_shard(index, head);
+    const LmaSafetensorsTensor *head = lma_st_find(index, "head.weight");
+    if (!head || head->dtype != LMA_ST_BF16) return -1;
+    int head_shard = lma_st_tensor_shard(index, head);
     if (head_shard < 0 || head->off < 0) return -1;
     uint64_t head_offset = (uint64_t)head->off;
     int hidden = config->hidden_size;
@@ -1028,7 +1028,7 @@ static int v4_ds_heads(ColiV4Engine *engine,
             free(logits); free(hiddens); return -1;
         }
 
-    const uint16_t *resident = coli_v4_head_cache_data(
+    const uint16_t *resident = lma_v4_head_cache_data(
         engine, head_shard, head_offset, (size_t)head->nbytes);
     enum { ROWS = 64 };
     uint16_t *raw = resident ? NULL :
@@ -1041,7 +1041,7 @@ static int v4_ds_heads(ColiV4Engine *engine,
         const uint16_t *weights = resident
             ? resident + (size_t)start * hidden : raw;
         if (!resident) {
-            if (coli_st_read_at_engine(engine, index, head_shard,
+            if (lma_st_read_at_engine(engine, index, head_shard,
                     head_offset + (uint64_t)start * hidden * sizeof(uint16_t),
                     (size_t)rows * hidden * sizeof(uint16_t), raw)) {
                 free(raw); free(logits); free(hiddens); return -1;
@@ -1053,7 +1053,7 @@ static int v4_ds_heads(ColiV4Engine *engine,
             const uint16_t *weight = weights + (size_t)row * hidden;
             float sums[V4_DSPARK_BLOCK] = {0};
             for (int d = 0; d < hidden; d++) {
-                float w = coli_bf16_decode(weight[d]);
+                float w = lma_bf16_decode(weight[d]);
                 for (int item = 0; item < V4_DSPARK_BLOCK; item++)
                     sums[item] += w * hiddens[(size_t)item * hidden + d];
             }
@@ -1079,7 +1079,7 @@ static int v4_ds_heads(ColiV4Engine *engine,
                     (size_t)token * V4_DSPARK_RANK;
                 float score = logits[(size_t)item * vocab + token];
                 for (int rank = 0; rank < V4_DSPARK_RANK; rank++)
-                    score += coli_bf16_decode(weight[rank]) * embedding[rank];
+                    score += lma_bf16_decode(weight[rank]) * embedding[rank];
                 if (score > local_maximum) {
                     local_maximum = score;
                     local_winner = token;
@@ -1113,9 +1113,9 @@ static int v4_ds_heads(ColiV4Engine *engine,
     return 0;
 }
 
-static int v4_dspark_draft(ColiV4Engine *engine,
-                           const ColiSafetensorsIndex *index,
-                           const ColiDeepSeekV4Config *config,
+static int v4_dspark_draft(LmaV4Engine *engine,
+                           const LmaSafetensorsIndex *index,
+                           const LmaDeepSeekV4Config *config,
                            int anchor_token, int64_t first_position,
                            int *draft, int max_out) {
     if (!engine || !index || !config || !draft || max_out < 1) return 0;
@@ -1123,16 +1123,16 @@ static int v4_dspark_draft(ColiV4Engine *engine,
     if (!v4_ds_load_all(index, config)) return 0;
     double loaded = spec_now();
 
-    /* Mirrors GLM's COLI_CUDA_MTP: drafting experts go through the CUDA tier
+    /* Mirrors GLM's LMA_CUDA_MTP: drafting experts go through the CUDA tier
      * only when V4_MTP_GPU=1 and the tier opened. Default off because the GPU
      * kernels accumulate fp32 differently from the CPU refs; speculative
      * acceptance requires the draft to match the target bit-for-bit, so the
      * opt-in exists for runs that verify the divergence is below threshold. */
     void *gpu_mirrors = NULL;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     const char *mtp_gpu = getenv("V4_MTP_GPU");
     if (mtp_gpu && atoi(mtp_gpu) != 0 && engine->gpu.enabled) {
-        if (coli_v4_gpu_dspark_mirrors_ensure(engine) == 0)
+        if (lma_v4_gpu_dspark_mirrors_ensure(engine) == 0)
             gpu_mirrors = engine->gpu.dspark_mirrors;
     }
 #endif
@@ -1152,7 +1152,7 @@ static int v4_dspark_draft(ColiV4Engine *engine,
     }
 
     /* MTP stages have compress_ratio=0, hence base RoPE without YaRN. */
-    if (coli_v4_rope_precompute(cosines, sines, rope_dim, (int)table_rows,
+    if (lma_v4_rope_precompute(cosines, sines, rope_dim, (int)table_rows,
             0, config->rope_theta, config->rope_factor,
             config->rope_beta_fast, config->rope_beta_slow) ||
         v4_ds_backfill_context(config, first_position, cosines, sines)) {

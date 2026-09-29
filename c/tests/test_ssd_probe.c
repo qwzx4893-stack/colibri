@@ -1,23 +1,23 @@
 /* test_ssd_probe.c -- #379/#386 storage-probe hardening contract.
  *
- * Pins the probe's decision layer, which is pure C by design (colibri.c):
- *   - coli_ssd_cache_parse(): the STRICT .coli_ssd grammar, driven by the
+ * Pins the probe's decision layer, which is pure C by design (glm52.c):
+ *   - lma_ssd_cache_parse(): the STRICT .lma_ssd grammar, driven by the
  *     shared vector file tests/fixtures/ssd_cache_vectors.txt so the C reader
  *     and the Python reader (resource_plan.parse_ssd_cache, pinned by
  *     test_resource_plan.py over the SAME vectors) cannot drift apart.
- *   - coli_ssd_cache_format() -> parse round-trip: what the writer emits, the
+ *   - lma_ssd_cache_format() -> parse round-trip: what the writer emits, the
  *     reader trusts.
- *   - coli_ssd_probe_cold_tiles() + coli_ssd_probe_vetoed(): cold-range
+ *   - lma_ssd_probe_cold_tiles() + lma_ssd_probe_vetoed(): cold-range
  *     steering and the contamination veto over injected residency vectors --
  *     all-cold, all-warm, mixed, and exactly-at-floor, no mincore, no files.
- * On __APPLE__ it additionally exercises coli_ssd_probe_cached() end-to-end
+ * On __APPLE__ it additionally exercises lma_ssd_probe_cached() end-to-end
  * against a scratch dir: v2-with-matching-st_dev is trusted without touching
  * any shard; mismatched st_dev, legacy and garbage caches all fall through to
  * a re-probe; and a freshly written (page-cache-warm) shard is VETOED -- no
  * cache file is written and no bandwidth number escapes.
  * Portable: the pure layer builds and runs on every platform, same as
  * test_cap_precedence.c. */
-#define COLI_SSD_PROBE_TEST 1
+#define LMA_SSD_PROBE_TEST 1
 
 #ifdef __APPLE__
 /* pread recorder (#386 r2, FR2-2): pins that probe_raw actually READS the
@@ -32,15 +32,15 @@
 static long long g_pread_rec[4096];
 static int g_pread_nrec;
 static int g_pread_rec_on;
-static ssize_t coli_test_pread(int fd, void *buf, size_t n, off_t off){
+static ssize_t lma_test_pread(int fd, void *buf, size_t n, off_t off){
     if(g_pread_rec_on && g_pread_nrec<4096) g_pread_rec[g_pread_nrec++]=(long long)off;
     return pread(fd,buf,n,off);
 }
-#define pread coli_test_pread
+#define pread lma_test_pread
 #endif /* __APPLE__ */
 
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 #ifdef __APPLE__
 #undef pread
@@ -113,7 +113,7 @@ static void run_vectors(void){
             continue;
         }
         double gbs=0; unsigned long long dev=0;
-        int got=coli_ssd_cache_parse(payload,plen,&gbs,&dev);
+        int got=lma_ssd_cache_parse(payload,plen,&gbs,&dev);
         CHECK(got==want_kind,"vector %d (%s, %zu bytes): kind %d, want %d",nvec,kind,plen,got,want_kind);
         if(got==want_kind && want_kind>=1)
             CHECK(gbs==want_gbs,"vector %d: gbs %.6f, want %.6f",nvec,gbs,want_gbs);
@@ -133,12 +133,12 @@ static void run_roundtrip(void){
     static const unsigned long long devs[]={0,1,16777233,18446744073709551615ull};
     for(size_t i=0;i<sizeof(vals)/sizeof(*vals);i++)
         for(size_t j=0;j<sizeof(devs)/sizeof(*devs);j++){
-            char buf[COLI_SSD_CACHE_MAX+1];
-            int n=coli_ssd_cache_format(buf,sizeof(buf),vals[i],devs[j]);
+            char buf[LMA_SSD_CACHE_MAX+1];
+            int n=lma_ssd_cache_format(buf,sizeof(buf),vals[i],devs[j]);
             CHECK(n>0,"format(%.3f,%llu) failed",vals[i],devs[j]);
             if(n<=0) continue;
             double gbs=0; unsigned long long dev=0;
-            int kind=coli_ssd_cache_parse(buf,(size_t)n,&gbs,&dev);
+            int kind=lma_ssd_cache_parse(buf,(size_t)n,&gbs,&dev);
             CHECK(kind==2,"round-trip '%s': kind %d",buf,kind);
             /* the writer rounds to %.3f; the reader must return exactly that */
             CHECK(kind==2 && dev==devs[j] && gbs>0 && gbs<1000
@@ -151,7 +151,7 @@ static void run_roundtrip(void){
 /* ---- steering + veto over injected residency vectors ------------------- */
 
 #define PG 16384u                                   /* Apple Silicon page size */
-#define PER (COLI_SSD_PROBE_BLK/PG)                 /* 256 pages per 4MB tile */
+#define PER (LMA_SSD_PROBE_BLK/PG)                 /* 256 pages per 4MB tile */
 
 static void run_steering(void){
     enum { NT=20 };                                 /* 20 tiles = 80 MB */
@@ -160,49 +160,49 @@ static void run_steering(void){
     long long tiles[NT+2]; long long cold=0; size_t n;
 
     /* all-cold: every tile qualifies, offsets are the tile starts, no veto */
-    n=coli_ssd_probe_cold_tiles(vec,npages,PG,tiles,&cold);
+    n=lma_ssd_probe_cold_tiles(vec,npages,PG,tiles,&cold);
     CHECK(n==NT,"all-cold: %zu tiles, want %d",n,NT);
-    CHECK(cold==(long long)NT*COLI_SSD_PROBE_BLK,"all-cold: cold_bytes %lld",cold);
-    CHECK(!coli_ssd_probe_vetoed(cold),"all-cold must not veto");
+    CHECK(cold==(long long)NT*LMA_SSD_PROBE_BLK,"all-cold: cold_bytes %lld",cold);
+    CHECK(!lma_ssd_probe_vetoed(cold),"all-cold must not veto");
     for(size_t i=0;i<n;i++)
-        CHECK(tiles[i]==(long long)i*COLI_SSD_PROBE_BLK,"all-cold: tile %zu at %lld",i,tiles[i]);
+        CHECK(tiles[i]==(long long)i*LMA_SSD_PROBE_BLK,"all-cold: tile %zu at %lld",i,tiles[i]);
 
     /* all-warm: nothing qualifies -> veto */
     memset(vec,1,npages);
-    n=coli_ssd_probe_cold_tiles(vec,npages,PG,tiles,&cold);
+    n=lma_ssd_probe_cold_tiles(vec,npages,PG,tiles,&cold);
     CHECK(n==0 && cold==0,"all-warm: %zu tiles, cold %lld",n,cold);
-    CHECK(coli_ssd_probe_vetoed(cold),"all-warm must veto");
+    CHECK(lma_ssd_probe_vetoed(cold),"all-warm must veto");
 
     /* mixed: ONE warm page poisons its whole tile (a 4MB read across it would
      * be part RAM); warm page in tile 0 and tile 5 -> 18 qualifying tiles,
      * none of them at offset 0 or 5*4MB */
     memset(vec,0,npages);
     vec[3]=1; vec[5*PER+PER/2]=1;
-    n=coli_ssd_probe_cold_tiles(vec,npages,PG,tiles,&cold);
+    n=lma_ssd_probe_cold_tiles(vec,npages,PG,tiles,&cold);
     CHECK(n==NT-2,"mixed: %zu tiles, want %d",n,NT-2);
     for(size_t i=0;i<n;i++)
-        CHECK(tiles[i]!=0 && tiles[i]!=5ll*COLI_SSD_PROBE_BLK,"mixed: poisoned tile %lld selected",tiles[i]);
-    CHECK(!coli_ssd_probe_vetoed(cold),"mixed with 72MB cold must not veto");
+        CHECK(tiles[i]!=0 && tiles[i]!=5ll*LMA_SSD_PROBE_BLK,"mixed: poisoned tile %lld selected",tiles[i]);
+    CHECK(!lma_ssd_probe_vetoed(cold),"mixed with 72MB cold must not veto");
 
     /* exactly at the floor: 16 cold tiles = 64 MB passes, 15 = 60 MB vetoes */
     memset(vec,1,npages);
     for(size_t t=0;t<16;t++) memset(vec+t*PER,0,PER);
-    n=coli_ssd_probe_cold_tiles(vec,npages,PG,tiles,&cold);
-    CHECK(n==16 && cold==COLI_SSD_PROBE_COLD_FLOOR,"floor: %zu tiles, cold %lld",n,cold);
-    CHECK(!coli_ssd_probe_vetoed(cold),"exactly-at-floor (64MB) must not veto");
+    n=lma_ssd_probe_cold_tiles(vec,npages,PG,tiles,&cold);
+    CHECK(n==16 && cold==LMA_SSD_PROBE_COLD_FLOOR,"floor: %zu tiles, cold %lld",n,cold);
+    CHECK(!lma_ssd_probe_vetoed(cold),"exactly-at-floor (64MB) must not veto");
     memset(vec+15*PER,1,PER);
-    n=coli_ssd_probe_cold_tiles(vec,npages,PG,tiles,&cold);
+    n=lma_ssd_probe_cold_tiles(vec,npages,PG,tiles,&cold);
     CHECK(n==15,"floor-1: %zu tiles",n);
-    CHECK(coli_ssd_probe_vetoed(cold),"one tile below the floor must veto");
+    CHECK(lma_ssd_probe_vetoed(cold),"one tile below the floor must veto");
 
     /* partial tail tile (npages not a multiple of PER) is never selected:
      * a short window cannot supply a full 4MB read */
     memset(vec,0,npages+PER/2);
-    n=coli_ssd_probe_cold_tiles(vec,npages+PER/2,PG,tiles,&cold);
+    n=lma_ssd_probe_cold_tiles(vec,npages+PER/2,PG,tiles,&cold);
     CHECK(n==NT,"partial tail: %zu tiles, want %d",n,NT);
 
     /* 4K pages (Intel macs): 1024 pages per tile, same tiling */
-    n=coli_ssd_probe_cold_tiles(vec,3*(COLI_SSD_PROBE_BLK/4096),4096,tiles,&cold);
+    n=lma_ssd_probe_cold_tiles(vec,3*(LMA_SSD_PROBE_BLK/4096),4096,tiles,&cold);
     CHECK(n==3,"4K pages: %zu tiles, want 3",n);
 
     free(vec);
@@ -228,7 +228,7 @@ static int read_file(const char *dir, const char *name, char *out, size_t outsz)
 static void run_cached_decisions(void){
     const char *tmp=getenv("TMPDIR");
     char dirbuf[1200];
-    snprintf(dirbuf,sizeof(dirbuf),"%s/coli_ssd_probe_test.XXXXXX",
+    snprintf(dirbuf,sizeof(dirbuf),"%s/lma_ssd_probe_test.XXXXXX",
              (tmp && strlen(tmp)<1100) ? tmp : "/tmp");
     if(!mkdtemp(dirbuf)){ perror("mkdtemp"); failures++; return; }
     struct stat st;
@@ -238,32 +238,32 @@ static void run_cached_decisions(void){
 
     /* v2 + matching st_dev: trusted as-is -- no shard is even needed */
     snprintf(cache,sizeof(cache),"v2 7.500 %llu\n",dev);
-    write_file(dirbuf,".coli_ssd",cache);
-    double got=coli_ssd_probe_cached(dirbuf);
+    write_file(dirbuf,".lma_ssd",cache);
+    double got=lma_ssd_probe_cached(dirbuf);
     CHECK(got==7.5,"matching v2 cache: got %.3f, want 7.500",got);
 
     /* v2 from another volume: NOT trusted -> re-probe (no shard here, so the
      * probe cannot run and reports -1); the stale cache file is left in place */
     snprintf(cache,sizeof(cache),"v2 7.500 %llu\n",dev+1);
-    write_file(dirbuf,".coli_ssd",cache);
-    got=coli_ssd_probe_cached(dirbuf);
+    write_file(dirbuf,".lma_ssd",cache);
+    got=lma_ssd_probe_cached(dirbuf);
     CHECK(got==-1,"foreign-volume v2 cache must re-probe: got %.3f",got);
 
     /* legacy bare number: NOT trusted -> re-probe (the upgrade-to-v2 write
      * happens only when the re-probe succeeds; grammar + round-trip above pin
      * the upgraded format) */
-    write_file(dirbuf,".coli_ssd","9.500\n");
-    got=coli_ssd_probe_cached(dirbuf);
+    write_file(dirbuf,".lma_ssd","9.500\n");
+    got=lma_ssd_probe_cached(dirbuf);
     CHECK(got==-1,"legacy cache must re-probe: got %.3f",got);
 
     /* garbage: NOT trusted -> re-probe */
-    write_file(dirbuf,".coli_ssd","inf\n");
-    got=coli_ssd_probe_cached(dirbuf);
+    write_file(dirbuf,".lma_ssd","inf\n");
+    got=lma_ssd_probe_cached(dirbuf);
     CHECK(got==-1,"garbage cache must re-probe: got %.3f",got);
 
     /* contamination veto, end to end: a freshly WRITTEN 80MB shard is page-
      * cache resident, so the probe must refuse to measure it -- and must NOT
-     * write any .coli_ssd */
+     * write any .lma_ssd */
     {
         char p[1400]; snprintf(p,sizeof(p),"%s/out-00000.safetensors",dirbuf);
         FILE *f=fopen(p,"wb");
@@ -272,29 +272,29 @@ static void run_cached_decisions(void){
             memset(mb,0xA5,1024*1024);
             for(int i=0;i<80;i++) fwrite(mb,1,1024*1024,f);
             free(mb); fclose(f);
-            char cp[1400]; snprintf(cp,sizeof(cp),"%s/.coli_ssd",dirbuf);
+            char cp[1400]; snprintf(cp,sizeof(cp),"%s/.lma_ssd",dirbuf);
             unlink(cp);                          /* start with no cache at all */
-            int veto=COLI_SSD_VETO_NONE;
-            double raw=coli_ssd_probe_raw(dirbuf,&veto);
-            if(veto==COLI_SSD_VETO_NONE){
+            int veto=LMA_SSD_VETO_NONE;
+            double raw=lma_ssd_probe_raw(dirbuf,&veto);
+            if(veto==LMA_SSD_VETO_NONE){
                 /* the OS evicted a fresh 80MB write already? environment too
                  * unusual to assert on -- report and move on, the pure veto
                  * tests above still hold the line */
                 fprintf(stderr,"note: fresh shard not resident (raw=%.3f), skipping veto e2e\n",raw);
             }else{
                 CHECK(raw==-1,"vetoed raw probe must report -1: got %.3f",raw);
-                CHECK(veto==COLI_SSD_VETO_RESIDENT,
+                CHECK(veto==LMA_SSD_VETO_RESIDENT,
                       "fully-allocated warm shard must veto as RESIDENT, not %d",veto);
-                got=coli_ssd_probe_cached(dirbuf);
+                got=lma_ssd_probe_cached(dirbuf);
                 CHECK(got==-1,"vetoed cached probe must report -1: got %.3f",got);
-                CHECK(read_file(dirbuf,".coli_ssd",back,sizeof(back))==-1,
-                      "vetoed probe must not write .coli_ssd (found: %s)",back);
+                CHECK(read_file(dirbuf,".lma_ssd",back,sizeof(back))==-1,
+                      "vetoed probe must not write .lma_ssd (found: %s)",back);
             }
             unlink(p);
         }
     }
     /* scrub the scratch dir */
-    char cp[1400]; snprintf(cp,sizeof(cp),"%s/.coli_ssd",dirbuf);
+    char cp[1400]; snprintf(cp,sizeof(cp),"%s/.lma_ssd",dirbuf);
     unlink(cp); rmdir(dirbuf);
 }
 
@@ -302,7 +302,7 @@ static void run_cached_decisions(void){
 
 static char *make_scratch_dir(char *dirbuf, size_t sz){
     const char *tmp=getenv("TMPDIR");
-    snprintf(dirbuf,sz,"%s/coli_ssd_probe_r2.XXXXXX",(tmp && strlen(tmp)<1100)?tmp:"/tmp");
+    snprintf(dirbuf,sz,"%s/lma_ssd_probe_r2.XXXXXX",(tmp && strlen(tmp)<1100)?tmp:"/tmp");
     if(!mkdtemp(dirbuf)){ perror("mkdtemp"); failures++; return NULL; }
     return dirbuf;
 }
@@ -369,15 +369,15 @@ static void run_sparse_veto(void){
         fprintf(stderr,"note: filesystem allocated the ftruncate hole (blocks*512=%lld); skipping sparse e2e\n",
                 alloc);
     }else{
-        int veto=COLI_SSD_VETO_NONE;
-        double raw=coli_ssd_probe_raw(dirbuf,&veto);
+        int veto=LMA_SSD_VETO_NONE;
+        double raw=lma_ssd_probe_raw(dirbuf,&veto);
         CHECK(raw==-1,"sparse shard must not yield a measurement: got %.3f",raw);
-        CHECK(veto==COLI_SSD_VETO_SPARSE,"sparse shard must veto as SPARSE, got %d",veto);
-        double got=coli_ssd_probe_cached(dirbuf);
+        CHECK(veto==LMA_SSD_VETO_SPARSE,"sparse shard must veto as SPARSE, got %d",veto);
+        double got=lma_ssd_probe_cached(dirbuf);
         char back[160];
         CHECK(got==-1,"sparse cached probe must report -1: got %.3f",got);
-        CHECK(read_file(dirbuf,".coli_ssd",back,sizeof(back))==-1,
-              "sparse probe must not write .coli_ssd (found: %s)",back);
+        CHECK(read_file(dirbuf,".lma_ssd",back,sizeof(back))==-1,
+              "sparse probe must not write .lma_ssd (found: %s)",back);
     }
     /* Precedence pin: a shard that is BOTH under-allocated and below the
      * window floor reports SPARSE -- the allocation check runs first, and
@@ -392,15 +392,15 @@ static void run_sparse_veto(void){
             close(fd2);
             long long alloc2 = stat(p,&st)==0 ? (long long)st.st_blocks*512 : -1;
             if(alloc2>=0 && alloc2*2<(long long)st.st_size){
-                int veto2=COLI_SSD_VETO_NONE;
-                coli_ssd_probe_raw(dirbuf,&veto2);
-                CHECK(veto2==COLI_SSD_VETO_SPARSE,
+                int veto2=LMA_SSD_VETO_NONE;
+                lma_ssd_probe_raw(dirbuf,&veto2);
+                CHECK(veto2==LMA_SSD_VETO_SPARSE,
                       "sparse+small shard must report SPARSE (allocation first), got %d",veto2);
             }
         }
     }
     unlink(p);
-    char cp[1400]; snprintf(cp,sizeof(cp),"%s/.coli_ssd",dirbuf);
+    char cp[1400]; snprintf(cp,sizeof(cp),"%s/.lma_ssd",dirbuf);
     unlink(cp); rmdir(dirbuf);
 }
 
@@ -420,19 +420,19 @@ static void run_largest_shard(void){
         unlink(small); unlink(large); rmdir(dirbuf); return;
     }
     char picked[1280];
-    coli_ssd_probe_pick_shard(dirbuf,picked,sizeof(picked));
+    lma_ssd_probe_pick_shard(dirbuf,picked,sizeof(picked));
     CHECK(!strcmp(picked,large),"picker must choose the largest shard: got '%s'",picked);
     if(resident_share(large,0,(long long)72*1024*1024)<0.05){
-        int veto=COLI_SSD_VETO_NONE;
-        double gbs=coli_ssd_probe_raw(dirbuf,&veto);
-        CHECK(veto==COLI_SSD_VETO_NONE,
+        int veto=LMA_SSD_VETO_NONE;
+        double gbs=lma_ssd_probe_raw(dirbuf,&veto);
+        CHECK(veto==LMA_SSD_VETO_NONE,
               "with a 72MB cold shard present the probe must not veto: got %d",veto);
         CHECK(gbs>0,"with a 72MB cold shard present the probe must measure: got %.3f",gbs);
     }else{
         fprintf(stderr,"note: large shard not cold, skipping largest-shard e2e half\n");
     }
     unlink(small); unlink(large);
-    char cp[1400]; snprintf(cp,sizeof(cp),"%s/.coli_ssd",dirbuf);
+    char cp[1400]; snprintf(cp,sizeof(cp),"%s/.lma_ssd",dirbuf);
     unlink(cp); rmdir(dirbuf);
 }
 
@@ -443,16 +443,16 @@ static void run_small_veto(void){
     if(!make_scratch_dir(dirbuf,sizeof(dirbuf))) return;
     char p[1400]; snprintf(p,sizeof(p),"%s/out-00000.safetensors",dirbuf);
     if(write_cold_mb(p,30)!=0){ perror(p); failures++; rmdir(dirbuf); return; }
-    int veto=COLI_SSD_VETO_NONE;
-    double raw=coli_ssd_probe_raw(dirbuf,&veto);
+    int veto=LMA_SSD_VETO_NONE;
+    double raw=lma_ssd_probe_raw(dirbuf,&veto);
     CHECK(raw==-1,"30MB shard must not yield a measurement: got %.3f",raw);
-    CHECK(veto==COLI_SSD_VETO_SMALL,"cold 30MB shard must veto as SMALL, got %d",veto);
+    CHECK(veto==LMA_SSD_VETO_SMALL,"cold 30MB shard must veto as SMALL, got %d",veto);
     unlink(p); rmdir(dirbuf);
 }
 
 /* FR2-2: the steering must be USED, not merely computed. Half the shard is
  * cold (F_NOCACHE-written), half deliberately warmed; every offset probe_raw
- * actually preads (recorded by the coli_test_pread shim) must fall in the
+ * actually preads (recorded by the lma_test_pread shim) must fall in the
  * cold half. A probe_raw that ignores tiles[] and reads r11-style random
  * offsets lands ~half its reads in the warm half and fails here. */
 static void run_steering_pin(void){
@@ -479,22 +479,22 @@ static void run_steering_pin(void){
                 cold_res*100,warm_res*100);
     }else{
         g_pread_nrec=0; g_pread_rec_on=1;
-        int veto=COLI_SSD_VETO_NONE;
-        double gbs=coli_ssd_probe_raw(dirbuf,&veto);
+        int veto=LMA_SSD_VETO_NONE;
+        double gbs=lma_ssd_probe_raw(dirbuf,&veto);
         g_pread_rec_on=0;
-        CHECK(veto==COLI_SSD_VETO_NONE,"half-cold shard must not veto (72MB cold): got %d",veto);
+        CHECK(veto==LMA_SSD_VETO_NONE,"half-cold shard must not veto (72MB cold): got %d",veto);
         CHECK(gbs>0,"half-cold shard must measure: got %.3f",gbs);
         CHECK(g_pread_nrec>0,"probe made no preads");
         for(int i=0;i<g_pread_nrec;i++){
             CHECK(g_pread_rec[i]>=0 && g_pread_rec[i]<warm_lo,
                   "pread %d at %lld outside the cold half [0,%lld)",i,g_pread_rec[i],warm_lo);
-            CHECK(g_pread_rec[i]%COLI_SSD_PROBE_BLK==0,
+            CHECK(g_pread_rec[i]%LMA_SSD_PROBE_BLK==0,
                   "pread %d at %lld is not tile-aligned",i,g_pread_rec[i]);
         }
         fprintf(stderr,"steering pin: %d preads, all in the cold half\n",g_pread_nrec);
     }
     unlink(p);
-    char cp[1400]; snprintf(cp,sizeof(cp),"%s/.coli_ssd",dirbuf);
+    char cp[1400]; snprintf(cp,sizeof(cp),"%s/.lma_ssd",dirbuf);
     unlink(cp); rmdir(dirbuf);
 }
 #endif /* __APPLE__ */
@@ -503,15 +503,15 @@ static void run_steering_pin(void){
  * 12.5% slack; the boundary sits exactly at size - size/8. */
 static void run_underallocated(void){
     const long long GBl=1024ll*1024*1024;
-    CHECK(coli_ssd_probe_underallocated(100ll*1024*1024,10*GBl),
+    CHECK(lma_ssd_probe_underallocated(100ll*1024*1024,10*GBl),
           "auditor repro: 100MB real of 10GB must read as under-allocated");
-    CHECK(!coli_ssd_probe_underallocated(10*GBl,10*GBl),"fully allocated must pass");
-    CHECK(!coli_ssd_probe_underallocated(10*GBl+4096,10*GBl),
+    CHECK(!lma_ssd_probe_underallocated(10*GBl,10*GBl),"fully allocated must pass");
+    CHECK(!lma_ssd_probe_underallocated(10*GBl+4096,10*GBl),
           "metadata rounding above size must pass");
     long long size=800ll*1024*1024;
-    CHECK(!coli_ssd_probe_underallocated(size-size/8,size),"exactly at the slack edge must pass");
-    CHECK(coli_ssd_probe_underallocated(size-size/8-1,size),"one byte past the slack must veto");
-    CHECK(coli_ssd_probe_underallocated(0,size),"zero allocation must veto");
+    CHECK(!lma_ssd_probe_underallocated(size-size/8,size),"exactly at the slack edge must pass");
+    CHECK(lma_ssd_probe_underallocated(size-size/8-1,size),"one byte past the slack must veto");
+    CHECK(lma_ssd_probe_underallocated(0,size),"zero allocation must veto");
 }
 
 int main(void){

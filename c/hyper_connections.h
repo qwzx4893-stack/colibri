@@ -1,5 +1,5 @@
-#ifndef COLIBRI_HYPER_CONNECTIONS_H
-#define COLIBRI_HYPER_CONNECTIONS_H
+#ifndef LMA_HYPER_CONNECTIONS_H
+#define LMA_HYPER_CONNECTIONS_H
 
 /*
  * Manifold-Constrained Hyper-Connections (mHC), shared by every engine whose
@@ -30,7 +30,7 @@
 #include <math.h>
 #include <stdlib.h>
 
-static inline float coli_hc_sigmoid(float value) {
+static inline float lma_hc_sigmoid(float value) {
     if (value >= 0.0f) {
         float decay = expf(-value);
         return 1.0f / (1.0f + decay);
@@ -43,7 +43,7 @@ static inline float coli_hc_sigmoid(float value) {
  * doubly-stochastic manifold. `mixes` is [(2+hc)*hc], `scale` is the three
  * learned scales, `base` the matching biases. Returns 0, or -1 on bad
  * arguments or allocation failure. */
-static inline int coli_hc_split_sinkhorn(float *pre, float *post, float *comb,
+static inline int lma_hc_split_sinkhorn(float *pre, float *post, float *comb,
                                          const float *mixes, const float scale[3],
                                          const float *base, int hc, int iterations,
                                          float eps) {
@@ -51,9 +51,9 @@ static inline int coli_hc_split_sinkhorn(float *pre, float *post, float *comb,
         hc < 1 || iterations < 1 || eps < 0.0f)
         return -1;
     for (int index = 0; index < hc; index++) {
-        pre[index] = coli_hc_sigmoid(
+        pre[index] = lma_hc_sigmoid(
             mixes[index] * scale[0] + base[index]) + eps;
-        post[index] = 2.0f * coli_hc_sigmoid(
+        post[index] = 2.0f * lma_hc_sigmoid(
             mixes[hc + index] * scale[1] + base[hc + index]);
     }
     int matrix_offset = 2 * hc;
@@ -113,8 +113,8 @@ static inline int coli_hc_split_sinkhorn(float *pre, float *post, float *comb,
 /* Entering a block: RMS-rescale the flattened streams, map them to the mix
  * logits through `hc_fn` [(2+hc)*hc, hc*dimension], split, and collapse the
  * streams into `output` [dimension] with the pre weights. `post` and `comb`
- * are handed back for the matching coli_hc_post(). */
-static inline int coli_hc_pre(float *output, float *post, float *comb,
+ * are handed back for the matching lma_hc_post(). */
+static inline int lma_hc_pre(float *output, float *post, float *comb,
                               const float *input, const float *hc_fn,
                               const float scale[3], const float *base,
                               int hc, int dimension, int iterations,
@@ -159,7 +159,7 @@ static inline int coli_hc_pre(float *output, float *post, float *comb,
             sum += hc_fn[(size_t)row * flattened + column] * input[column];
         mixes[row] = sum * inverse_rms;
     }
-    if (coli_hc_split_sinkhorn(pre, post, comb, mixes, scale, base,
+    if (lma_hc_split_sinkhorn(pre, post, comb, mixes, scale, base,
                                hc, iterations, hc_eps) != 0) {
         free(pre);
         free(mixes);
@@ -182,7 +182,7 @@ static inline int coli_hc_pre(float *output, float *post, float *comb,
 /* Leaving a block: mix the incoming streams through `comb` and add the block's
  * output where `post` says it goes. `output` and `residual` are [hc*dimension]
  * and may not overlap. */
-static inline int coli_hc_post(float *output, const float *branch,
+static inline int lma_hc_post(float *output, const float *branch,
                                const float *residual, const float *post,
                                const float *comb, int hc, int dimension) {
     if (!output || !branch || !residual || !post || !comb ||
@@ -207,4 +207,4 @@ static inline int coli_hc_post(float *output, const float *branch,
     return 0;
 }
 
-#endif /* COLIBRI_HYPER_CONNECTIONS_H */
+#endif /* LMA_HYPER_CONNECTIONS_H */

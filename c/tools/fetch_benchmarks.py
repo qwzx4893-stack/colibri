@@ -86,9 +86,9 @@ def main():
             except Exception: continue
             if n >= a.limit: break
         outp = os.path.join(a.out, t + ".jsonl")
-        # scrittura atomica: coli controlla solo l'ESISTENZA del file, quindi un jsonl
+        # scrittura atomica: lmatomic controlla solo l'ESISTENZA del file, quindi un jsonl
         # troncato da un run interrotto bloccherebbe il re-download per sempre.
-        # EN: atomic write: coli only checks the file EXISTS, so a truncated jsonl from
+        # EN: atomic write: lmatomic only checks the file EXISTS, so a truncated jsonl from
         # an interrupted run would block re-download forever.
         tmp = outp + ".part"
         with open(tmp, "w") as f:

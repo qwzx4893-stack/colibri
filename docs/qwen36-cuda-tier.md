@@ -1,6 +1,6 @@
 # qwen36: CUDA VRAM expert tier
 
-Applies colibri's placement concept ("route -> place -> overlap -> learn") to
+Applies LM Atomic's placement concept ("route -> place -> overlap -> learn") to
 Qwen3.6-35B-A3B one level up from the GLM disk tier: all 10,240 experts live
 in RAM, the **hot** ones are promoted into DEVICE_LOCAL VRAM across one or
 more GPUs and computed there through the existing shared CUDA backend
@@ -25,7 +25,7 @@ more GPUs and computed there through the existing shared CUDA backend
   budget before the first token — ordered by a persisted heat table
   (`HEAT_FILE`) when present, so a second run starts fully placed.
 - **Decode:** per (token, layer) the resident experts are issued as async
-  groups on all devices (`coli_cuda_expert_group_issue/take`); VRAM misses
+  groups on all devices (`lma_cuda_expert_group_issue/take`); VRAM misses
   fall back to the CPU int8 path and overlap with the in-flight groups, as
   does the shared expert. Placement never changes routing or precision.
 - **Memory:** on an **int4 container** the warmstart frees the RAM int8 copies
@@ -41,14 +41,14 @@ more GPUs and computed there through the existing shared CUDA backend
 
 ```bash
 make -C c qwen36 CUDA=1 CUDA_ARCH=native   # NVCC=/usr/bin/nvcc on distro CUDA
-COLI_CUDA=1 COLI_GPUS=0,1 HEAT_FILE=heat.bin CUDA_EXPERT_GB=auto \
+LMA_CUDA=1 LMA_GPUS=0,1 HEAT_FILE=heat.bin CUDA_EXPERT_GB=auto \
 OMP_NUM_THREADS=<physical cores> OMP_WAIT_POLICY=ACTIVE OMP_PROC_BIND=close \
 SNAP=<container> N_NEW=200 ./c/qwen36 256 4 prompt.txt
 ```
 
 ### Windows (CUDA_DLL=1)
 
-MinGW cannot link CUDA directly, so the backend is built into `coli_cuda.dll`
+MinGW cannot link CUDA directly, so the backend is built into `lma_cuda.dll`
 with nvcc + MSVC and `qwen36.exe` reaches it through `backend_loader.c`.
 `CUDA=1` is rejected on Windows by design. From an *x64 Native Tools* prompt
 with MSYS2's `mingw64\bin` and `usr\bin` on `PATH`:
@@ -57,22 +57,22 @@ with MSYS2's `mingw64\bin` and `usr\bin` on `PATH`:
 cd c
 make cuda-dll CUDA_ARCH=sm_89
 make qwen36.exe CUDA_DLL=1 ARCH=native
-set COLI_CUDA=1
-set COLI_GPUS=0
+set LMA_CUDA=1
+set LMA_GPUS=0
 set CUDA_EXPERT_GB=auto
 qwen36.exe <same arguments as the CPU build>
 ```
 
-Keep `coli_cuda.dll` next to `qwen36.exe`, built from the same checkout, and
+Keep `lma_cuda.dll` next to `qwen36.exe`, built from the same checkout, and
 the CUDA toolkit's `bin` directory on `PATH` for `cudart`. A startup line
 `[gpu] MoE experts -> CUDA VRAM tier` confirms the tier is active; without it
 the run is CPU-only.
 
 `cap` (argv[1]) must equal `n_experts` (full RAM residency). int4 containers
-only (the int8 container keeps the CPU path). `COLI_TIMERS=1` prints
+only (the int8 container keeps the CPU path). `LMA_TIMERS=1` prints
 per-phase timings and tier telemetry.
 
-## Placement: where the dense trunk goes (`COLI_PLACE`)
+## Placement: where the dense trunk goes (`LMA_PLACE`)
 
 The tier moves the routed experts. On this hybrid model that is the *small*
 part of a token: 40 layers × top-8 experts, ~190 MB of int8 per token at an
@@ -123,8 +123,8 @@ device that would host it (ten GEMVs, best of three rounds, after a warm-up),
 one `[place] probe:` line reports both times, and if the GPU loses the whole
 automatic placement is withdrawn (`[place] trunk stays on the CPU`) and its
 bytes go back to the expert budget before the warmstart. Only the automatic
-placement is questioned: a hand-written `COLI_PLACE` stands, and
-`COLI_TRUNK_PROBE=0` skips the probe. The pricing rule:
+placement is questioned: a hand-written `LMA_PLACE` stands, and
+`LMA_TRUNK_PROBE=0` skips the probe. The pricing rule:
 
 - a dense component is read every token: 1.0 per byte;
 - a routed expert is read with the probability a token routes to it -- its heat
@@ -138,7 +138,7 @@ on the 35B and the trunk always wins; with heat, a card whose marginal expert is
 routed on more than every second token keeps its experts. Placed bytes come out
 of that device's expert budget, and each decision prints as a `[place]` line.
 
-| `COLI_PLACE` | behaviour |
+| `LMA_PLACE` | behaviour |
 |---|---|
 | unset or `auto` | automatic, as above |
 | `off` | nothing placed: experts only (the behaviour before this) |
@@ -196,7 +196,7 @@ and hands the placed matrices over as int8 rows with
 wrappers over the same mechanism. Qwen3.8 uses it for its whole trunk -- 553
 matrices, 4.0 GiB int8 on one card ([qwen38.md](qwen38.md), "GPU") -- and
 that is also where the backend's resident dense matvec got its own staging
-buffers: `coli_cuda_matmul` used to share the `x`/`y` device buffers with the
+buffers: `lma_cuda_matmul` used to share the `x`/`y` device buffers with the
 expert group, which runs asynchronously on its own stream between `qt_issue`
 and `qt_take`. A dense GEMV issued in that window (Qwen3.8's shared expert)
 overwrote the group's input and output mid-flight -- no CUDA error, only

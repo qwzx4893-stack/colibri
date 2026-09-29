@@ -1,7 +1,7 @@
-# warmup.ps1 - overnight expert-cache warmup for colibri
+# warmup.ps1 - overnight expert-cache warmup for lmatomic
 #
-# Runs `coli run` in a loop with diverse prompts so the engine records which
-# routed experts your workload actually uses into .coli_usage. At startup the
+# Runs `lmatomic run` in a loop with diverse prompts so the engine records which
+# routed experts your workload actually uses into .lma_usage. At startup the
 # engine pins the hottest experts into RAM; the more history it has, the bigger
 # and more accurate that pin gets. This does NOT load random experts - it loads
 # whatever the model actually routes to for these prompts, then promotes the
@@ -35,9 +35,9 @@ param(
 # "Continue" (not "Stop"): the engine writes status to stderr, which "Stop"
 # treats as a fatal error and aborts the whole warmup loop on every prompt.
 $ErrorActionPreference = "Continue"
-$Coli = Join-Path $PSScriptRoot "coli"
+$Coli = Join-Path $PSScriptRoot "lmatomic"
 
-if (-not (Test-Path $Coli)) { Write-Error "coli not found at $Coli - run from the c\ directory"; exit 1 }
+if (-not (Test-Path $Coli)) { Write-Error "lmatomic not found at $Coli - run from the c\ directory"; exit 1 }
 if (-not (Test-Path $Model)) { Write-Error "model not found at $Model"; exit 1 }
 
 # Diverse prompts across domains - each touches a different expert distribution.
@@ -77,7 +77,7 @@ $Prompts = @(
 )
 
 function Get-Selections {
-    $u = Join-Path $Model ".coli_usage"
+    $u = Join-Path $Model ".lma_usage"
     if (-not (Test-Path $u)) { return 0 }
     $tot = 0
     Get-Content $u | ForEach-Object {
@@ -91,7 +91,7 @@ $start = Get-Date
 $baseline = Get-Selections
 $line = "=" * 72
 "$line"                                  | Tee-Object -FilePath $Log -Append
-"colibri warmup - started $start"        | Tee-Object -FilePath $Log -Append
+"lmatomic warmup - started $start"        | Tee-Object -FilePath $Log -Append
 "  model:    $Model"                     | Tee-Object -FilePath $Log -Append
 "  rounds:   $Rounds x $($Prompts.Count) prompts" | Tee-Object -FilePath $Log -Append
 "  ngen:     $Ngen tokens/prompt"        | Tee-Object -FilePath $Log -Append
@@ -111,7 +111,7 @@ for ($r = 1; $r -le $Rounds; $r++) {
         "  prompt: $($prompt.Substring(0, [Math]::Min(70, $prompt.Length)))..." | Tee-Object -FilePath $Log -Append
 
         $t0 = Get-Date
-        # coli run writes status to stderr (normal) and may exit non-zero on
+        # lmatomic run writes status to stderr (normal) and may exit non-zero on
         # EOS-early; neither is a real failure for our purpose. Relax the
         # error preference and collect ALL output streams so stderr text
         # doesn't abort the loop.
@@ -139,8 +139,8 @@ $final = Get-Selections
 $gain = $final - $baseline
 $duration = ($end - $start).ToString("hh\:mm\:ss")
 "$line"                                           | Tee-Object -FilePath $Log -Append
-"colibri warmup - finished $end"                  | Tee-Object -FilePath $Log -Append
+"lmatomic warmup - finished $end"                  | Tee-Object -FilePath $Log -Append
 "  duration:    $duration"                        | Tee-Object -FilePath $Log -Append
 "  selections:  $baseline -> $final (+$gain)"     | Tee-Object -FilePath $Log -Append
-"  next: python coli chat --model $Model"         | Tee-Object -FilePath $Log -Append
+"  next: python lmatomic chat --model $Model"         | Tee-Object -FilePath $Log -Append
 "$line"                                           | Tee-Object -FilePath $Log -Append

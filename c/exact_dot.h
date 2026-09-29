@@ -17,10 +17,10 @@
  * NaN / inf: a float dot with a NaN input is NaN, with an inf input is +-inf or NaN; the exact
  * path reproduces the same *classification* (flags), so callers see the same special values.
  *
- * Copyright (c) 2026 Anomly, Inc. Licensed under the same terms as colibri (see LICENSE).
+ * Copyright (c) 2026 Anomly, Inc. Licensed under the same terms as lmatomic (see LICENSE).
  * Author: Ry Bruscoe. */
-#ifndef COLI_EXACT_DOT_H
-#define COLI_EXACT_DOT_H
+#ifndef LMA_EXACT_DOT_H
+#define LMA_EXACT_DOT_H
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
@@ -152,4 +152,4 @@ static inline float exd_dot_ff(const float *x, const float *y, int n){
     for(int i = 0; i < n; i++) exd_add_ff(&a, x[i], y[i]);
     return exd_finish(&a);
 }
-#endif /* COLI_EXACT_DOT_H */
+#endif /* LMA_EXACT_DOT_H */

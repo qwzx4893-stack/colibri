@@ -53,8 +53,8 @@ static int one_case(int hd, int count, int rows, int holes, float sink, const ch
     /* the scale the engine uses */
     float scale = 1.0f / sqrtf((float)hd);
 
-    coli_sparse_attend_scalar(out_a, q, kv, idx, count, hd, sink, scale, score_a);
-    coli_sparse_attend(out_b, q, kv, idx, count, hd, sink, scale, score_b);
+    lma_sparse_attend_scalar(out_a, q, kv, idx, count, hd, sink, scale, score_a);
+    lma_sparse_attend(out_b, q, kv, idx, count, hd, sink, scale, score_b);
 
     int ok = agrees(out_a, out_b, hd, 1e-5f, what);
     free(q); free(kv); free(idx); free(score_a); free(score_b); free(out_a); free(out_b);
@@ -70,7 +70,7 @@ static int all_holes(void) {
     int idx[COUNT];
     for (int i = 0; i < HD; i++) { q[i] = next_float(); kv[i] = next_float(); }
     for (int j = 0; j < COUNT; j++) idx[j] = -1;
-    coli_sparse_attend(out, q, kv, idx, COUNT, HD, 0.0f, 1.0f, score);
+    lma_sparse_attend(out, q, kv, idx, COUNT, HD, 0.0f, 1.0f, score);
     for (int i = 0; i < HD; i++)
         if (out[i] != 0.0f) {
             fprintf(stderr, "unreachable list: out[%d] is %g, expected 0\n", i, out[i]);

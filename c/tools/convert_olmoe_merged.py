@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert OLMoE HuggingFace checkpoint to colibri merged int8 format.
+"""Convert OLMoE HuggingFace checkpoint to lmatomic merged int8 format.
 
 Consolidates gate_proj, up_proj, and down_proj into a single merged tensor per expert.
 This allows olmoe.c to load an expert in a single disk read call instead of 3.
@@ -264,7 +264,7 @@ def convert_streaming(repo: str, out_dir: Path, flush_every: int, min_free_gb: f
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Convert OLMoE HF checkpoint -> colibri merged int8")
+    ap = argparse.ArgumentParser(description="Convert OLMoE HF checkpoint -> lmatomic merged int8")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--repo", help="HuggingFace repo ID (streams+deletes one shard at a time)")
     src.add_argument("--model", help="Local HF checkpoint directory (already fully downloaded)")

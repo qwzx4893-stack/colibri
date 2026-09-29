@@ -53,7 +53,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
-        self.send_header("x-colibri-queue-wait-ms", "12")
+        self.send_header("x-lmatomic-queue-wait-ms", "12")
         self.end_headers()
         slow = body["messages"][-1]["content"] == "SLOW"
         try:
@@ -79,7 +79,7 @@ try:
         page.goto(url)
         expect(page.locator(".model-button")).to_contain_text("fixture-model")
         page.evaluate("document.fonts.ready")
-        assert page.locator(".rail .colibri-word").count() == 0
+        assert page.locator(".rail .lmatomic-word").count() == 0
 
         def navigate(name):
             page.locator(".dock-handle").click()
@@ -94,7 +94,7 @@ try:
         page.locator("#api-key").fill("test-only-key")
         page.get_by_role("button", name="Sonda il server").click()
         expect(page.locator(".settings-card .connection-state")).to_have_text("Motore raggiungibile")
-        assert page.evaluate("localStorage.getItem('colibri.apiKey')") is None
+        assert page.evaluate("localStorage.getItem('lmatomic.apiKey')") is None
         settings("Modello")
         page.locator("#temperature").fill("0.4")
         page.locator("#max-tokens").fill("512")
@@ -104,13 +104,13 @@ try:
             page.set_viewport_size({"width": width, "height": height})
             page.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
             logo, box, tips = page.evaluate("['.welcome-brand','.composer','.suggestions'].map(s => document.querySelector(s).getBoundingClientRect().toJSON())")
-            page.screenshot(path=f"/tmp/colibri-integrated-layout-{width}.png")
+            page.screenshot(path=f"/tmp/lmatomic-integrated-layout-{width}.png")
             assert logo["y"] + logo["height"] < box["y"]
             assert box["y"] + box["height"] < tips["y"], (width, logo, box, tips)
             assert tips["y"] + tips["height"] < height - 65
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         page.set_viewport_size({"width": 1440, "height": 1000})
-        page.screenshot(path="/tmp/colibri-integrated-chat.png")
+        page.screenshot(path="/tmp/lmatomic-integrated-chat.png")
         page.get_by_role("button", name="Esplora un’idea").click()
         expect(page.locator("#draft")).not_to_be_empty()
         page.locator("#draft").fill("Primo messaggio")
@@ -132,7 +132,7 @@ try:
             page.get_by_role("button", name="Esporta conversazione").click()
         data = json.loads(Path(download.value.path()).read_text())
         assert data["messages"][-1]["content"] == "Risposta dal server."
-        page.screenshot(path="/tmp/colibri-integrated-conversation.png")
+        page.screenshot(path="/tmp/lmatomic-integrated-conversation.png")
         settings("Modello")
         page.locator("#kv-slot").select_option("1")
         navigate("Chat")
@@ -157,7 +157,7 @@ try:
         expect(page.get_by_role("button", name="Nuova chat")).to_be_disabled()
         navigate("Profiling")
         expect(page.locator(".prof-table tbody tr")).to_have_count(2)
-        page.screenshot(path="/tmp/colibri-integrated-profiling.png")
+        page.screenshot(path="/tmp/lmatomic-integrated-profiling.png")
         navigate("Chat")
         page.get_by_role("button", name="Ferma la generazione").click()
         expect(page.get_by_role("button", name="Invia messaggio")).to_be_visible()
@@ -168,7 +168,7 @@ try:
         navigate("Brain")
         expect(page.locator(".cortex-regions button")).to_have_count(10)
         assert page.locator(".cortex-explorer canvas").bounding_box()["height"] == 1000
-        page.screenshot(path="/tmp/colibri-integrated-brain.png")
+        page.screenshot(path="/tmp/lmatomic-integrated-brain.png")
         page.locator(".cortex-regions button").filter(has_text="Python").click()
         expect(page.locator(".cortex-details")).to_be_visible()
         page.get_by_label("Expert nella regione").select_option(index=15)
@@ -179,7 +179,7 @@ try:
         entry = json.loads((ROOT / "public/experts.json").read_text())["experts"][f"{layer}:{expert}"]
         expected = [f"{v * 100:.1f}%" for _, v in sorted(entry["affinity"].items(), key=lambda item: -item[1])[:4]]
         assert page.locator(".cortex-affinities>div>span>b").all_text_contents() == expected
-        page.screenshot(path="/tmp/colibri-integrated-expert.png")
+        page.screenshot(path="/tmp/lmatomic-integrated-expert.png")
         page.locator(".cortex-details").get_by_role("button", name="Chiudi").click()
         page.get_by_role("button", name="Routing live", exact=True).click()
         expect(page.locator(".brain-head")).to_contain_text("3 layer × 4 expert")
@@ -204,7 +204,7 @@ try:
         expect(touch.locator(".navigation-dock nav")).to_be_hidden()
         expect(touch.locator(".cortex-regions button")).to_have_count(10)
         assert touch.locator(".cortex-explorer canvas").bounding_box()["height"] == 640
-        touch.screenshot(path="/tmp/colibri-integrated-mobile-brain.png")
+        touch.screenshot(path="/tmp/lmatomic-integrated-mobile-brain.png")
         touch.get_by_role("button", name="Argomenti e dettagli", exact=True).tap()
         expect(touch.locator("#brain-details")).to_be_visible()
         touch.get_by_label("Cerca un argomento").fill("Python")
@@ -214,7 +214,7 @@ try:
         mobile_entry = json.loads((ROOT / "public/experts.json").read_text())["experts"][f"{layer}:{expert}"]
         expect(touch.locator(".cortex-affinities>div")).to_have_count(min(4, len(mobile_entry["affinity"])))
         touch.locator("#brain-details").get_by_role("button", name="Chiudi").tap()
-        touch.screenshot(path="/tmp/colibri-integrated-mobile-expert.png")
+        touch.screenshot(path="/tmp/lmatomic-integrated-mobile-expert.png")
         # Real touch swipe, then keyboard access to the same collapsed dock.
         # The dock hangs from the TOP edge now, so the gesture that opens it is a
         # pull DOWN. It used to sit at the bottom and open on a pull up; swiping

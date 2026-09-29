@@ -1,4 +1,4 @@
-If you're coming from CUDA or Vulkan compute, Metal is generally pleasant to write, but there are a number of architectural differences that can cause subtle correctness or performance problems. For a project like Colibri, the biggest issues are less about the shader language itself and more about adapting to Apple's GPU architecture.
+If you're coming from CUDA or Vulkan compute, Metal is generally pleasant to write, but there are a number of architectural differences that can cause subtle correctness or performance problems. For a project like LM Atomic, the biggest issues are less about the shader language itself and more about adapting to Apple's GPU architecture.
 
 Here are the ones I'd pay attention to.
 
@@ -190,7 +190,7 @@ Compile once.
 
 Reuse forever.
 
-Colibri should cache every
+LM Atomic should cache every
 
 MTLComputePipelineState
 
@@ -305,9 +305,9 @@ shader hotspots
 
 These tools often reveal bottlenecks that aren't obvious from code inspection alone.
 
-For Colibri specifically
+For LM Atomic specifically
 
-Because Colibri already has:
+Because LM Atomic already has:
 
 a CPU implementation of Kimi K3 (correctness reference),
 a Vulkan implementation (GPU algorithm reference), and

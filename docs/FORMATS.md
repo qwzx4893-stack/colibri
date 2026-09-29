@@ -1,4 +1,4 @@
-# FORMATS.md — a registry for colibrì's quantized weight formats
+# FORMATS.md — a registry for LM Atomic's quantized weight formats
 
 *Authored by Fable 5 in Claude Code, analysis in partnership with @monotophic.*
 
@@ -42,13 +42,13 @@ own verification anchor in its sources bullet): the
 stamp+registry series (#529) stacked directly on the fp8-passthrough series
 (#528), which is in turn based on dev `292ed4c` (post-#465, post-#457
 Metal grouped-GEMV merge, post-#705 Vulkan/Kimi-K3 MXFP4 merge) — no
-cross-tree mixing. Every `c/colibri.c`/`c/quant.h` symbol named in this
+cross-tree mixing. Every `c/glm52.c`/`c/quant.h` symbol named in this
 document is verified present at this branch's own head. The fmt=6 and
 fmt=7 rows are upstream's own merged code
 (this branch's only fmt=6-adjacent change is the collision handling inside
-`qt_resolve_fmt`, `c/colibri.c`; it does not touch fmt=7/MXFP4 at all).
+`qt_resolve_fmt`, `c/glm52.c`; it does not touch fmt=7/MXFP4 at all).
 
-`qt_resolve_fmt` (`c/colibri.c`) is the authoritative reader: it infers a
+`qt_resolve_fmt` (`c/glm52.c`) is the authoritative reader: it infers a
 tensor's format from byte arithmetic alone (weight-byte count + scale-byte
 count against `[O,I]`) — **the container itself never carries a format
 ordinal**, which is exactly why ordinal collisions like #465-vs-this-branch
@@ -68,7 +68,7 @@ the bytes alone say.
 | 6 | `e8-iq3-lattice` (E8/IQ3 lattice) | `O*ceil(I/256)*98` bytes (98-byte self-contained super-blocks: E8 lattice indices + parity signs + fp16 super-scales; `E8_QK=256`, `E8_BBYTES=98`) | none as a separate array — scales live **inside** the super-blocks; the `.qs` sidecar is a single-float tag (`ns==4` is the loader's discriminator). NOTE: stores `W@Q` (block-diagonal FWHT rotation) — activations must be rotated before the kernel | **stable, upstream** — [#465](https://github.com/JustVugg/colibri/pull/465) MERGED 2026-07-21 | dev `dce7012` |
 | 7 | `mxfp4` (no in-tree name string — dev has no stamp feature) | `O*ceil(I/2)` bytes (e2m1 nibbles, 2 packed values/byte — same nibble packing as fmt=2/4) | in the **container**: 1 **UE8M0** byte (u8 power-of-two exponent) per **group** of `gs=32` inputs; expanded to 1 `f32` per group at Vulkan upload (`c/kimi_k3.c`'s `mx4_scale` loop — the shader is float-only). Host gate: `gs >= 8 && gs % 8 == 0` (`c/backend_vulkan.c`) | **stable, upstream** — Kimi K3 native routed-expert tier, **Vulkan backend only** (`c/backend_vulkan.c`, `c/shaders/qmatmul.comp`); NOT a CPU/`QT` format — `qt_resolve_fmt` never returns 7 and the Metal backend refuses it | merged [#676](https://github.com/JustVugg/colibri/issues/676)/[#705](https://github.com/JustVugg/colibri/pull/705) |
 | **8** | `fp8-e4m3-b128` | `O*I` × 1 byte (`q8`, raw e4m3, byte-identical layout to fmt=1) | a **declared property**, not one fixed layout — see "Scale encoding is a declared property" below. **f32** (1 per 128×128 block, `ceil(O/128)*ceil(I/128)` entries) is IMPLEMENTED; **UE8M0** (1 byte/block, same block grid) is RECOGNIZED and refused by name, not yet implemented | **this PR pair** — CPU/Metal/repack/collision-refusal on `fmt7/fp8-passthrough`, this stamp+registry PR stacked on top; developed under the PRIVATE ORDINAL BLOCK as `fmt=100`; assigned fmt=7 by the maintainer on #524, renumbered to **fmt=8** after #705 merged claiming 7 for MXFP4 while this pair was open (see "ID assignment" below) | `fmt7/fp8-passthrough` (PR 1) |
-| *(none)* | `int4-rans256-g0` | **data-dependent** — an opaque `U8` blob (safetensors dtype `U8`, shape `[record_len]`; the tensor keeps its original logical name) holding the chunk record of `docs/int4-rans256-g0.md`: u64 `n_symbols` + u64 `packed_bytes` + `N+1` u32 stream offsets + `N=256` concatenated single-state rANS streams (`RANS_NSTREAMS=256`, `c/rans.h`) that losslessly entropy-code the source tensor's packed int4 bytes — byte-exact reconstruction, ~0.76 of the source packed bytes on the GLM-5.2 full-corpus census. **No `expected_bytes(O,I)` formula exists**, so byte-arithmetic inference is structurally impossible for this format: the `__metadata__["colibri.fmt"]` stamp naming `int4-rans256-g0` is **MANDATORY**, and the shared decode table ships once per shard in `__metadata__["colibri.int4-rans256-g0.table"]` | per-row **f32** `.qs` sidecar, raw and unchanged from the source `int4-row`-geometry container (`O` entries) | **merged, offline tools only** — codec `c/rans.h`, writer `c/tools/repack_rans.py`, validator `c/tools/rans_verify.py`. **No engine DECODE path exists** (no compiled `fmt` constant anywhere, not even a private-block one; `qt_resolve_fmt` has no branch for it), so it holds **no public ordinal** — and none can be claimed before engine code consuming the format (the ladder's PR 2 loader/CPU-decode stage) first merges into dev: this row's gloss on the "ID assignment" rule below, for a format with nothing to compile a number into. The engine is NOT inert against repacked shards, though: discovery-time stamp ingest and load-time byte-arithmetic inference both run, and the routed-expert load sites — this format's entire target population — pass `stamped_name=NULL`, so the MANDATORY stamp is **not consulted there today**. Pointing the current engine at a repacked directory is **unsupported** (typical outcome: a named refusal from the byte-arithmetic mismatch); the stamp becomes load-bearing only when PR 2 wires stamp-gated dispatch **ahead of** inference, exactly as the format spec warns (depth: sources bullet below) | merged [#671](https://github.com/JustVugg/colibri/pull/671) (dev `a3a5a75`) |
+| *(none)* | `int4-rans256-g0` | **data-dependent** — an opaque `U8` blob (safetensors dtype `U8`, shape `[record_len]`; the tensor keeps its original logical name) holding the chunk record of `docs/int4-rans256-g0.md`: u64 `n_symbols` + u64 `packed_bytes` + `N+1` u32 stream offsets + `N=256` concatenated single-state rANS streams (`RANS_NSTREAMS=256`, `c/rans.h`) that losslessly entropy-code the source tensor's packed int4 bytes — byte-exact reconstruction, ~0.76 of the source packed bytes on the GLM-5.2 full-corpus census. **No `expected_bytes(O,I)` formula exists**, so byte-arithmetic inference is structurally impossible for this format: the `__metadata__["lma.fmt"]` stamp naming `int4-rans256-g0` is **MANDATORY**, and the shared decode table ships once per shard in `__metadata__["lma.int4-rans256-g0.table"]` | per-row **f32** `.qs` sidecar, raw and unchanged from the source `int4-row`-geometry container (`O` entries) | **merged, offline tools only** — codec `c/rans.h`, writer `c/tools/repack_rans.py`, validator `c/tools/rans_verify.py`. **No engine DECODE path exists** (no compiled `fmt` constant anywhere, not even a private-block one; `qt_resolve_fmt` has no branch for it), so it holds **no public ordinal** — and none can be claimed before engine code consuming the format (the ladder's PR 2 loader/CPU-decode stage) first merges into dev: this row's gloss on the "ID assignment" rule below, for a format with nothing to compile a number into. The engine is NOT inert against repacked shards, though: discovery-time stamp ingest and load-time byte-arithmetic inference both run, and the routed-expert load sites — this format's entire target population — pass `stamped_name=NULL`, so the MANDATORY stamp is **not consulted there today**. Pointing the current engine at a repacked directory is **unsupported** (typical outcome: a named refusal from the byte-arithmetic mismatch); the stamp becomes load-bearing only when PR 2 wires stamp-gated dispatch **ahead of** inference, exactly as the format spec warns (depth: sources bullet below) | merged [#671](https://github.com/JustVugg/colibri/pull/671) (dev `a3a5a75`) |
 
 With fmt 0–8 all assigned, the next free public ordinal is **9** — per the
 convention below it isn't claimed here; an ID is only settled at merge.
@@ -89,37 +89,37 @@ coordination point: a row lands here when the format lands in dev.
 engine paths place format *requirements* on specific tensors. The fused Metal
 decode kernels engage per layer only when `kv_b_proj` satisfies the gates'
 two-format+mode term — fmt=2 (`int4-row`) always, fmt=4 (`int4-grouped`) only
-while `COLI_METAL_MOE_EXACT` is off (MOE-exact mode keeps grouped kv_b off the
+while `LMA_METAL_MOE_EXACT` is off (MOE-exact mode keeps grouped kv_b off the
 fused path) — AND the other fused-bound tensors (`q_a`, `q_b`, `kv_a`, `o`,
 and on sparse layers `sh_gate`/`sh_up`/`sh_down`) sit on the fmt 1/2/3/4
 allowlist; any other format on any of those tensors makes the affected layers'
 decode take the CPU path instead, announced by a one-line-per-tensor-kind
-`[METAL]` stderr notice at load. Single source of truth in `c/colibri.c`: the
+`[METAL]` stderr notice at load. Single source of truth in `c/glm52.c`: the
 shared per-layer predicate `metal_fused_layer_fmt_miss`, over the
 `metal_fused_fmt_ok` allowlist, consulted by both gate sites —
 `attention_rows` and `layer_forward_rows` — and by the load-time notice
 `metal_fmt_gate_notice`, called from `model_init`.
 
-Sources for all rows (`c/quant.h`/`c/colibri.c` symbols named below,
+Sources for all rows (`c/quant.h`/`c/glm52.c` symbols named below,
 verified present at this branch's own head -- originally identified
 against base dev `292ed4c`, reconfirmed here against the current
 restack):
 
-- **fmt=0/1/2/3** — allocation policy: `qt_alloc`, `c/colibri.c`
+- **fmt=0/1/2/3** — allocation policy: `qt_alloc`, `c/glm52.c`
   (`bits>=16→fmt=0`, `bits>=5→fmt=1`, `bits>=4→fmt=2`, else `fmt=3`).
   Kernels: `matmul_q` (`quant.h`, fmt=1), `matmul_i4` (`quant.h`,
   fmt=2), `matmul_i2` (`quant.h`, fmt=3); pack/quantize helpers
   `quantize_rows` (`quant.h`, fmt=1) and `pack_int2` (`quant.h`,
-  fmt=3). Byte-count formulas: `qt_bytes`, `c/colibri.c`.
+  fmt=3). Byte-count formulas: `qt_bytes`, `c/glm52.c`.
 - **fmt=4** (`int4-grouped`) — kernel `matmul_i4_grouped`, `quant.h`;
   group size `gs` is per-tensor, not fixed at 64 (contrast fmt=5). Byte-count:
-  `qt_bytes`'s `fmt==4` branch (inside `c/colibri.c`); scale-count split:
-  `qt_scale_bytes`, `c/colibri.c`.
+  `qt_bytes`'s `fmt==4` branch (inside `c/glm52.c`); scale-count split:
+  `qt_scale_bytes`, `c/glm52.c`.
 - **fmt=5** (`int3-g64`) — group size is fixed (`I3_GROUP=64`,
   `quant.h`; `I3_GBYTES=24`, `quant.h`); helpers `i3_groups`
   (`quant.h`), `i3_rowbytes` (`quant.h`); kernel `matmul_i3`
   (`quant.h`); pack helper `pack_int3_g64` (`quant.h`). Allocation:
-  `qt_alloc`'s `bits==3` branch (inside `c/colibri.c`).
+  `qt_alloc`'s `bits==3` branch (inside `c/glm52.c`).
 - **fmt=6** (`e8-iq3-lattice`) — upstream's merged code: format section header
   precedes `quant.h`; constants `E8_QK=256` (`quant.h`),
   `E8_SUB=32` (`quant.h`), `E8_BBYTES=98` (`quant.h`); row-byte
@@ -127,7 +127,7 @@ restack):
   documented at `quant.h` ("fmt=6 stores W@Q, so activations must be
   transformed before"). Loader discriminator, upstream form (dev, ns==4 tag
   check at the top of `qt_resolve_fmt`): this branch's SECOND DESIGN
-  LANDMINE comment (`qt_resolve_fmt`, `c/colibri.c`) hardens that check
+  LANDMINE comment (`qt_resolve_fmt`, `c/glm52.c`) hardens that check
   against the degenerate collisions below without changing any genuine-fmt=6
   outcome.
 - **fmt=7** (`mxfp4`, upstream's merged code) — Vulkan-only decode: shader
@@ -146,14 +146,14 @@ restack):
   weight bytes are byte-identical and can only be told apart by
   scale-array geometry, which is ambiguous for some small shapes) and the
   fmt=6 collision ("SECOND DESIGN LANDMINE") both live in `qt_resolve_fmt`
-  (`c/colibri.c`), which now also consults an optional `stamped_name`
+  (`c/glm52.c`), which now also consults an optional `stamped_name`
   parameter (this PR): for the fmt=6 collision, a stamp resolves what an
   absent stamp still refuses; for the fmt=1-vs-fmt=8 collision, an absent
   stamp already resolves to `int8-row` since the #528 INVERSION, and a
   stamp's role there is instead letting a genuinely-stamped `fmt=8` tensor
   override that default — see "The metadata stamp" below for the exact
   rule in both cases. FMT_NAMES table (`name string` to `fmt int`):
-  `c/colibri.c`.
+  `c/glm52.c`.
 - **no ordinal** (`int4-rans256-g0`, merged tools-only tier — symbols
   verified at dev `7fb1159`, post-#671 merge `a3a5a75`, not at this PR
   pair's restack base) — codec + record reader/writer: `c/rans.h`
@@ -161,24 +161,24 @@ restack):
   comment, `c/rans.h`; that same header names its engine consumer
   "a future engine decode stage", `c/rans.h` — the format's own statement
   that none exists yet). Identity constants: `c/tools/rans_format.py`
-  (`FORMAT_NAME = "int4-rans256-g0"`; `METADATA_KEY = "colibri.fmt"` — the
+  (`FORMAT_NAME = "int4-rans256-g0"`; `METADATA_KEY = "lma.fmt"` — the
   same key/shape as the fmt=8 stamp convention below, but MANDATORY here
   rather than a cross-check, because there is no byte arithmetic to fall
-  back on; `TABLE_KEY = "colibri.int4-rans256-g0.table"`). Writer
+  back on; `TABLE_KEY = "lma.int4-rans256-g0.table"`). Writer
   `c/tools/repack_rans.py` (deterministic; verifies every record byte-exact
   before writing); validator `c/tools/rans_verify.py` (TRUST-VERIFY-REFUSE,
   named refusal classes in its module docstring). Full specification:
   `docs/int4-rans256-g0.md`. Engine-interaction status, stated precisely
   (why the ordinal column is empty, and what still runs): `qt_resolve_fmt`
-  (`c/colibri.c`) has no branch that returns this format, and
-  `c/colibri.c`/`c/quant.h`/`c/st.h` contain no reference to it — no
+  (`c/glm52.c`) has no branch that returns this format, and
+  `c/glm52.c`/`c/quant.h`/`c/st.h` contain no reference to it — no
   decode path, hence no ordinal. But a repacked shard is not invisible to
   the engine: `st_fmt_stamp_ingest` (`c/st.h`, called from
-  `st_init_multi`'s discovery loop) parses its mandatory `colibri.fmt`
+  `st_init_multi`'s discovery loop) parses its mandatory `lma.fmt`
   stamp map at container-discovery time, and the three routed-expert load
   sites — exactly this format's target population — resolve formats by
-  byte arithmetic alone with `stamped_name=NULL` (`c/colibri.c`,
-  `c/colibri.c`, `c/colibri.c`, each marked
+  byte arithmetic alone with `stamped_name=NULL` (`c/glm52.c`,
+  `c/glm52.c`, `c/glm52.c`, each marked
   `/* routed expert: never stamped */`), so the stamp is never consulted
   where it would matter most. A future consumer must wire stamp-gated
   dispatch AHEAD of that inference — `docs/int4-rans256-g0.md`'s
@@ -274,12 +274,12 @@ reference implementation of this proposal:
 
 - **Writer** (`c/tools/repack_fp8_passthrough.py`): every tensor it repacks
   into the fp8-e4m3-b128 container gets an entry in the output shard's
-  safetensors `__metadata__["colibri.fmt"]` — a JSON-encoded map of exact
+  safetensors `__metadata__["lma.fmt"]` — a JSON-encoded map of exact
   tensor name → format NAME string (never the private ordinal, and never a
   scale-encoding name either — the stamp names the WEIGHT format, not which
   of that format's possible scale encodings is present; see "Scale encoding
   is a declared property" above for why that distinction is load-bearing).
-- **Reader** (`qt_verify_fmt_stamp` + `qt_resolve_fmt`, `c/colibri.c`):
+- **Reader** (`qt_verify_fmt_stamp` + `qt_resolve_fmt`, `c/glm52.c`):
   TRUST-VERIFY-REFUSE. A stamp that agrees with the byte-arithmetic
   inference is a silent no-op. A stamp that disagrees, or names a format
   this build doesn't recognize, is refused loudly — the tensor name and
@@ -305,7 +305,7 @@ reference implementation of this proposal:
 
 The stamp is a **forward convention**, not a migration path. It describes
 containers written *going forward* by a tool that has been updated to write
-`__metadata__["colibri.fmt"]` — it says nothing about, and does nothing to,
+`__metadata__["lma.fmt"]` — it says nothing about, and does nothing to,
 containers that already exist. A pre-convention container (anything written
 before this feature existed — including every container this repo's own
 tooling has produced to date, and every upstream Z.ai/DeepSeek checkpoint)
@@ -357,7 +357,7 @@ gate that does not share the selection code's assumptions.
 ### Container-level format declaration
 
 Alongside the per-tensor stamp, a container may carry
-`__metadata__["colibri.container.formats"]` — JSON text holding a sorted array
+`__metadata__["lma.container.formats"]` — JSON text holding a sorted array
 of format NAME strings (never ordinals, same rule as the stamp) that the
 container declares it carries residents in. `repack_fp8_passthrough.py` writes
 `["fp8-e4m3-b128"]` on every shard it emits.
@@ -374,7 +374,7 @@ default, which converts a procedural guarantee back into a structural one.
 
 The declaration lands first and the check lands second on purpose: an unknown
 `__metadata__` key is inert to every existing engine (`st_fmt_stamp_ingest`
-looks up `"colibri.fmt"` alone and returns early on anything else;
+looks up `"lma.fmt"` alone and returns early on anything else;
 `st_init_multi` skips the whole `"__metadata__"` entry when indexing tensors),
 so containers minted now already carry the declaration before anything enforces
 it, and the enforcement has data to act on from the day it lands.
@@ -426,7 +426,7 @@ Three rules complete the stamp's container-wide semantics (user-ratified
 this revision):
 
 - **Conflicting claims refuse.** At most one DISTINCT format claim per
-  tensor name, container-wide. If two shards' `colibri.fmt` maps (or two
+  tensor name, container-wide. If two shards' `lma.fmt` maps (or two
   entries anywhere in the container) stamp the same tensor name with
   DIFFERENT format names, ingest refuses loudly at discovery time, naming
   the tensor and both claims — a container that disagrees with itself about
@@ -448,7 +448,7 @@ this revision):
 `st_fmt_stamp_ingest` (`c/st.h`) caps the total number of stamped-tensor
 entries it will ingest across a container's shards at `ST_FMT_STAMP_MAX`
 (4096) and refuses loudly (`exit(1)`) if a container's combined
-`__metadata__["colibri.fmt"]` entries exceed it. This is a **cap, not a
+`__metadata__["lma.fmt"]` entries exceed it. This is a **cap, not a
 switch to a hash table**: stamps are a resident-tensor convention — a
 handful to a few hundred tensors per model (`q_a`/`q_b`/`kv_a`/`kv_b_proj`,
 `o_proj`, shared-expert and dense-MLP gate/up/down; see the resident-role
@@ -456,7 +456,7 @@ census in `c/tools/fp8_collision_census.py`), **never** the tens of
 thousands of routed-expert tensors a large MoE checkpoint carries. A
 container whose combined stamp map exceeds 4096 entries is not using this
 convention as it's designed to be used. To be precise about what the cap
-bounds: the `colibri.fmt` blob is JSON-parsed in full **before** the
+bounds: the `lma.fmt` blob is JSON-parsed in full **before** the
 per-entry cap is checked, so the parse allocation itself is bounded by the
 shard-header size cap (`ST_MAX_HEADER`), not by this constant — what the
 cap bounds is the **persistent** per-tensor arrays (`fmt_name`/`fmt_val`
@@ -467,7 +467,7 @@ discipline `qt_resolve_fmt` applies everywhere else in this feature.
 
 ### Discovery-time abort surface
 
-`st_fmt_stamp_ingest`'s `exit(1)` calls (a `colibri.fmt` value that isn't a
+`st_fmt_stamp_ingest`'s `exit(1)` calls (a `lma.fmt` value that isn't a
 JSON string, one that doesn't parse to a JSON object, an entry whose value
 isn't a string, or the 4096-entry cap above) all fire from inside
 `st_init_multi`'s shard-header-parse loop — i.e. at **container discovery
@@ -488,7 +488,7 @@ one.
 The stamp lookup (`st_fmt_stamp`, called from `qt_from_disk`) is consulted
 **only** inside `qt_from_disk`'s `st_has(&m->S, name+".qs")` branch — i.e.
 only for a tensor that already carries a quantized `.qs` scale sidecar. A
-`colibri.fmt` entry naming some *other* tensor (a raw f32/bf16 weight, a
+`lma.fmt` entry naming some *other* tensor (a raw f32/bf16 weight, a
 norm, a router, embed/lm_head) is parsed and stored exactly like any other
 entry — `st_fmt_stamp_ingest` has no way to know, and does not check,
 whether the name it's ingesting belongs to a `.qs`-backed tensor — but it is
@@ -499,12 +499,12 @@ whole point of the stamp is to disambiguate a *byte-count* collision among
 quantized formats, and only a `.qs`-backed tensor can have one — stamping
 anything else has no failure mode to guard against, so the convention simply
 doesn't extend its verification there. A future stamping tool that writes
-`colibri.fmt` entries for non-`.qs` tensors would not break anything, but
+`lma.fmt` entries for non-`.qs` tensors would not break anything, but
 those entries would have no effect.
 
 This is offered as a **reference implementation**, not a mandate: a future
 public format registry could standardize the metadata key and stamp shape
-(`colibri.fmt` and its JSON-map-of-name convention are this PR's proposal,
+(`lma.fmt` and its JSON-map-of-name convention are this PR's proposal,
 open to revision) so any tool, not just this one, can write a self-describing
 container that any reader can verify without needing a side-channel ordinal
 assignment at all.
@@ -541,7 +541,7 @@ assignment at all.
 - Is `100+` an acceptable private-block convention, or would the project
   prefer a different reserved range (e.g. negative values, or a separate
   `fmt_ext` field) for in-flight private ordinals?
-- Should `colibri.fmt` (this PR's metadata key) become the project's
+- Should `lma.fmt` (this PR's metadata key) become the project's
   standard stamp key, or is a different shape preferred (e.g. one key per
   tensor instead of one JSON blob) if this pattern is adopted project-wide?
 - ~~How should #465 and this branch's FP8 proposal be sequenced?~~ Resolved

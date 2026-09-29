@@ -1,4 +1,4 @@
-"""`coli convert` must pick the converter from the checkpoint, not from history.
+"""`lmatomic convert` must pick the converter from the checkpoint, not from history.
 
 #1368: it ran `tools/convert_fp8_to_int4.py` on whatever it was given. That
 converter is GLM-5.2's, and it classifies tensors by FLAT name:
@@ -9,7 +9,7 @@ GLM-5.3-Flash nests its language model under the vision wrapper, so its
 embedding is `model.language_model.embed_tokens.weight`. It matched no rule,
 fell into the final `endswith(".weight")` fallback, and was quantized. Hours
 later `glm53.c` read it with load_f32, refused the U8, and the engine died
-inside `coli web` with a traceback about a subprocess exiting.
+inside `lmatomic web` with a traceback about a subprocess exiting.
 
 Nothing along that path was wrong except the first choice.
 
@@ -38,11 +38,11 @@ from family_registry import FAMILIES, family_by_id
 
 
 HERE = Path(__file__).resolve().parent.parent
-CLI = HERE / "coli"
+CLI = HERE / "lmatomic"
 
 
 def load_cli():
-    loader = importlib.machinery.SourceFileLoader("coli_convert_test", str(CLI))
+    loader = importlib.machinery.SourceFileLoader("lma_convert_test", str(CLI))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -50,7 +50,7 @@ def load_cli():
 
 
 class Args:
-    """The subset of `coli convert`'s namespace that cmd_convert reads."""
+    """The subset of `lmatomic convert`'s namespace that cmd_convert reads."""
 
     def __init__(self, out, **overrides):
         self.repo = "some/checkpoint"
@@ -170,7 +170,7 @@ class ConvertRoutingTest(unittest.TestCase):
         self.assertNotIn("--xbits", command, "xbits defaults to 0 and is omitted")
 
     def test_an_output_directory_holding_a_checkpoint_is_refused(self):
-        """`coli convert --model <downloaded checkpoint>` used to start fetching
+        """`lmatomic convert --model <downloaded checkpoint>` used to start fetching
         the default repo into that directory. Refuse, and say what the user
         most likely wanted: nothing for a family that runs its official
         checkpoint, the family's converter with --indir for one that converts."""
@@ -182,7 +182,7 @@ class ConvertRoutingTest(unittest.TestCase):
             self.assertIsNotNone(text)
             self.assertIn("already holds a checkpoint", text)
             self.assertIn("no conversion needed", text)
-            self.assertIn("coli chat --model", text)
+            self.assertIn("lmatomic chat --model", text)
         with tempfile.TemporaryDirectory() as out:
             (Path(out) / "config.json").write_text(json.dumps({"model_type": "glm5_next", "text_config": {}}))
             text = cli.convert_output_refusal(out)
@@ -247,7 +247,7 @@ class ConverterDeclarationTest(unittest.TestCase):
             # genuinely takes none of the four precision flags (ebits / io_bits
             # / xbits / group_size).  OLMoE\'s convert_olmoe_merged.py is one
             # such case: it has --flush-every and --min-free-gb, neither of
-            # which is a coli-convert precision flag.
+            # which is a lmatomic-convert precision flag.
             self.assertIsInstance(
                 family.converter_accepts, tuple,
                 f"{family.id}: converter_accepts must be a tuple")

@@ -1,5 +1,5 @@
-#ifndef COLIBRI_GSGEMV_H
-#define COLIBRI_GSGEMV_H
+#ifndef LMA_GSGEMV_H
+#define LMA_GSGEMV_H
 /* Group-scaled int8 GEMV: one f32 scale per `gs` input elements per row, the
  * layout the gs64 expert containers use.  Row layout of `scale`: [O][I/gs]
  * row-major.  Its own header so tests/test_gsgemv.c can link the very kernel
@@ -130,13 +130,13 @@ static void matmul_q_gs(float *y, const float *x, const int8_t *q, const float *
          * ISA: each __m128 lane holds 4 lanes instead of 8, so a group step is
          * 8 int8s, not 16 -- the gate halves to 16 and each row keeps two
          * __m128 accumulators instead of two __m256. The multiply-add goes
-         * through COLIBRI_FMA (sse41_kernels.h): on real SSE4.1-only hardware
+         * through LMA_FMA (sse41_kernels.h): on real SSE4.1-only hardware
          * (no __FMA__) that macro expands to the same explicit mul-then-add
          * this tier always used, so nothing changes there; it only takes the
          * single-rounded _mm_fmadd_ps path if __FMA__ is somehow defined
          * without __AVX2__, which does not happen on real hardware but keeps
          * the tier correct rather than silently wrong if it ever did. Float
-         * loads of `x` go through colibri_sse41_loadu_ps for the same reason
+         * loads of `x` go through lma_sse41_loadu_ps for the same reason
          * olmoe.c does: one definition shared with future consumers instead
          * of a fourth inline copy of _mm_loadu_ps. */
         int o4 = O & ~3;
@@ -154,19 +154,19 @@ static void matmul_q_gs(float *y, const float *x, const int8_t *q, const float *
                 __m128 a30 = _mm_setzero_ps(), a31 = _mm_setzero_ps();
                 int base = gi * gs, end = base + gs; if (end > I) end = I;
                 for (int i = base; i + 8 <= end; i += 8) {
-                    __m128 xl = colibri_sse41_loadu_ps(x+i), xh = colibri_sse41_loadu_ps(x+i+4);
+                    __m128 xl = lma_sse41_loadu_ps(x+i), xh = lma_sse41_loadu_ps(x+i+4);
                     __m128i b0 = _mm_loadl_epi64((const __m128i*)(w0 + i));
-                    a00 = COLIBRI_FMA(xl, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b0)), a00);
-                    a01 = COLIBRI_FMA(xh, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b0,4))), a01);
+                    a00 = LMA_FMA(xl, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b0)), a00);
+                    a01 = LMA_FMA(xh, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b0,4))), a01);
                     __m128i b1 = _mm_loadl_epi64((const __m128i*)(w1 + i));
-                    a10 = COLIBRI_FMA(xl, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b1)), a10);
-                    a11 = COLIBRI_FMA(xh, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b1,4))), a11);
+                    a10 = LMA_FMA(xl, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b1)), a10);
+                    a11 = LMA_FMA(xh, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b1,4))), a11);
                     __m128i b2 = _mm_loadl_epi64((const __m128i*)(w2 + i));
-                    a20 = COLIBRI_FMA(xl, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b2)), a20);
-                    a21 = COLIBRI_FMA(xh, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b2,4))), a21);
+                    a20 = LMA_FMA(xl, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b2)), a20);
+                    a21 = LMA_FMA(xh, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b2,4))), a21);
                     __m128i b3 = _mm_loadl_epi64((const __m128i*)(w3 + i));
-                    a30 = COLIBRI_FMA(xl, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b3)), a30);
-                    a31 = COLIBRI_FMA(xh, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b3,4))), a31);
+                    a30 = LMA_FMA(xl, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b3)), a30);
+                    a31 = LMA_FMA(xh, _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b3,4))), a31);
                 }
                 acc0 = fmaf(gs_group_sum_sse41(a00, a01), sc0[gi], acc0);
                 acc1 = fmaf(gs_group_sum_sse41(a10, a11), sc1[gi], acc1);
@@ -184,8 +184,8 @@ static void matmul_q_gs(float *y, const float *x, const int8_t *q, const float *
                 int base = gi * gs, end = base + gs; if (end > I) end = I;
                 for (int i = base; i + 8 <= end; i += 8) {
                     __m128i b0 = _mm_loadl_epi64((const __m128i*)(w + i));
-                    a0 = COLIBRI_FMA(colibri_sse41_loadu_ps(x+i),   _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b0)), a0);
-                    a1 = COLIBRI_FMA(colibri_sse41_loadu_ps(x+i+4), _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b0,4))), a1);
+                    a0 = LMA_FMA(lma_sse41_loadu_ps(x+i),   _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b0)), a0);
+                    a1 = LMA_FMA(lma_sse41_loadu_ps(x+i+4), _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b0,4))), a1);
                 }
                 acc = fmaf(gs_group_sum_sse41(a0, a1), sc[gi], acc);
             }
@@ -209,4 +209,4 @@ static void matmul_q_gs(float *y, const float *x, const int8_t *q, const float *
     }
 }
 
-#endif /* COLIBRI_GSGEMV_H */
+#endif /* LMA_GSGEMV_H */

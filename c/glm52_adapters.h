@@ -1,14 +1,14 @@
 /* GLM-5.2 Segment and Edge adapters: the engine side of the layer-range / tokenizer-boundary ABI
- * (segment_runtime.h, edge_runtime.h). Built only with -DCOLI_SEGMENT_ADAPTER / -DCOLI_EDGE_ADAPTER;
- * no CLI path reaches it. Split out of colibri.c so the engine file is the engine.
+ * (segment_runtime.h, edge_runtime.h). Built only with -DLMA_SEGMENT_ADAPTER / -DLMA_EDGE_ADAPTER;
+ * no CLI path reaches it. Split out of glm52.c so the engine file is the engine.
  *
- * Not a standalone header: colibri.c includes it in place, and the code below uses that
+ * Not a standalone header: glm52.c includes it in place, and the code below uses that
  * file's types and statics (Model, ESlot, QT, now_s, ...). Moving it out changes no
  * behaviour; the translation unit is byte-for-byte the same after preprocessing. */
-#ifndef COLIBRI_ADAPTERS_H
-#define COLIBRI_ADAPTERS_H
+#ifndef GLM52_ADAPTERS_H
+#define GLM52_ADAPTERS_H
 
-#ifdef COLI_SEGMENT_ADAPTER
+#ifdef LMA_SEGMENT_ADAPTER
 /* ---------- engine-owned Segment adapter ------------------------------ */
 
 typedef struct {
@@ -154,7 +154,7 @@ static void glm_segment_model_destroy(GlmSegmentEngine *engine) {
     free(model->eusage);
     free(model->kv_dev_L); free(model->kv_dev_R); free(model->kv_dev_valid);
     free(model->ln_dev);
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
     free(model->vk_kv_valid);
 #endif
     free(model->L);
@@ -163,28 +163,28 @@ static void glm_segment_model_destroy(GlmSegmentEngine *engine) {
 }
 
 static int glm_segment_engine_open(
-    void **engine_impl, ColiSegmentCapabilities *capabilities,
-    const ColiSegmentEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaSegmentCapabilities *capabilities,
+    const LmaSegmentEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "invalid GLM Segment open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_SEGMENT_CAP_CPU))
-        return coli_segment_adapter_error(error, error_size,
+        (options->backend_mask & ~LMA_SEGMENT_CAP_CPU))
+        return lma_segment_adapter_error(error, error_size,
                                            "GLM Segment currently supports CPU");
     Cfg config;
     memset(&config, 0, sizeof(config));
     load_cfg(&config, options->model_dir);
     if (options->layer_end > (uint32_t)config.n_layers)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "GLM Segment range exceeds model");
     int ebits = getenv("GLM_SEGMENT_EBITS")
         ? atoi(getenv("GLM_SEGMENT_EBITS")) : 8;
     int dbits = getenv("GLM_SEGMENT_DBITS")
         ? atoi(getenv("GLM_SEGMENT_DBITS")) : ebits;
     if (ebits < 2 || ebits > 16 || dbits < 2 || dbits > 16)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "GLM Segment bit widths must be 2..16");
     int sparse_layers = 0;
     for (uint32_t layer = options->layer_begin; layer < options->layer_end;
@@ -209,14 +209,14 @@ static int glm_segment_engine_open(
 
     GlmSegmentEngine *engine = calloc(1, sizeof(*engine));
     if (!engine)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory opening GLM Segment");
     engine->layer_begin = options->layer_begin;
     engine->layer_end = options->layer_end;
     engine->context_tokens = options->context_tokens;
     if (pthread_mutex_init(&engine->run_lock, NULL)) {
         free(engine);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "cannot initialize GLM Segment lock");
     }
     model_init_range(&engine->model, options->model_dir, cap, ebits, dbits,
@@ -226,21 +226,21 @@ static int glm_segment_engine_open(
 
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_SEGMENT_ABI_VERSION;
-    capabilities->flags = COLI_SEGMENT_CAP_SNAPSHOT |
-                          COLI_SEGMENT_CAP_RANGE_NATIVE |
-                          COLI_SEGMENT_CAP_MULTI_SESSION |
-                          COLI_SEGMENT_CAP_CPU;
-    coli_segment_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_SEGMENT_ABI_VERSION;
+    capabilities->flags = LMA_SEGMENT_CAP_SNAPSHOT |
+                          LMA_SEGMENT_CAP_RANGE_NATIVE |
+                          LMA_SEGMENT_CAP_MULTI_SESSION |
+                          LMA_SEGMENT_CAP_CPU;
+    lma_segment_capability_string(capabilities->engine_id,
                                    sizeof(capabilities->engine_id), "glm");
-    coli_segment_capability_string(capabilities->state_schema,
+    lma_segment_capability_string(capabilities->state_schema,
                                    sizeof(capabilities->state_schema),
                                    "glm/mla-rope-dsa-f32-v1");
     snprintf(capabilities->numeric_class,
              sizeof(capabilities->numeric_class),
              "glm/e%d-d%d-dsa%d-kvf32/cpu-v1",
              ebits, dbits, engine->model.has_dsa != 0);
-    capabilities->state_dtype = COLI_SEGMENT_DTYPE_F32;
+    capabilities->state_dtype = LMA_SEGMENT_DTYPE_F32;
     capabilities->state_width = (uint32_t)config.hidden;
     capabilities->max_batch_rows = 512;
     capabilities->max_context_tokens = options->context_tokens;
@@ -267,15 +267,15 @@ static void glm_segment_session_free(GlmSegmentSession *session) {
 
 static int glm_segment_session_create(
     void *engine_impl, void **session_impl,
-    const ColiSegmentSessionOptions *options, char *error, size_t error_size) {
+    const LmaSegmentSessionOptions *options, char *error, size_t error_size) {
     GlmSegmentEngine *engine = (GlmSegmentEngine *)engine_impl;
     if (!engine || !session_impl || !options)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "invalid GLM Segment session");
     *session_impl = NULL;
     GlmSegmentSession *session = calloc(1, sizeof(*session));
     if (!session)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory creating GLM session");
     session->engine = engine;
     session->context_tokens = options->context_tokens;
@@ -295,16 +295,16 @@ static int glm_segment_session_create(
     for (uint32_t layer = engine->layer_begin; layer < engine->layer_end;
          layer++) {
         size_t cells;
-        if (coli_segment_size_mul(options->context_tokens,
+        if (lma_segment_size_mul(options->context_tokens,
                                   (size_t)config->kv_lora, &cells)) goto oom;
         session->kv.Lc[layer] = calloc(cells, sizeof(float));
         state_bytes += (uint64_t)cells * sizeof(float);
-        if (coli_segment_size_mul(options->context_tokens,
+        if (lma_segment_size_mul(options->context_tokens,
                                   (size_t)config->qk_rope, &cells)) goto oom;
         session->kv.Rc[layer] = calloc(cells, sizeof(float));
         state_bytes += (uint64_t)cells * sizeof(float);
         if (engine->model.has_dsa && config->idx_type[layer]) {
-            if (coli_segment_size_mul(options->context_tokens,
+            if (lma_segment_size_mul(options->context_tokens,
                                       (size_t)config->index_hd,
                                       &cells)) goto oom;
             session->kv.Ic[layer] = calloc(cells, sizeof(float));
@@ -317,7 +317,7 @@ static int glm_segment_session_create(
     if (options->memory_limit_bytes &&
         state_bytes > options->memory_limit_bytes) {
         glm_segment_session_free(session);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "GLM session state exceeds memory limit");
     }
     *session_impl = session;
@@ -325,7 +325,7 @@ static int glm_segment_session_create(
 
 oom:
     glm_segment_session_free(session);
-    return coli_segment_adapter_error(error, error_size,
+    return lma_segment_adapter_error(error, error_size,
                                        "out of memory allocating GLM state");
 }
 
@@ -334,15 +334,15 @@ static void glm_segment_session_destroy(void *session_impl) {
 }
 
 static int glm_segment_session_run(void *session_impl,
-                                   const ColiSegmentRunRequest *request,
+                                   const LmaSegmentRunRequest *request,
                                    char *error, size_t error_size) {
     GlmSegmentSession *session = (GlmSegmentSession *)session_impl;
     if (!session || !request || request->position != session->position)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "GLM Segment requires contiguous positions");
     if (request->should_cancel &&
         request->should_cancel(request->cancel_user_data))
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "GLM Segment run cancelled");
     GlmSegmentEngine *engine = session->engine;
     if (request->output != request->input)
@@ -360,27 +360,27 @@ static int glm_segment_session_run(void *session_impl,
 
 static int glm_segment_spans(
     GlmSegmentSession *session, uint32_t position,
-    ColiSegmentStateSpan **spans_output, size_t *count_output,
+    LmaSegmentStateSpan **spans_output, size_t *count_output,
     char *error, size_t error_size) {
     size_t capacity = (size_t)(session->engine->layer_end -
                                session->engine->layer_begin) * 3u;
-    ColiSegmentStateSpan *spans = capacity
+    LmaSegmentStateSpan *spans = capacity
         ? calloc(capacity, sizeof(*spans)) : NULL;
     if (capacity && !spans)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory describing GLM state");
     Cfg *config = &session->engine->model.c;
     size_t count = 0;
     for (uint32_t layer = session->engine->layer_begin;
          layer < session->engine->layer_end; layer++) {
-        spans[count++] = (ColiSegmentStateSpan){
+        spans[count++] = (LmaSegmentStateSpan){
             session->kv.Lc[layer],
             (size_t)position * config->kv_lora * sizeof(float)};
-        spans[count++] = (ColiSegmentStateSpan){
+        spans[count++] = (LmaSegmentStateSpan){
             session->kv.Rc[layer],
             (size_t)position * config->qk_rope * sizeof(float)};
         if (session->engine->model.has_dsa && config->idx_type[layer])
-            spans[count++] = (ColiSegmentStateSpan){
+            spans[count++] = (LmaSegmentStateSpan){
                 session->kv.Ic[layer],
                 (size_t)position * config->index_hd * sizeof(float)};
     }
@@ -389,53 +389,53 @@ static int glm_segment_spans(
 }
 
 static int glm_segment_session_snapshot(
-    void *session_impl, ColiSegmentWriteFn write_fn, void *write_user_data,
+    void *session_impl, LmaSegmentWriteFn write_fn, void *write_user_data,
     char *error, size_t error_size) {
     GlmSegmentSession *session = (GlmSegmentSession *)session_impl;
-    ColiSegmentStateSpan *spans = NULL;
+    LmaSegmentStateSpan *spans = NULL;
     size_t count = 0, payload_bytes;
     if (!session || glm_segment_spans(session, session->position, &spans,
                                       &count, error, error_size))
         return -1;
-    if (coli_segment_spans_size(spans, count, &payload_bytes)) {
+    if (lma_segment_spans_size(spans, count, &payload_bytes)) {
         free(spans);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "GLM snapshot size overflow");
     }
-    ColiSegmentSnapshotHeader header;
-    coli_segment_snapshot_header_init(
+    LmaSegmentSnapshotHeader header;
+    lma_segment_snapshot_header_init(
         &header, "glm", session->engine->layer_begin,
         session->engine->layer_end, session->context_tokens, session->position,
-        payload_bytes, coli_segment_spans_hash(spans, count));
-    int result = coli_segment_stream_write(
+        payload_bytes, lma_segment_spans_hash(spans, count));
+    int result = lma_segment_stream_write(
         write_fn, write_user_data, &header, sizeof(header), error, error_size);
     if (!result)
-        result = coli_segment_spans_write(spans, count, write_fn,
+        result = lma_segment_spans_write(spans, count, write_fn,
                                           write_user_data, error, error_size);
     free(spans);
     return result;
 }
 
 static int glm_segment_session_restore(
-    void *session_impl, ColiSegmentReadFn read_fn, void *read_user_data,
+    void *session_impl, LmaSegmentReadFn read_fn, void *read_user_data,
     char *error, size_t error_size) {
     GlmSegmentSession *session = (GlmSegmentSession *)session_impl;
-    ColiSegmentSnapshotHeader header;
-    if (!session || coli_segment_stream_read(read_fn, read_user_data, &header,
+    LmaSegmentSnapshotHeader header;
+    if (!session || lma_segment_stream_read(read_fn, read_user_data, &header,
                                              sizeof(header), error, error_size))
         return -1;
-    ColiSegmentStateSpan *spans = NULL;
+    LmaSegmentStateSpan *spans = NULL;
     size_t count = 0, payload_bytes;
     if (glm_segment_spans(session, header.position, &spans, &count,
                           error, error_size)) return -1;
-    if (coli_segment_spans_size(spans, count, &payload_bytes) ||
-        coli_segment_snapshot_header_valid(
+    if (lma_segment_spans_size(spans, count, &payload_bytes) ||
+        lma_segment_snapshot_header_valid(
             &header, "glm", session->engine->layer_begin,
             session->engine->layer_end, session->context_tokens,
             payload_bytes, error, error_size)) {
         free(spans); return -1;
     }
-    int result = coli_segment_spans_restore(
+    int result = lma_segment_spans_restore(
         spans, count, header.payload_hash, read_fn, read_user_data,
         error, error_size);
     free(spans);
@@ -443,20 +443,20 @@ static int glm_segment_session_restore(
     return result;
 }
 
-static const ColiSegmentAdapter glm_segment_adapter = {
-    sizeof(ColiSegmentAdapter), COLI_SEGMENT_ABI_VERSION, "glm",
+static const LmaSegmentAdapter glm_segment_adapter = {
+    sizeof(LmaSegmentAdapter), LMA_SEGMENT_ABI_VERSION, "glm",
     glm_segment_engine_open, glm_segment_engine_destroy,
     glm_segment_session_create, glm_segment_session_destroy,
     glm_segment_session_run, glm_segment_session_snapshot,
     glm_segment_session_restore, {0}
 };
 
-int coli_glm_segment_adapter_register(void) {
-    return coli_segment_adapter_register(&glm_segment_adapter);
+int lma_glm_segment_adapter_register(void) {
+    return lma_segment_adapter_register(&glm_segment_adapter);
 }
-#endif /* COLI_SEGMENT_ADAPTER */
+#endif /* LMA_SEGMENT_ADAPTER */
 
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 /* ---------- engine-owned model Edge adapter --------------------------- */
 
 typedef struct {
@@ -501,31 +501,31 @@ static int glm_edge_has_dsa(Model *model) {
 }
 
 static int glm_edge_engine_open(
-    void **engine_impl, ColiEdgeCapabilities *capabilities,
-    const ColiEdgeEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaEdgeCapabilities *capabilities,
+    const LmaEdgeEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "invalid GLM Edge open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_EDGE_CAP_CPU))
-        return coli_edge_adapter_error(error, error_size,
+        (options->backend_mask & ~LMA_EDGE_CAP_CPU))
+        return lma_edge_adapter_error(error, error_size,
                                        "GLM Edge supports CPU only");
     int ebits = getenv("GLM_SEGMENT_EBITS")
         ? atoi(getenv("GLM_SEGMENT_EBITS")) : 8;
     int dbits = getenv("GLM_SEGMENT_DBITS")
         ? atoi(getenv("GLM_SEGMENT_DBITS")) : ebits;
     if (ebits < 2 || ebits > 16 || dbits < 2 || dbits > 16)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "GLM Edge bit widths must be 2..16");
     GlmEdgeEngine *engine = calloc(1, sizeof(*engine));
     if (!engine)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "out of memory opening GLM Edge");
     Model *model = &engine->model;
     model->ebits = ebits; model->dbits = dbits;
     load_cfg(&model->c, options->model_dir);
-    const char *model_dirs = getenv("COLI_MODEL_DIRS");
+    const char *model_dirs = getenv("LMA_MODEL_DIRS");
     st_init_multi(&model->S, options->model_dir,
                   model_dirs && *model_dirs ? model_dirs : NULL);
     int io_bits = dbits >= 8 ? 16 : dbits;
@@ -545,28 +545,28 @@ static int glm_edge_engine_open(
                         (uint64_t)model->c.hidden * sizeof(float);
     if (options->memory_limit_bytes && resident > options->memory_limit_bytes) {
         glm_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "GLM Edge exceeds memory limit");
     }
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_EDGE_ABI_VERSION;
-    capabilities->flags = COLI_EDGE_CAP_TOKENIZE |
-                          COLI_EDGE_CAP_DETOKENIZE |
-                          COLI_EDGE_CAP_GREEDY | COLI_EDGE_CAP_LOGITS |
-                          COLI_EDGE_CAP_CPU;
-    coli_edge_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_EDGE_ABI_VERSION;
+    capabilities->flags = LMA_EDGE_CAP_TOKENIZE |
+                          LMA_EDGE_CAP_DETOKENIZE |
+                          LMA_EDGE_CAP_GREEDY | LMA_EDGE_CAP_LOGITS |
+                          LMA_EDGE_CAP_CPU;
+    lma_edge_capability_string(capabilities->engine_id,
                                 sizeof(capabilities->engine_id), "glm");
-    coli_edge_capability_string(capabilities->state_schema,
+    lma_edge_capability_string(capabilities->state_schema,
                                 sizeof(capabilities->state_schema),
                                 "glm/mla-rope-dsa-f32-v1");
     snprintf(capabilities->numeric_class,
              sizeof(capabilities->numeric_class),
              "glm/e%d-d%d-dsa%d-kvf32/cpu-v1", ebits, dbits, has_dsa);
-    coli_edge_capability_string(capabilities->tokenizer_class,
+    lma_edge_capability_string(capabilities->tokenizer_class,
                                 sizeof(capabilities->tokenizer_class),
                                 "glm/cl100k-byte-bpe-v1");
-    capabilities->state_dtype = COLI_EDGE_DTYPE_F32;
+    capabilities->state_dtype = LMA_EDGE_DTYPE_F32;
     capabilities->state_width = (uint32_t)model->c.hidden;
     capabilities->vocab_size = (uint32_t)model->c.vocab;
     capabilities->max_batch_rows = 512;
@@ -584,7 +584,7 @@ static int glm_edge_tokenize(
     int32_t *token_ids, size_t token_capacity, size_t *token_count,
     char *error, size_t error_size) {
     GlmEdgeEngine *engine = (GlmEdgeEngine *)engine_impl;
-    return coli_edge_tok_tokenize(&engine->tokenizer, text, text_bytes,
+    return lma_edge_tok_tokenize(&engine->tokenizer, text, text_bytes,
                                   token_ids, token_capacity, token_count,
                                   error, error_size);
 }
@@ -594,13 +594,13 @@ static int glm_edge_detokenize(
     char *text, size_t text_capacity, size_t *text_bytes,
     char *error, size_t error_size) {
     GlmEdgeEngine *engine = (GlmEdgeEngine *)engine_impl;
-    return coli_edge_tok_detokenize(&engine->tokenizer, token_ids, token_count,
+    return lma_edge_tok_detokenize(&engine->tokenizer, token_ids, token_count,
                                     text, text_capacity, text_bytes,
                                     error, error_size);
 }
 
 static int glm_edge_embed(void *engine_impl,
-                          const ColiEdgeEmbedRequest *request,
+                          const LmaEdgeEmbedRequest *request,
                           char *error, size_t error_size) {
     GlmEdgeEngine *engine = (GlmEdgeEngine *)engine_impl;
     int hidden = engine->model.c.hidden;
@@ -608,7 +608,7 @@ static int glm_edge_embed(void *engine_impl,
     for (uint32_t row = 0; row < request->rows; row++) {
         int token = request->token_ids[row];
         if (token < 0 || token >= engine->model.c.vocab)
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "GLM token ID is out of range");
         embed_row(&engine->model, token, output + (size_t)row * hidden);
     }
@@ -616,7 +616,7 @@ static int glm_edge_embed(void *engine_impl,
 }
 
 static int glm_edge_select(void *engine_impl,
-                           const ColiEdgeSelectRequest *request,
+                           const LmaEdgeSelectRequest *request,
                            char *error, size_t error_size) {
     GlmEdgeEngine *engine = (GlmEdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -627,17 +627,17 @@ static int glm_edge_select(void *engine_impl,
         if (request->should_cancel &&
             request->should_cancel(request->cancel_user_data)) {
             free(logits); free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "GLM Edge selection cancelled");
         }
         rmsnorm(normalized, input + (size_t)row * config->hidden,
                 engine->model.final_norm, config->hidden, config->eps);
         matmul_qt(logits, normalized, &engine->model.lm_head, 1);
-        if (coli_edge_argmax(logits, (uint32_t)config->vocab,
+        if (lma_edge_argmax(logits, (uint32_t)config->vocab,
                             &request->token_ids[row],
                             request->scores ? &request->scores[row] : NULL)) {
             free(logits); free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "GLM Edge head failed");
         }
     }
@@ -646,7 +646,7 @@ static int glm_edge_select(void *engine_impl,
 }
 
 static int glm_edge_logits(void *engine_impl,
-                           const ColiEdgeLogitsRequest *request,
+                           const LmaEdgeLogitsRequest *request,
                            char *error, size_t error_size) {
     GlmEdgeEngine *engine = (GlmEdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -656,7 +656,7 @@ static int glm_edge_logits(void *engine_impl,
         if (request->should_cancel &&
             request->should_cancel(request->cancel_user_data)) {
             free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "GLM Edge logits cancelled");
         }
         rmsnorm(normalized, input + (size_t)row * config->hidden,
@@ -668,16 +668,16 @@ static int glm_edge_logits(void *engine_impl,
     return 0;
 }
 
-static const ColiEdgeAdapter glm_edge_adapter = {
-    sizeof(ColiEdgeAdapter), COLI_EDGE_ABI_VERSION, "glm",
+static const LmaEdgeAdapter glm_edge_adapter = {
+    sizeof(LmaEdgeAdapter), LMA_EDGE_ABI_VERSION, "glm",
     glm_edge_engine_open, glm_edge_engine_destroy,
     glm_edge_tokenize, glm_edge_detokenize,
     glm_edge_embed, glm_edge_select, glm_edge_logits, {0}
 };
 
-int coli_glm_edge_adapter_register(void) {
-    return coli_edge_adapter_register(&glm_edge_adapter);
+int lma_glm_edge_adapter_register(void) {
+    return lma_edge_adapter_register(&glm_edge_adapter);
 }
-#endif /* COLI_EDGE_ADAPTER */
+#endif /* LMA_EDGE_ADAPTER */
 
-#endif /* COLIBRI_ADAPTERS_H */
+#endif /* GLM52_ADAPTERS_H */

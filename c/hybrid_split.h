@@ -22,7 +22,7 @@
  * are in experts/second (only their ratio matters). Unmeasured or
  * nonsensical bandwidths fall back to `missing` — the historical
  * upload-everything behaviour, never something new. */
-static inline int coli_v4_hybrid_fill_count(int missing, double fill_bw,
+static inline int lma_v4_hybrid_fill_count(int missing, double fill_bw,
                                             double host_bw) {
     if (missing <= 0) return 0;
     if (fill_bw <= 0.0 || host_bw <= 0.0) return missing;
@@ -36,7 +36,7 @@ static inline int coli_v4_hybrid_fill_count(int missing, double fill_bw,
 /* One-pole EMA for the live rate estimates. A non-positive sample is ignored
  * (a failed or zero-length measurement must not poison the state); the first
  * valid sample seeds the average directly. */
-static inline double coli_v4_hybrid_ema(double previous, double sample) {
+static inline double lma_v4_hybrid_ema(double previous, double sample) {
     if (sample <= 0.0) return previous;
     if (previous <= 0.0) return sample;
     return previous * 0.8 + sample * 0.2;
@@ -50,7 +50,7 @@ static inline double coli_v4_hybrid_ema(double previous, double sample) {
  * the first measurements exist. Clamped to [1, 64]: at least one upload per
  * step keeps the tier filling even on a slow bus, and 64 bounds the latency
  * spike a mismeasured step could buy. */
-static inline int coli_k3_fill_budget(double step_seconds,
+static inline int lma_k3_fill_budget(double step_seconds,
                                       double upload_seconds,
                                       double fraction, int legacy_cap) {
     if (step_seconds <= 0.0 || upload_seconds <= 0.0) return legacy_cap;

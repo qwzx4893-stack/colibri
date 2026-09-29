@@ -19,9 +19,9 @@ static void check(int ok, const char *what) { if (!ok) { printf("  FAIL: %s\n", 
 enum { NL = 2, NE = 8, D = 64, IH = 32, TOPK = 2 };
 
 int main(void) {
-    setenv("COLI_CUDA", "1", 1); setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1); setenv("LMA_GPUS", "0", 1);
     setenv("QT_NO_WARMSTART", "1", 1); setenv("HEAT_FILE", "", 1);
-    setenv("COLI_PLACE", "", 1);                    /* "" == unset == auto; unsetenv has no UCRT64 shim */
+    setenv("LMA_PLACE", "", 1);                    /* "" == unset == auto; unsetenv has no UCRT64 shim */
     fake_ndev = 1; fake_uploads = 0; fake_dense_compute = 1;
 
     /* room for 8 experts plus a little; each offer is 1 expert worth of bytes */
@@ -62,7 +62,7 @@ int main(void) {
     printf(" 3. matmul goes to the backend by handle; unknown handles are refused\n");
     float x[I], y[O]; for (int i = 0; i < I; i++) x[i] = 1.0f;
     int mm = fake_matmuls;
-    check(qt_dense_matmul(h, y, x, I, O) == 1 && fake_matmuls == mm + 1, "a placed handle answers through coli_cuda_matmul");
+    check(qt_dense_matmul(h, y, x, I, O) == 1 && fake_matmuls == mm + 1, "a placed handle answers through lma_cuda_matmul");
     check(qt_dense_matmul(h2, y, x, I, O) == 1 && fake_matmuls == mm + 2, "so does the second handle");
     check(qt_dense_matmul(99, y, x, I, O) == 0 && qt_dense_matmul(-1, y, x, I, O) == 0 && fake_matmuls == mm + 2, "unknown handles are refused without a backend call");
 

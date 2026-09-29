@@ -10,11 +10,11 @@ from unittest import mock
 
 
 HERE = Path(__file__).resolve().parent.parent
-CLI = HERE / "coli"
+CLI = HERE / "lmatomic"
 
 
 def load_cli():
-    loader = importlib.machinery.SourceFileLoader("coli_v4_cli_test", str(CLI))
+    loader = importlib.machinery.SourceFileLoader("lma_v4_cli_test", str(CLI))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -70,13 +70,13 @@ class V4CliTest(unittest.TestCase):
         env = self.cli.env_for_engine(args, "olmoe")
         self.assertEqual(env["CHAT"], "1")
         self.assertEqual(env["MAX_NEW"], "32")
-        # #509 for olmoe: the engine reads COLI_TEMP like every other arch.
+        # #509 for olmoe: the engine reads LMA_TEMP like every other arch.
         # The legacy TEMP channel double-poisoned on Windows: it overrode the
         # child's %TEMP% directory with "0.25", while a real %TEMP% path read
         # back as atof("C:\...") == 0.0 and silently forced greedy decoding.
         # env starts from os.environ, so TEMP may be inherited — the launcher
         # must simply never write the temperature there.
-        self.assertEqual(env["COLI_TEMP"], "0.25")
+        self.assertEqual(env["LMA_TEMP"], "0.25")
         self.assertNotEqual(env.get("TEMP"), "0.25")
 
     def test_olmoe_run_uses_its_engine_and_writes_one_prompt_line(self):
@@ -118,7 +118,7 @@ class V4CliTest(unittest.TestCase):
         self.assertEqual(env["CTX"], "4096")
 
     def test_sister_engines_get_snap_from_the_model_flag(self):
-        """#1501 / #1600: `coli run` handed olmoe (and every non-GLM engine) an
+        """#1501 / #1600: `lmatomic run` handed olmoe (and every non-GLM engine) an
         environment without SNAP, so the engine exited with "started without
         a model" while chat and serve, which set it elsewhere, worked.
         SNAP is the model directory, same as env_for() for glm: --model wins
@@ -146,7 +146,7 @@ class V4CliTest(unittest.TestCase):
         """#855: `--ram` reached the environment for deepseek_v4 only, so on Kimi
         K3 it was set and never read -- the flag a user reaches for to bound
         memory did nothing, and the reported session ran itself out of RAM with
-        it apparently in effect. kimi_k3 reads RAM_GB now, so coli must send it.
+        it apparently in effect. kimi_k3 reads RAM_GB now, so lmatomic must send it.
         """
         args = argparse.Namespace(ngen=8, temp=0.0, ram=242, ctx=0)
         env = self.cli.env_for_engine(args, "kimi")
@@ -214,25 +214,25 @@ class V4CliTest(unittest.TestCase):
     def test_measured_cap_is_private_and_never_overrides_cli_cap(self):
         measured = {"winner": {"env": {"OMP_NUM_THREADS": "4"}, "cap": 12}}
         env = self.cli.apply_measured_profile({}, measured, set(), None)
-        self.assertEqual(env["COLI_PROFILE_CAP"], "12")
+        self.assertEqual(env["LMA_PROFILE_CAP"], "12")
         self.assertEqual(env["OMP_NUM_THREADS"], "4")
         explicit = self.cli.apply_measured_profile({}, measured, set(), 7)
-        self.assertNotIn("COLI_PROFILE_CAP", explicit)
+        self.assertNotIn("LMA_PROFILE_CAP", explicit)
         self.assertEqual(self.cli.cap_for_launch(None, env, 8), 12)
         self.assertEqual(self.cli.cap_for_launch(7, env, 8), 7)
         self.assertEqual(self.cli.cap_for_launch(
-            None, {"COLI_PROFILE_CAP": "12", "COLI_PLAN_CAP": "20"}, 8), 12)
+            None, {"LMA_PROFILE_CAP": "12", "LMA_PLAN_CAP": "20"}, 8), 12)
         self.assertEqual(self.cli.cap_for_launch(
-            None, {"COLI_PLAN_CAP": "20"}, 8), 20)
+            None, {"LMA_PLAN_CAP": "20"}, 8), 20)
         with mock.patch.dict(os.environ, {"CAP": "9"}, clear=True):
             args = argparse.Namespace(cap=None)
             self.assertEqual(self.cli.operator_cap(args, "glm"), 9)
             explicit_env = self.cli.apply_measured_profile(
                 {}, measured, set(), self.cli.operator_cap(args, "glm"))
-            self.assertNotIn("COLI_PROFILE_CAP", explicit_env)
+            self.assertNotIn("LMA_PROFILE_CAP", explicit_env)
 
     def test_ngen_default_differs_for_interactive_commands(self):
-        """#889: `coli web` passed --max-tokens 1024, and openai_server clamps a
+        """#889: `lmatomic web` passed --max-tokens 1024, and openai_server clamps a
         request to that ceiling (#260), so the browser's own "max output tokens"
         control silently did nothing above 1024. One-shot runs keep 1024; a
         session where the user has a control gets a ceiling that is not in the

@@ -153,7 +153,7 @@ class PersistentDatapointTest(unittest.TestCase):
         self.assertTrue(all(call[4] == 0 for call in engine.calls))
         self.assertTrue(engine.closed)
         self.assertEqual(engine.env["RAM_GB"], "64")
-        self.assertEqual(engine.env["COLI_TEMP"], "0")
+        self.assertEqual(engine.env["LMA_TEMP"], "0")
         self.assertNotIn("OMP_NUM_THREADS", engine.env)  # V4 owns its thread split
         self.assertEqual(runtime.ARCH, "deepseek_v4")
         self.assertEqual(len(campaign["cold"]), 1)
@@ -277,7 +277,7 @@ class PersistentDatapointTest(unittest.TestCase):
 
     def test_persistent_mode_rejects_the_cli_wrapper(self):
         with self.assertRaisesRegex(ValueError, "engine binary"):
-            datapoint._persistent_executable(None, self.family, "./coli")
+            datapoint._persistent_executable(None, self.family, "./lmatomic")
 
     def test_parser_defaults_to_persistent_campaign(self):
         args = datapoint.build_parser().parse_args(["--snap", "/model"])

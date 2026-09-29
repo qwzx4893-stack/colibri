@@ -14,7 +14,7 @@ export interface ChatMessage {
   images?: string[]
   /* How an assistant turn's last generation ended: the server's finish_reason;
      "aborted" / "error" when the client stopped or lost the stream; or
-     "incomplete" when the stream closed without a finish_reason, which colibri
+     "incomplete" when the stream closed without a finish_reason, which lmatomic
      always sends last, so its absence means the reply was cut off. Kept on
      the message so it travels with the transcript through slot switches and
      archives; never sent to the server. */
@@ -63,7 +63,7 @@ export interface HealthResponse {
   tiers?: TiersHealth
   hwinfo?: HwinfoHealth
   /* Whether a message list ending on an assistant turn is continued rather than
-     answered fresh (COLI_CONTINUE_ASSISTANT). Absent on older servers. */
+     answered fresh (LMA_CONTINUE_ASSISTANT). Absent on older servers. */
   continue_assistant?: boolean
 }
 
@@ -224,7 +224,7 @@ export async function streamChat(options: StreamChatOptions): Promise<StreamChat
     if (done) break
   }
 
-  const queueWaitHeader = response.headers.get("x-colibri-queue-wait-ms")
+  const queueWaitHeader = response.headers.get("x-lmatomic-queue-wait-ms")
   const parsedQueueWait = queueWaitHeader === null ? null : Number(queueWaitHeader)
   return {
     finishReason,

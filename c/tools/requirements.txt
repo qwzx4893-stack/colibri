@@ -1,8 +1,8 @@
-# Python dependencies for the colibri offline converter / oracle / download tools
+# Python dependencies for the LM Atomic offline converter / oracle / download tools
 # (c/tools/*.py and c/*.py). Minimum-version pins; for a fully reproducible env,
 # freeze exact versions into your own lockfile with `pip freeze > locked.txt`.
 #
-# DEVELOPMENT TOOLING ONLY — none of this is a Colibri runtime dependency. The
+# DEVELOPMENT TOOLING ONLY — none of this is a LM Atomic runtime dependency. The
 # engine is a C binary; once a model (or the generated glm_tiny oracle) exists on
 # disk, running it needs no Python at all.
 #

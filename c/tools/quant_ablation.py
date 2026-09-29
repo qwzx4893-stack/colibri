@@ -3,12 +3,12 @@ A/B any quantization scheme against fp16 — WITHOUT converting a 370 GB model f
 
 Why this exists
 ---------------
-Measuring "what does int4 cost us?" by comparing colibri's score to a published model-card
+Measuring "what does int4 cost us?" by comparing lmatomic's score to a published model-card
 number does not work: the harness scores 0-shot log-likelihood, published numbers are
 few-shot/CoT, and that protocol gap can swamp the quantization effect (see #108).
 
 This tool removes the confound by construction. It takes an fp16 model, pushes its weights
-through colibri's OWN quantizer (quantize -> dequantize, in place), and scores both with the
+through lmatomic's OWN quantizer (quantize -> dequantize, in place), and scores both with the
 SAME harness, on the SAME questions, on the SAME machine. The only variable is the quantizer,
 so the delta IS the quantization cost.
 
@@ -55,7 +55,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 # --------------------------------------------------------------------------------------
-# colibri's quantizer (tools/convert_fp8_to_int4.py:32-52), generalised with a group size.
+# lmatomic's quantizer (tools/convert_fp8_to_int4.py:32-52), generalised with a group size.
 #
 # LAYOUT NOTE, and it is a trap: transformers fuses MoE experts into 3D tensors
 # (mlp.experts.gate_up_proj = [n_experts, in, out]) even when the checkpoint stores one 2D

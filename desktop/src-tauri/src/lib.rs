@@ -2,5 +2,5 @@
 pub fn run() {
     tauri::Builder::default()
         .run(tauri::generate_context!())
-        .expect("failed to run the colibri desktop application");
+        .expect("failed to run the lmatomic desktop application");
 }

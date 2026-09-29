@@ -8,9 +8,9 @@ binary that looks freshly built.
 
 Reproduce on a tree without the accompanying fix, without a compiler:
 
-    touch colibri && sleep 1 && touch edge_runtime.h
-    make -q colibri; echo $?
-    -> 0        # "up to date", though colibri.c includes edge_runtime.h
+    touch lmatomic && sleep 1 && touch edge_runtime.h
+    make -q lmatomic; echo $?
+    -> 0        # "up to date", though glm52.c includes edge_runtime.h
 
 whereas touching a header the rule DOES list (st.h) exits 1, meaning make
 would relink. This test is the enforcement a comment cannot provide: nothing
@@ -91,16 +91,16 @@ class MakefileHeaderDepsTest(unittest.TestCase):
         header pulled in transitively is invisible to it. fp8_format.h is
         exactly that shape: quant.h includes it, no engine .c does, so the
         direct check stays green whether or not a rule lists it -- while
-        `touch fp8_format.h; make colibri` would report success and leave a
+        `touch fp8_format.h; make glm52` would report success and leave a
         stale binary carrying the previous FP8_BLOCK. That is the drift the
         header's own comment says it exists to prevent, so it is pinned here.
 
-        Bite: delete `fp8_format.h` from `colibri$(EXE):` and this fails naming
-        colibri; the direct check above still passes.
+        Bite: delete `fp8_format.h` from `glm52$(EXE):` and this fails naming
+        lmatomic; the direct check above still passes.
 
         Scoped to fp8_format.h ON PURPOSE. Running the same closure over every
         header reports seven rules that predate this change and are unrelated
-        to it -- colibri and deepseek_v41 do not list tok_unicode_o200k.h,
+        to it -- lmatomic and deepseek_v41 do not list tok_unicode_o200k.h,
         five engines do not list decode_batch.h or edge_adapter_internal.h,
         qwen36 does not list sse41_kernels.h. Those are real instances of the
         same hazard and worth a separate fix; widening this test to cover them

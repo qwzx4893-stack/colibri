@@ -162,16 +162,16 @@ const it: Record<string, string> = {
   "topbar.truncatedHelp": "La risposta ha raggiunto il limite di token di output ed e' stata tagliata. Aumenta \"Token di output massimi\" per vedere la risposta completa.",
   "topbar.clear": "Pulisci",
 
-  "hero.title": "MOTORE COLIBRÌ",
+  "hero.title": "MOTORE LM ATOMIC",
   "hero.subtitle": "Interroga il gigante.",
   "hero.tagline": "La macchina resta tua.",
-  "hero.description": "Connettiti a un server colibrì locale e ricevi le risposte in streaming direttamente dal tuo hardware. Nulla lascia l'endpoint che scegli.",
+  "hero.description": "Connettiti a un server LM Atomic locale e ricevi le risposte in streaming direttamente dal tuo hardware. Nulla lascia l'endpoint che scegli.",
   "prompts.routing": "Spiega come funziona il routing degli expert",
   "prompts.benchmark": "Scrivi un piccolo benchmark in C",
   "prompts.caching": "Confronta il caching RAM e VRAM",
 
   "chat.you": "Tu",
-  "chat.colibri": "colibrì",
+  "chat.lmatomic": "LM Atomic",
   "chat.placeholder": "Chiedi qualsiasi cosa",
   "chat.inputHint": "Invio per inviare · Shift+Invio per andare a capo",
   "chat.stop": "Ferma la generazione",
@@ -218,7 +218,7 @@ const it: Record<string, string> = {
   "profile.oneTurn": "1 turno",
   "profile.diskNote": "Il servizio disco è il tempo speso a leggere gli expert sui thread I/O; si sovrappone al calcolo, quindi solo l'attesa I/O effettivamente percepita dal thread di calcolo conta nella ripartizione del tempo totale. Con più sessioni KV, le quote descrivono l'intero motore nella finestra del turno.",
 
-  "error.title": "L'interfaccia colibrì ha riscontrato un errore",
+  "error.title": "L'interfaccia LM Atomic ha riscontrato un errore",
   "error.hint": "Il motore non è stato coinvolto. Prova a ricaricare la pagina.",
   "error.retry": "Riprova",
 }

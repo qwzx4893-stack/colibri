@@ -10,7 +10,7 @@ decode.
 
 Builds ONE small synthetic checkpoint directory covering every tensor family
 M1's own standalone-load checklist names (M1 audit section 3, quoting
-colibri.c's model_init req[] array, colibri.c:1843-1922):
+glm52.c's model_init req[] array, glm52.c:1843-1922):
   - model-level: model.embed_tokens.weight, lm_head.weight, model.norm.weight
   - a DENSE layer (layer 0): input_layernorm, post_attention_layernorm,
     self_attn.{q_a_proj,q_a_layernorm,q_b_proj,kv_a_proj_with_mqa,
@@ -45,15 +45,15 @@ per the task's evidence bar:
   5. kv_b_proj is stamped fp8; router/norms/embed/lm_head are present but
      carry no stamp and no `.qs`.
 
-F3 (2026-08-18, colibri_lab/reports/F3_MINT_AUX_FILES_2026-08-18.md): V2's
+F3 (2026-08-18, lmatomic_lab/reports/F3_MINT_AUX_FILES_2026-08-18.md): V2's
 end-to-end smoke found the full mint emitted config.json but not
 tokenizer.json, so the loaded-standalone claim was false -- the engine's
-tok_load (c/tok.h:101, called from colibri.c:7294/7952/8134) hard-exits
+tok_load (c/tok.h:101, called from glm52.c:7294/7952/8134) hard-exits
 without it, exactly like load_cfg does without config.json. tokenizer.json
 joins config.json in STANDALONE_LOAD_REQUIRED_FILES; every other non-tensor
 file in a real GLM-5.2 checkpoint (tokenizer_config.json, chat_template.jinja,
 model.safetensors.index.json, README.md, LICENSE, .gitattributes) is verified
-NOT read anywhere in colibri.c / c/*.h / openai_server.py and stays excluded
+NOT read anywhere in glm52.c / c/*.h / openai_server.py and stays excluded
 -- see the comment block above STANDALONE_LOAD_REQUIRED_FILES in
 repack_fp8_passthrough.py for the file:line evidence per file.
 """
@@ -315,7 +315,7 @@ class FullFamilyEmissionTest(unittest.TestCase):
     def test_tokenizer_json_lands_in_outdir_byte_identical(self):
         """F3: V2's end-to-end smoke (2026-08-18) found the full mint emitted
         config.json but not tokenizer.json, so a minted directory could not
-        actually be loaded standalone -- colibri.c's tok_load (c/tok.h:101)
+        actually be loaded standalone -- glm52.c's tok_load (c/tok.h:101)
         hard-exits without it, exactly like load_cfg does without
         config.json. Byte-identity, not just existence: this is a COPY, not a
         regeneration, so the source and minted bytes must match exactly."""
@@ -340,7 +340,7 @@ class FullFamilyEmissionTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.outdir, "tokenizer.json")))
 
     def test_index_json_and_docs_not_copied(self):
-        """Files confirmed NOT read by colibri.c/openai_server.py must stay
+        """Files confirmed NOT read by glm52.c/openai_server.py must stay
         excluded, including model.safetensors.index.json -- copying it would
         be actively wrong here since its weight_map keys the SOURCE shard
         names (model-NNNNN-of-00141.safetensors), not the mint's
@@ -362,7 +362,7 @@ class FullFamilyEmissionTest(unittest.TestCase):
         self.assertEqual(self._run_cli().returncode, 0)
         outs = glob.glob(os.path.join(self.outdir, "out-fp8pass-*.safetensors"))
         hdr = _read_header(outs[0])
-        stamp = json.loads(hdr["__metadata__"]["colibri.fmt"])
+        stamp = json.loads(hdr["__metadata__"]["lma.fmt"])
         self.assertEqual(stamp.get("model.layers.0.self_attn.kv_b_proj.weight"), rp.FORMAT_NAME)
         self.assertEqual(stamp.get("model.layers.1.self_attn.kv_b_proj.weight"), rp.FORMAT_NAME)
         for name in ("model.embed_tokens.weight", "lm_head.weight", "model.norm.weight",

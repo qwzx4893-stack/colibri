@@ -28,8 +28,8 @@
  * shards) before any tuple is checked -- the positive half of the D-2 pair,
  * on a tool-produced container. The clean run doubles as the negative
  * control: a legitimate mint loads with no refusal. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <stdio.h>

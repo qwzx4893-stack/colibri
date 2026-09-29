@@ -1,4 +1,4 @@
-/* bench_fp4_matmul.c — microbench for coli_fp4_matmul_batch_rows16_order.
+/* bench_fp4_matmul.c — microbench for lma_fp4_matmul_batch_rows16_order.
  *
  * Measures the cost of the SIMD arm vs the scalar #else arm of the FP4 expert
  * matmul used in DeepSeek V4 CPU prefill (see Makefile.deepseek-v4: the arm is
@@ -46,14 +46,14 @@
 
 /* Link stubs: GPU-tier entry points referenced (never taken) by the CPU-only
  * build of this unit. Signatures from deepseek_v4_internal.h. */
-int coli_v4_gpu_matvec_grouped(const void *w, float *output,
+int lma_v4_gpu_matvec_grouped(const void *w, float *output,
                                const float *input, int groups) { (void)w; (void)output; (void)input; (void)groups; return 1; }
-int coli_v4_gpu_fp8_matvec(const void *w, float *output,
+int lma_v4_gpu_fp8_matvec(const void *w, float *output,
                            const float *input) { (void)w; (void)output; (void)input; return 1; }
-int coli_v4_gpu_fp8_matmul_batch(const void *w, float *outputs,
+int lma_v4_gpu_fp8_matmul_batch(const void *w, float *outputs,
                                  const float *inputs, int batch) { (void)w; (void)outputs; (void)inputs; (void)batch; return 1; }
 
-void coli_fp4_matmul_batch_rows16_order(float *y, const uint8_t *q4,
+void lma_fp4_matmul_batch_rows16_order(float *y, const uint8_t *q4,
                                         const uint8_t *e8s, const float *x,
                                         int S, int I, int O);
 
@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < (size_t)S * I; i++) x[i] = (float)((double)(rng() >> 8) / 8388608.0 - 1.0);
 
     memset(y, 0, (size_t)S * O * sizeof(float));
-    coli_fp4_matmul_batch_rows16_order(y, q4, e8s, x, S, I, O);
+    lma_fp4_matmul_batch_rows16_order(y, q4, e8s, x, S, I, O);
 
     if (ref_path) {
         FILE *f = fopen(ref_path, "rb");
@@ -125,7 +125,7 @@ int main(int argc, char **argv) {
     if (iters > 63) iters = 63;
     for (int it = 0; it < iters + 1; it++) {
         double t0 = now_s();
-        coli_fp4_matmul_batch_rows16_order(y, q4, e8s, x, S, I, O);
+        lma_fp4_matmul_batch_rows16_order(y, q4, e8s, x, S, I, O);
         double dt = now_s() - t0;
         if (it > 0) { times[nt++] = dt; if (dt < best) best = dt; }
     }

@@ -9,9 +9,9 @@ web/*.tsbuildinfo
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
 
-# binari compilati (si rigenerano con make / coli build)
-c/colibri
-c/colibri.exe
+# binari compilati (si rigenerano con make / lmatomic build)
+c/glm52
+c/glm52.exe
 c/glm
 c/glm.exe
 c/olmoe
@@ -29,7 +29,7 @@ c/deepseek_v4
 c/deepseek_v4.exe
 c/deepseek_v41
 c/deepseek_v41.exe
-c/COLI_V4_UNIT_*.o
+c/LMA_V4_UNIT_*.o
 c/deepseek_v4.cflags
 c/deepseek_v4.cudaflags
 # ...and the ownership-test objects, which the same Makefile puts in a build/
@@ -42,20 +42,20 @@ c/tok_test
 c/backend_cuda.o
 c/backend_cuda_test
 c/backend_loader.o
-c/coli_cuda.dll
-c/coli_cuda.lib
-c/coli_cuda.exp
-c/coli_hip.dll
-c/coli_hip.lib
-c/coli_hip.exp
-c/coli_hip.pdb
-# DeepSeek V4 CUDA tier build artifacts (coli_cuda_dsv4.dll is the MSVC/nvcc
+c/lma_cuda.dll
+c/lma_cuda.lib
+c/lma_cuda.exp
+c/lma_hip.dll
+c/lma_hip.lib
+c/lma_hip.exp
+c/lma_hip.pdb
+# DeepSeek V4 CUDA tier build artifacts (lma_cuda_dsv4.dll is the MSVC/nvcc
 # backend loaded at runtime by the MinGW-built deepseek-v4.exe)
-c/coli_cuda_dsv4.dll
-c/coli_cuda_dsv4.lib
-c/coli_cuda_dsv4.exp
+c/lma_cuda_dsv4.dll
+c/lma_cuda_dsv4.lib
+c/lma_cuda_dsv4.exp
 c/backend_cuda_dsv4*.o
-c/COLI_V4_UNIT_*.o
+c/LMA_V4_UNIT_*.o
 c/dsv4_*_test*
 c/dsv4_loader_test*
 c/dsv4_decode_loader_test*
@@ -141,9 +141,9 @@ c/third_party/deepgemm/
 
 # DLL flavours + MSVC import/export artifacts of the V4 CUDA tier (regenerated
 # by cuda-dsv4-dll / cuda-dsv4-dg-dll); the loader picks the DLL at runtime.
-c/coli_cuda_dsv4*.dll
-c/coli_cuda_dsv4*.lib
-c/coli_cuda_dsv4*.exp
+c/lma_cuda_dsv4*.dll
+c/lma_cuda_dsv4*.lib
+c/lma_cuda_dsv4*.exp
 c/*.obj
 # macOS
 .DS_Store
@@ -154,7 +154,7 @@ c/*.obj
 
 # vendor modeling cache for the tiny K3 oracle (maintainer tool)
 c/kimi_k3_tiny/.vendor_kimi_k3/
-c/kimi_k3_tiny/.coli_usage
+c/kimi_k3_tiny/.lma_usage
 c/qwen38_vision_tiny/
 c/qwen38_mm_tiny/
 c/qwen38_tiny_fp8/

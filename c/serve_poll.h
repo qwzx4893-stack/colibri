@@ -8,7 +8,7 @@
  * l'ammissione dello scheduler, quindi un client che si disconnette non libera
  * niente: si aspetta comunque la fine del turno.
  *
- * Due motori lo facevano gia', ciascuno per conto suo: colibri (#678,
+ * Due motori lo facevano gia', ciascuno per conto suo: lmatomic (#678,
  * mux_ctl_poll) e kimi_k3. Questo header estrae quella primitiva -- la stessa,
  * gia' provata sul campo -- perche' gli altri non debbano reinventarla.
  *
@@ -22,8 +22,8 @@
  * prima -- il CANCEL a fine turno. Mai indovinare "pronto": una lettura
  * bloccante dentro il ciclo di decode fermerebbe la generazione per sempre in
  * attesa di un comando che potrebbe non arrivare mai. */
-#ifndef COLI_SERVE_POLL_H
-#define COLI_SERVE_POLL_H
+#ifndef LMA_SERVE_POLL_H
+#define LMA_SERVE_POLL_H
 
 #if defined(_WIN32)
 #include <io.h>
@@ -39,7 +39,7 @@
 
 /* 1 = c'e' qualcosa da leggere su stdin adesso; 0 = niente, o piattaforma che
  * non sa dirlo. Non blocca mai. */
-static inline int coli_serve_stdin_ready(void)
+static inline int lma_serve_stdin_ready(void)
 {
 #if defined(_WIN32)
     HANDLE handle = (HANDLE)_get_osfhandle(_fileno(stdin));
@@ -69,4 +69,4 @@ static inline int coli_serve_stdin_ready(void)
 #endif
 }
 
-#endif /* COLI_SERVE_POLL_H */
+#endif /* LMA_SERVE_POLL_H */

@@ -1,4 +1,4 @@
-/* coli_parse_int: cio' che atoi accettava a meta' ora e' un rifiuto.
+/* lma_parse_int: cio' che atoi accettava a meta' ora e' un rifiuto.
  *
  * Il caso che ha motivato tutto questo e' "3x2" scritto al posto di "32": atoi
  * restituiva 3, il motore partiva con una cache dieci volte piu' piccola, e
@@ -16,7 +16,7 @@ static int fails = 0;
 static void accepts(const char *arg, int expect)
 {
     int got = -12345;
-    if (!coli_parse_int(arg, &got)) {
+    if (!lma_parse_int(arg, &got)) {
         printf("  FAIL \"%s\": rifiutato, doveva valere %d\n", arg, expect);
         fails++;
     } else if (got != expect) {
@@ -28,7 +28,7 @@ static void accepts(const char *arg, int expect)
 static void rejects(const char *arg)
 {
     int got = -12345;
-    if (coli_parse_int(arg, &got)) {
+    if (lma_parse_int(arg, &got)) {
         printf("  FAIL \"%s\": accettato come %d -- e' il bug originale, un "
                "argomento non valido letto a meta'\n", arg, got);
         fails++;

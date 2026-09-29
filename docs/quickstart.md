@@ -2,9 +2,9 @@
 
 A step-by-step guide for first-time users on **Linux**, **Windows**, and **macOS**.
 No prior experience with C, CUDA, or model conversion is assumed. If you get
-stuck, `./coli doctor` (below) tells you exactly what's missing.
+stuck, `./lmatomic doctor` (below) tells you exactly what's missing.
 
-> **What you're setting up:** colibrì runs a very large Mixture-of-Experts model
+> **What you're setting up:** LM Atomic runs a very large Mixture-of-Experts model
 > (e.g. GLM-5.2, 744B parameters) on a normal machine by streaming the model's
 > experts from disk instead of needing them all in RAM. The engine is a single
 > C program; Python is only used once, to prepare the model files.
@@ -31,12 +31,12 @@ CPU-only by default.
 > for **Linux, macOS and Windows** on the
 > [Releases page](https://github.com/JustVugg/colibri/releases): unpack one,
 > install [Python 3](https://www.python.org/downloads/), and jump straight to
-> [step 3](#3-get-the-model). The engine ships ready to run and the `coli`
+> [step 3](#3-get-the-model). The engine ships ready to run and the `lmatomic`
 > launcher finds it next to itself — no compiler, no renaming, no configuration.
 >
 > ```bash
-> mkdir colibri && tar xzf colibri-v1.1.0-linux-x86_64.tar.gz -C colibri && cd colibri
-> python3 coli info        # engine ready ✓
+> mkdir lmatomic && tar xzf colibri-v1.1.0-linux-x86_64.tar.gz -C lmatomic && cd lmatomic
+> python3 lmatomic info        # engine ready ✓
 > ```
 >
 > Build from source instead if you want the fastest binary for *your* CPU
@@ -63,7 +63,7 @@ source changes or extra flags (verified on AWS Graviton4, Ubuntu 24.04, gcc 13).
 > time. A host that has never had a compiler installed — a minimal cloud image, a
 > fresh container, a restored volume attached to a new instance — may not carry
 > it, and the engine then exits at startup before printing anything. Install the
-> runtime package alone (`sudo apt install -y libgomp1`); `coli doctor` names the
+> runtime package alone (`sudo apt install -y libgomp1`); `lmatomic doctor` names the
 > missing library.
 
 ### Windows
@@ -71,30 +71,30 @@ source changes or extra flags (verified on AWS Graviton4, Ubuntu 24.04, gcc 13).
 You have two options.
 
 **Option A — download a prebuilt binary (no compiler needed).**
-Grab `colibri-<version>-windows-x86_64.zip` from the
+Grab `lmatomic-<version>-windows-x86_64.zip` from the
 [Releases page](https://github.com/JustVugg/colibri/releases) and unzip it.
 Inside you'll find:
 
 | File | What it is |
 |---|---|
-| `colibri.exe` | **the engine** — the C program that actually runs the model |
-| `coli` | the command-line launcher (`chat`, `serve`, `convert`, `doctor`, …) |
+| `glm52.exe` | **the engine** — the C program that actually runs the model |
+| `lmatomic` | the command-line launcher (`chat`, `serve`, `convert`, `doctor`, …) |
 | `openai_server.py`, `resource_plan.py`, `doctor.py`, `autotune.py` | Python support for the API server, placement planner, diagnostics, and measured tuning |
 
 One setup step: **install Python 3** from
-[python.org](https://www.python.org/downloads/) — the `coli` launcher and the
+[python.org](https://www.python.org/downloads/) — the `lmatomic` launcher and the
 API gateway are Python scripts (the engine itself is pure C and needs nothing).
-No renaming, no configuration: the launcher finds `colibri.exe` next to itself.
+No renaming, no configuration: the launcher finds `glm52.exe` next to itself.
 
 For better understanding, from powershell prompt, a complete invocation line 
-(relying on py launcher, to be launched from the folder where colibri.exe is) is:
+(relying on py launcher, to be launched from the folder where glm52.exe is) is:
 
-PS1> $env:COLI_MODEL="drive:/path/to/1st_copy/model/folder/"; $env:COLI_MODEL_MIRROR="/2nd_copy/model/folder/"; & py ./coli chat
+PS1> $env:LMA_MODEL="drive:/path/to/1st_copy/model/folder/"; $env:LMA_MODEL_MIRROR="/2nd_copy/model/folder/"; & py ./lmatomic chat
 
 
 Then continue to [step 3](#3-get-the-model). Prefer to skip the launcher? You can
-run the engine directly — `.\colibri.exe` reads the model path from the `SNAP`
-environment variable (see [docs/windows.md](windows.md)) — but `coli chat` is the
+run the engine directly — `.\glm52.exe` reads the model path from the `SNAP`
+environment variable (see [docs/windows.md](windows.md)) — but `lmatomic chat` is the
 easy path.
 
 **Option B — build from source with MSYS2.**
@@ -170,7 +170,7 @@ One resumable command downloads and converts the model shard by shard, so it
 never needs the full ~756 GB on disk at once:
 
 ```bash
-./coli convert --model /nvme/glm52_i4
+./lmatomic convert --model /nvme/glm52_i4
 ```
 
 This produces a group-scaled (gs64) container — the same quality-validated
@@ -181,22 +181,22 @@ Safe to interrupt and re-run — it resumes where it left off.
 
 ## 4. Run it
 
-Point `COLI_MODEL` at the folder from step 3 and start chatting:
+Point `LMA_MODEL` at the folder from step 3 and start chatting:
 
 ```bash
 # Linux / macOS
-COLI_MODEL=/nvme/glm52_i4 ./coli chat
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic chat
 
 # Windows (UCRT64 shell)
-COLI_MODEL=/d/glm52_i4 ./coli chat
+LMA_MODEL=/d/glm52_i4 ./lmatomic chat
 ```
 
 Useful first commands:
 
 ```bash
-COLI_MODEL=/nvme/glm52_i4 ./coli doctor   # read-only check: is everything ready?
-COLI_MODEL=/nvme/glm52_i4 ./coli plan     # shows where the model will live (RAM/disk/GPU)
-COLI_MODEL=/nvme/glm52_i4 ./coli chat --topp 0.85   # faster: reads less from disk, same quality
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic doctor   # read-only check: is everything ready?
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic plan     # shows where the model will live (RAM/disk/GPU)
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic chat --topp 0.85   # faster: reads less from disk, same quality
 ```
 
 > **Tip:** `--topp 0.85` is worth adding on a disk-bound machine — it reads
@@ -215,7 +215,7 @@ COLI_MODEL=/nvme/glm52_i4 ./coli chat --topp 0.85   # faster: reads less from di
 - **It's still the full model.** Placement only changes speed, never the model's
   answers or precision.
 
-If something doesn't work, run `./coli doctor` — it reports exactly what's
+If something doesn't work, run `./lmatomic doctor` — it reports exactly what's
 missing (compiler, model files, permissions) and how to fix it.
 
 ---

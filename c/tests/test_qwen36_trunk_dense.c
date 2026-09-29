@@ -12,7 +12,7 @@
  *     CPU (same int8 rows, same per-row scales), and a component without a
  *     handle keeps running matmul_d;
  *   - the placer prices every one of them as a dense component: with room for
- *     all, all go; with COLI_PLACE=off nothing is offered at all.
+ *     all, all go; with LMA_PLACE=off nothing is offered at all.
  * Include order as in tests/test_qwen36_tier_int8_engine.c: the engine, the
  * fake backend, then the tier, so the tier's statics live in this TU. */
 #define main qwen36_main_unused
@@ -99,15 +99,15 @@ static void build(Model *m) {
 }
 
 int main(void) {
-    setenv("COLI_CUDA", "1", 1); setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1); setenv("LMA_GPUS", "0", 1);
     setenv("QT_NO_WARMSTART", "1", 1); setenv("HEAT_FILE", "", 1);
-    setenv("COLI_PLACE", "", 1);                    /* "" == unset == auto */
+    setenv("LMA_PLACE", "", 1);                    /* "" == unset == auto */
     setenv("CUDA_EXPERT_GB", "1", 1);               /* room for everything */
-    unsetenv("COLI_DENSE_I8");
+    unsetenv("LMA_DENSE_I8");
     /* the GEMV from VRAM is compared with the CPU's f32-activation kernel, the
      * contract the tier uploads: the integer dense path rounds the activation
      * and is measured elsewhere (test_qwen36_dense_idot) */
-    setenv("COLI_DENSE_IDOT", "0", 1);
+    setenv("LMA_DENSE_IDOT", "0", 1);
     fake_ndev = 1; fake_uploads = 0; fake_dense_compute = 1;
 
     Model m; build(&m);

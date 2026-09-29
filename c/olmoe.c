@@ -48,12 +48,12 @@
 #include "pin_pool.h"                       /* piu scatti annidati */   /* riuso del prefisso tra turni (shared) */
 #include "serve_codec.h"
 #include "serve_budget.h"
-#ifdef COLI_SEGMENT_ADAPTER
+#ifdef LMA_SEGMENT_ADAPTER
 #include "segment_runtime.h"
 #include "segment_adapters.h"
 #include "segment_adapter_internal.h"
 #endif
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 #include "edge_runtime.h"
 #include "edge_adapters.h"
 #include "tok.h"
@@ -158,7 +158,7 @@ static void *pilot_worker(void *arg);
 static void ensure_pilot_worker_started(Model *m);
 static void slot_ensure_allocated(Model *m, Slot *s);
 
-#ifdef COLI_CACHE_INDEX_TEST
+#ifdef LMA_CACHE_INDEX_TEST
 static uint64_t g_slot_index_probes;
 #endif
 
@@ -169,7 +169,7 @@ static Slot *slot_indexed(Model *m, int layer, int eid) {
         eid >= m->c.n_experts) return NULL;
     LCache *lc = &m->cache[layer];
     if (!lc->slot_by_expert) return NULL;
-#ifdef COLI_CACHE_INDEX_TEST
+#ifdef LMA_CACHE_INDEX_TEST
     g_slot_index_probes++;
 #endif
     int i = lc->slot_by_expert[eid];
@@ -199,7 +199,7 @@ static void cache_publish(Model *m, int layer, Slot *s, int eid) {
 }
 
 /* A slot being read keeps the index entry of the expert it is loading, marked
- * -(eid+2) as in colibri.c's ecache_reserve: lookups still miss and eviction
+ * -(eid+2) as in glm52.c's ecache_reserve: lookups still miss and eviction
  * still skips it (eid < 0), but a second loader of the same expert can see the
  * read in flight instead of starting another one into another slot. */
 static void cache_reserve(Model *m, int layer, Slot *s, int eid) {
@@ -397,7 +397,7 @@ static void matmul_q(float *y, const float *x, const int8_t *q, const float *sca
      * restores the behaviour users actually had.
      *
      * Cost of turning it on: ~+5.8e-4 relative error per dot from the activation
-     * quantization (colibri.c:910-915 measures the same mechanism at ~+0.117
+     * quantization (glm52.c:910-915 measures the same mechanism at ~+0.117
      * nats/token on GLM, which is why GLM keeps q/k/v off IDOT). On AVX2-only
      * hardware it is also not faster: 11.01 vs 10.67 tok/s measured on an
      * i5-9600K, n=4 interleaved. Set IDOT=1 to opt in knowingly. */
@@ -589,7 +589,7 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
         rt_init("olmoe", c->n_layers, c->n_experts);
         rt_drop_row(c->n_layers);                 /* every layer routes; no MTP row */
         m->freq = rt_counts_all();                /* read sites keep their shape */
-        const char *up = getenv("COLI_USAGE");    /* optional history seed */
+        const char *up = getenv("LMA_USAGE");    /* optional history seed */
         if (up && *up) {
             int64_t h = rt_load(up);
             if (h > 0)
@@ -687,14 +687,14 @@ static void slot_ensure_allocated(Model *m, Slot *s) {
     s->pinned = 0;
 }
 
-#ifdef COLI_CACHE_INDEX_TEST
+#ifdef LMA_CACHE_INDEX_TEST
 /* Model-free tests stand in for the disk read, so they can hold a load open
  * and count how many times each expert is read. */
 static void (*g_test_expert_load)(Model *m, int layer, int eid, Slot *s);
 #endif
 
 static void load_expert_merged(Model *m, int layer, int eid, Slot *s) {
-#ifdef COLI_CACHE_INDEX_TEST
+#ifdef LMA_CACHE_INDEX_TEST
     if (g_test_expert_load) { g_test_expert_load(m, layer, eid, s); return; }
 #endif
     char nm[256], qsnm[256];
@@ -976,7 +976,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
         int idx[64]; float val[64];
         /* shared ranking (moe_router.h): all-NaN probabilities must not reach
          * expert_get() as -1 and then last_access[layer*E - 1] (heap write) */
-        coli_router_topk(pr, NULL, NULL, E, K, idx, NULL, layer, 1);
+        lma_router_topk(pr, NULL, NULL, E, K, idx, NULL, layer, 1);
         for (int kk = 0; kk < K; kk++) val[kk] = pr[idx[kk]];
         if (c->norm_topk) { float sm=0; for(int kk=0;kk<K;kk++) sm+=val[kk]; for(int kk=0;kk<K;kk++) val[kk]/=sm; }
         /* IMPROVEMENT 2 activation heatmap AND the ROUTE_TRACE stream, in one
@@ -1084,13 +1084,13 @@ static void layers_forward_range(Model *m, float *x, int S, int pos_base,
  * vettore di logit finale, che e il predittore del primo token fresco. */
 static int    g_echo_k = 0;
 static const char *g_echo_id = NULL;
-static ColiPinPool g_pins;             /* piu scatti annidati, vedi pin_pool.h */
+static LmaPinPool g_pins;             /* piu scatti annidati, vedi pin_pool.h */
 static const float *g_pin_logit = NULL; /* logit dello scatto rimesso, se c'e */
 static int    g_pin_use_logit = 0;
 static Tok   *g_echo_tok = NULL;
 
 static void olmoe_echo(const char *id, int pos, int token, const float *lo, int V, int k){
-    char tail[1024]; coli_logprob_tail(tail, sizeof tail, lo, V, token, k);
+    char tail[1024]; lma_logprob_tail(tail, sizeof tail, lo, V, token, k);
     char piece[512]; int n = g_echo_tok ? tok_decode(g_echo_tok, &token, 1, piece, (int)sizeof piece) : 0;
     if (n < 0) n = 0;
     printf("ECHO %s %d %d%s\n", id, n, pos, tail);
@@ -1290,7 +1290,7 @@ static void pilot_prefetch(Model *m, int lnext, const float *x, int S) {
 
         for (int kk = 0; kk < max_cand; kk++) {
             float bv;
-            int best = coli_router_best(exps, NULL, NULL, E, idx, kk, &bv);
+            int best = lma_router_best(exps, NULL, NULL, E, idx, kk, &bv);
             if (best < 0) break;
             idx[kk] = best;
             cum_sum += bv;
@@ -1508,7 +1508,7 @@ static void run_chat(Model *m, Tok *T, int ctx_cap) {
  * stdout: READY sentinel once loaded, then per request a stream of
  *         DATA <id> <size>\n<bytes>\n frames and a final
  *         DONE <id> STAT <tok> <tps> <hit%> <rss> <prompt_tok> <len_limited>\n
- * Byte-identical to colibri.c's serve protocol (inkling.c documents it in
+ * Byte-identical to glm52.c's serve protocol (inkling.c documents it in
  * full above its own SUBMIT handling) so the shared openai_server.py gateway
  * drives olmoe unchanged.
  *
@@ -1527,7 +1527,7 @@ typedef struct { char id[64]; int max_tok; float temp, top_p; char *payload; int
                  int logprobs, pin; } SReq;   /* SUBMIT logprobs=k / pin=1 */
 #define SRV_QMAX 16
 static SReq g_q[SRV_QMAX]; static int g_qn = 0;
-static const ColiServeWireProfile olmoe_wire = {
+static const LmaServeWireProfile olmoe_wire = {
     .max_header_bytes = 511,
     .max_payload_bytes = 1u << 22,
     .max_tokens = 1 << 20,
@@ -1538,25 +1538,25 @@ static const ColiServeWireProfile olmoe_wire = {
 /* read one control line (+ payload for SUBMIT). cur_id: request in flight;
  * returns 1 if that request was cancelled, 0 otherwise, -1 on input EOF. */
 static int serve_read_cmd(FILE *in, FILE *out, const char *cur_id) {
-    ColiServeCommand command;
-    ColiServeReadResult result = coli_serve_read_command(in, &olmoe_wire, &command);
-    if (result == COLI_SERVE_READ_EOF || result == COLI_SERVE_READ_BAD_FRAME) return -1;
-    if (result == COLI_SERVE_READ_NOMEM) {
-        coli_serve_write_error(out, command.id, "out of memory");
+    LmaServeCommand command;
+    LmaServeReadResult result = lma_serve_read_command(in, &olmoe_wire, &command);
+    if (result == LMA_SERVE_READ_EOF || result == LMA_SERVE_READ_BAD_FRAME) return -1;
+    if (result == LMA_SERVE_READ_NOMEM) {
+        lma_serve_write_error(out, command.id, "out of memory");
         return -1;
     }
-    if (result == COLI_SERVE_READ_BAD_REQUEST &&
-        command.kind == COLI_SERVE_COMMAND_SUBMIT) {
-        coli_serve_write_error(out, command.id, "bad submit header");
+    if (result == LMA_SERVE_READ_BAD_REQUEST &&
+        command.kind == LMA_SERVE_COMMAND_SUBMIT) {
+        lma_serve_write_error(out, command.id, "bad submit header");
         return -1;
     }
-    if (result != COLI_SERVE_READ_OK) return 0;
-    if (command.kind == COLI_SERVE_COMMAND_CANCEL) {
+    if (result != LMA_SERVE_READ_OK) return 0;
+    if (command.kind == LMA_SERVE_COMMAND_CANCEL) {
         int cancelled = cur_id && !strcmp(command.id, cur_id);
-        coli_serve_command_dispose(&command);
+        lma_serve_command_dispose(&command);
         return cancelled;
     }
-    if (command.kind == COLI_SERVE_COMMAND_SUBMIT) {
+    if (command.kind == LMA_SERVE_COMMAND_SUBMIT) {
         if (g_qn < SRV_QMAX) {
             SReq *q = &g_q[g_qn++];
             snprintf(q->id, sizeof(q->id), "%s", command.id);
@@ -1565,19 +1565,19 @@ static int serve_read_cmd(FILE *in, FILE *out, const char *cur_id) {
             q->pin = command.pin;
             q->temp = command.temperature;
             q->top_p = command.top_p;
-            q->payload = (char *)coli_serve_command_take_payload(&command);
+            q->payload = (char *)lma_serve_command_take_payload(&command);
             q->plen = (int)command.payload_bytes;
         } else {
-            coli_serve_write_error(out, command.id, "queue full");
+            lma_serve_write_error(out, command.id, "queue full");
         }
     }
-    coli_serve_command_dispose(&command);
+    lma_serve_command_dispose(&command);
     return 0;
 }
 
 /* HITS rows cols hex: which experts this turn routed, one bit each, every
  * layer (all are MoE here, same rows and columns as EMAP), packed 8 per hex
- * pair. Same line colibri.c emits; the Brain tab lights up from it. */
+ * pair. Same line glm52.c emits; the Brain tab lights up from it. */
 static void serve_hits(Model *m) {
     Cfg *c = &m->c; int E = c->n_experts, rows = c->n_layers;
     if (!m->ehit) ehit_mark(m, -1, -1);
@@ -1593,17 +1593,17 @@ static void serve_hits(Model *m) {
     fflush(stdout); free(hex); free(bm);
 }
 
-/* COLI_KV_PREFIX=0: never reuse a previous turn's cache. The escape hatch,
+/* LMA_KV_PREFIX=0: never reuse a previous turn's cache. The escape hatch,
  * and the B arm of the A/B that shows reuse changes nothing but the time. */
-static int kv_prefix_off(void){ const char *e = getenv("COLI_KV_PREFIX"); return e && *e == '0'; }
+static int kv_prefix_off(void){ const char *e = getenv("LMA_KV_PREFIX"); return e && *e == '0'; }
 
 static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
     Cfg *c = &m->c;
     int cap = q->plen + 16;
     int *ids = malloc((size_t)cap * sizeof(int));
     int np = tok_encode(T, q->payload, q->plen, ids, cap);
-    if (np <= 0) { coli_serve_write_error(stdout, q->id, "empty prompt"); free(ids); return 0; }
-    int budget = coli_serve_budget(np, q->max_tok, ctx_cap, q->logprobs > 0);
+    if (np <= 0) { lma_serve_write_error(stdout, q->id, "empty prompt"); free(ids); return 0; }
+    int budget = lma_serve_budget(np, q->max_tok, ctx_cap, q->logprobs > 0);
     if (budget < 0) {
         char message[128];
         /* The frame the gateway turns into a 400 context_length_exceeded
@@ -1611,7 +1611,7 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
         snprintf(message, sizeof(message),
                  "CONTEXT_EXCEEDED prompt_tokens=%d requested=%d capacity=%d",
                  np, q->max_tok, ctx_cap);
-        coli_serve_write_error(stdout, q->id, message); free(ids); return 0;
+        lma_serve_write_error(stdout, q->id, message); free(ids); return 0;
     }
     if (budget < q->max_tok) {
         fprintf(stderr, "[serve] max_tokens %d clamped to %d (context %d - prompt %d); "
@@ -1624,8 +1624,8 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
      * begins with the ids the cache was built from, those keys and values ARE
      * the state at those positions -- attention is causal, so a row depends on
      * its prefix and nothing later. Prefill only the tail. Reuse is all or
-     * nothing: nothing here can rewind a cache. COLI_KV_PREFIX=0 turns it off,
-     * COLI_PREFIX_LOG=1 reports the decision and its reason, because "it did
+     * nothing: nothing here can rewind a cache. LMA_KV_PREFIX=0 turns it off,
+     * LMA_PREFIX_LOG=1 reports the decision and its reason, because "it did
      * not get faster" is otherwise indistinguishable from "it is not wired up".
      *
      * On a miss the record must be CLEARED and not merely overwritten: a
@@ -1641,25 +1641,25 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
         /* Il piu profondo degli scatti che sia un prefisso di questo prompt.
          * Con due livelli (istruzioni, istruzioni+domanda) e il secondo a
          * decidere; se e' morto si ripiega sul primo invece di rifare tutto. */
-        int s = coli_pin_best(&g_pins, ids, np);
+        int s = lma_pin_best(&g_pins, ids, np);
         while (s >= 0) {
-            ColiPin *k = &g_pins.slot[s];
+            LmaPin *k = &g_pins.slot[s];
             if (kv_prefix_holds(&m->kvp, k->ids, k->len)) {
                 kv_prefix_clear(&m->kvp);
                 kv_prefix_record(&m->kvp, k->ids, 0, k->len);
                 m->kv_len = k->len;
                 reuse = k->len;
                 g_pin_logit = k->logit; g_pin_use_logit = k->logit != NULL;
-                coli_pin_touch(&g_pins, s);
+                lma_pin_touch(&g_pins, s);
                 break;
             }
             k->len = 0;                    /* le righe non ci sono piu: scatto orfano */
-            s = coli_pin_best(&g_pins, ids, np);
+            s = lma_pin_best(&g_pins, ids, np);
         }
     }
     g_echo_k = q->logprobs; g_echo_id = q->id; g_echo_tok = T;
     if (!reuse) kv_prefix_clear(&m->kvp);
-    if (getenv("COLI_PREFIX_LOG")) {
+    if (getenv("LMA_PREFIX_LOG")) {
         if (reuse)
             fprintf(stderr, "[PREFIX] reusing %d of %d prompt tokens (%.0f%%)\n",
                     reuse, np, 100.0 * reuse / np);
@@ -1680,8 +1680,8 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
     int hist_len = np, gen = 0, limited = 1, cancelled = 0;
     char buf[512];
     if (q->pin && logit) {
-        coli_pin_pool_init(&g_pins, c->vocab);
-        if (coli_pin_store(&g_pins, ids, np, logit)) {
+        lma_pin_pool_init(&g_pins, c->vocab);
+        if (lma_pin_store(&g_pins, ids, np, logit)) {
             fprintf(stderr, "[PIN] scatto a %d token\n", np); fflush(stderr);
         }
     }
@@ -1689,14 +1689,14 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
     for (int s = 0; s < q->max_tok && !cancelled; s++) {
         int nt = pick_tok(logit, c->vocab, -1);
         char lptail[1024]; lptail[0] = 0;
-        if (q->logprobs > 0) coli_logprob_tail(lptail, sizeof lptail, logit, c->vocab, nt, q->logprobs);
+        if (q->logprobs > 0) lma_logprob_tail(lptail, sizeof lptail, logit, c->vocab, nt, q->logprobs);
         free(logit); logit = NULL;
         if (is_stop(nt)) { limited = 0; break; }
         int nb = tok_decode(T, &nt, 1, buf, sizeof(buf)-1);
-        if (q->logprobs > 0) coli_serve_write_data_lp(stdout, q->id, buf, (size_t)nb, lptail);
-        else coli_serve_write_data(stdout, q->id, buf, (size_t)nb);
+        if (q->logprobs > 0) lma_serve_write_data_lp(stdout, q->id, buf, (size_t)nb, lptail);
+        else lma_serve_write_data(stdout, q->id, buf, (size_t)nb);
         gen++; hist_len++;
-        while (coli_stdin_readable()) {
+        while (lma_stdin_readable()) {
             int r = serve_read_cmd(stdin, stdout, q->id);
             if (r < 0) { free(ids); return -1; }
             if (r > 0) { cancelled = 1; limited = 0; }
@@ -1710,7 +1710,7 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
     free(logit);
     double dt = now_s() - t0;
     double tot = (double)(m->hits - h0 + m->miss - m0);
-    ColiServeDone done = {
+    LmaServeDone done = {
         .completion_tokens = gen,
         .tokens_per_second = dt > 0 ? gen/dt : 0.0,
         .cache_hit_percent = tot ? 100.0*(m->hits-h0)/tot : 0.0,
@@ -1718,7 +1718,7 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
         .prompt_tokens = np,
         .length_limited = limited,
     };
-    coli_serve_write_done(stdout, q->id, &done);
+    lma_serve_write_done(stdout, q->id, &done);
     /* PROF: per-turn phase timings for the dashboard, field order the protocol's:
      * disk, wait, matmul, attention, lm_head, forwards. disk is what the expert
      * loads took (#1449 first half); matmul is the MoE block time minus that
@@ -1799,10 +1799,10 @@ static void serve_tiers_emap(Model *m) {
 }
 
 static void serve_loop(Model *m, Tok *T, int ctx_cap) {
-    coli_serve_stdio_init();
+    lma_serve_stdio_init();
     int tok_eos = tok_id_of(T, "|||IP_ADDRESS|||");
     stops_arm_tok(&m->c, tok_eos, T);
-    coli_serve_write_ready(stdout, rss_gb());
+    lma_serve_write_ready(stdout, rss_gb());
     serve_hwinfo(m);
     serve_tiers_emap(m);
     for (;;) {
@@ -1817,7 +1817,7 @@ static void serve_loop(Model *m, Tok *T, int ctx_cap) {
          * the only one the dashboard ever saw -- all grey, RAM 0, everything
          * on disk, forever. HITS was already per turn, which is why the white
          * "routed now" flash worked while the residency colour never moved.
-         * inkling.c, kimi_k3.c, qwen38.c, deepseek_v41.c and colibri.c
+         * inkling.c, kimi_k3.c, qwen38.c, deepseek_v41.c and glm52.c
          * already do this. */
         serve_tiers_emap(m);
     }
@@ -1833,9 +1833,9 @@ static int *read_int_array(jval *o, const char *key, int *n_out) {
 
 #ifndef OLMOE_NO_MAIN
 int main(int argc, char **argv) {
-    coli_omp_tune_threads("olmoe");   /* squadra sui core fisici, niente spin-wait: vedi omp_tune.h */
+    lma_omp_tune_threads("olmoe");   /* squadra sui core fisici, niente spin-wait: vedi omp_tune.h */
     const char *snap = getenv("SNAP");
-    if (!snap) { coli_print_launcher_help("OLMoE"); return 1; }
+    if (!snap) { lma_print_launcher_help("OLMoE"); return 1; }
     g_pilot = getenv("PILOT") ? atoi(getenv("PILOT")) : 0;
     g_wide  = getenv("WIDE")  ? atoi(getenv("WIDE"))  : 1;
     g_pilot_evict_guard = getenv("PILOT_EVICT_GUARD") ? atoi(getenv("PILOT_EVICT_GUARD")) : 1;
@@ -1844,8 +1844,8 @@ int main(int argc, char **argv) {
     if (g_wide < 1) g_wide = 1;
     if (g_wide > 4) g_wide = 4;
     int hot_n  = getenv("HOT")   ? atoi(getenv("HOT"))   : 0;
-    int cap    = argc > 1 ? coli_arg_int(argv[1], "cache/layer") : 16;
-    int bits   = argc > 2 ? coli_arg_int(argv[2], "expert bits") : 8;
+    int cap    = argc > 1 ? lma_arg_int(argv[1], "cache/layer") : 16;
+    int bits   = argc > 2 ? lma_arg_int(argv[2], "expert bits") : 8;
     if (bits < 2 || bits > 8) {
         fprintf(stderr, "quant_bits must be 2..8 (got %d)\n", bits);
         return 1;
@@ -1853,7 +1853,7 @@ int main(int argc, char **argv) {
 
     /* SERVE=1: openai_server.py drives the engine over stdin/stdout (READY
      * handshake, SUBMIT/CANCEL, DATA/DONE/PROF frames, HWINFO/TIERS/EMAP for
-     * the dashboard) — same protocol as colibri.c/inkling.c/kimi_k3.c. v1:
+     * the dashboard) — same protocol as glm52.c/inkling.c/kimi_k3.c. v1:
      * one request at a time, full re-prefill every turn (see serve_one()). */
     if (getenv("SERVE") && getenv("SERVE")[0] == '1') {
         int ctx_cap = getenv("CTX") ? atoi(getenv("CTX")) : 4096;
@@ -1883,19 +1883,19 @@ int main(int argc, char **argv) {
         Tok T;
         char tokpath[2048]; snprintf(tokpath, sizeof(tokpath), "%s/tokenizer.json", snap);
         tok_load(&T, tokpath);
-        coli_rt_term_arm();   /* SIGTERM must reach the save below (#1629) */
+        lma_rt_term_arm();   /* SIGTERM must reach the save below (#1629) */
         serve_loop(&m, &T, ctx_cap);
-        { const char *up = getenv("COLI_USAGE");
+        { const char *up = getenv("LMA_USAGE");
           if (up && *up) rt_save(up, 0); }
         return 0;
     }
 
     if (getenv("CHAT")) {   /* interactive mode: bypasses the ref.json harness entirely */
-        /* #509 convention, same as the GLM engine: COLI_TEMP is the primary channel;
+        /* #509 convention, same as the GLM engine: LMA_TEMP is the primary channel;
          * TEMP stays a legacy alias ONLY when it is fully numeric — on Windows and under
          * ROCm stacks %TEMP% names a directory, and atof("C:\...") == 0.0 would silently
          * force greedy decoding for every olmoe chat on those hosts. */
-        if (getenv("COLI_TEMP")) g_temp = (float)atof(getenv("COLI_TEMP"));
+        if (getenv("LMA_TEMP")) g_temp = (float)atof(getenv("LMA_TEMP"));
         else if (getenv("TEMP") && *getenv("TEMP")) {
             char *tend; double tv = strtod(getenv("TEMP"), &tend);
             if (tend != getenv("TEMP") && *tend == '\0') g_temp = (float)tv;
@@ -1918,7 +1918,7 @@ int main(int argc, char **argv) {
         char tokpath[2048]; snprintf(tokpath, sizeof(tokpath), "%s/tokenizer.json", snap);
         tok_load(&T, tokpath);
         run_chat(&m, &T, ctx_cap);
-        { const char *up = getenv("COLI_USAGE");
+        { const char *up = getenv("LMA_USAGE");
           if (up && *up) rt_save(up, 0); }
         return 0;
     }
@@ -1994,11 +1994,11 @@ int main(int argc, char **argv) {
         }
     }
 
-    { const char *up = getenv("COLI_USAGE");
+    { const char *up = getenv("LMA_USAGE");
       if (up && *up) rt_save(up, 0); }              /* same bytes as every other engine */
     printf("Speed: %.2f tok/s (%.1fs for %d tokens)\n", n_new/dt, dt, n_new);
-    /* One line, every engine, one format: `coli tune` sweeps scheduling knobs and
-     * needs tokens-and-elapsed to compare candidates. Before this only colibri
+    /* One line, every engine, one format: `lmatomic tune` sweeps scheduling knobs and
+     * needs tokens-and-elapsed to compare candidates. Before this only lmatomic
      * emitted a parseable throughput line (REPLAY decode), so the tuner was
      * GLM-only and bannered the right model while launching the wrong engine
      * (#898). Printed to stdout, which is what autotune captures.
@@ -2011,7 +2011,7 @@ int main(int argc, char **argv) {
 }
 #endif /* OLMOE_NO_MAIN */
 
-#ifdef COLI_SEGMENT_ADAPTER
+#ifdef LMA_SEGMENT_ADAPTER
 /* ---------- engine-owned Segment adapter ------------------------------ */
 
 typedef struct {
@@ -2051,25 +2051,25 @@ static void olmoe_segment_model_destroy(OlmoeSegmentEngine *engine) {
 }
 
 static int olmoe_segment_engine_open(
-    void **engine_impl, ColiSegmentCapabilities *capabilities,
-    const ColiSegmentEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaSegmentCapabilities *capabilities,
+    const LmaSegmentEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "invalid OLMoE Segment open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_SEGMENT_CAP_CPU))
-        return coli_segment_adapter_error(error, error_size,
+        (options->backend_mask & ~LMA_SEGMENT_CAP_CPU))
+        return lma_segment_adapter_error(error, error_size,
                                            "OLMoE Segment supports CPU only");
     if (options->context_tokens > 4096)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "OLMoE Segment context exceeds 4096");
 
     Cfg config;
     memset(&config, 0, sizeof(config));
     load_cfg(&config, options->model_dir);
     if (options->layer_end > (uint32_t)config.n_layers)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "OLMoE Segment range exceeds model");
     int range_layers = (int)(options->layer_end - options->layer_begin);
     int cap = 16;
@@ -2087,14 +2087,14 @@ static int olmoe_segment_engine_open(
 
     OlmoeSegmentEngine *engine = calloc(1, sizeof(*engine));
     if (!engine)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory opening OLMoE Segment");
     engine->layer_begin = options->layer_begin;
     engine->layer_end = options->layer_end;
     engine->context_tokens = options->context_tokens;
     if (pthread_mutex_init(&engine->run_lock, NULL)) {
         free(engine);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "cannot initialize OLMoE Segment lock");
     }
     model_init_range(&engine->model, options->model_dir, cap, 8,
@@ -2102,20 +2102,20 @@ static int olmoe_segment_engine_open(
 
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_SEGMENT_ABI_VERSION;
-    capabilities->flags = COLI_SEGMENT_CAP_SNAPSHOT |
-                          COLI_SEGMENT_CAP_RANGE_NATIVE |
-                          COLI_SEGMENT_CAP_MULTI_SESSION |
-                          COLI_SEGMENT_CAP_CPU;
-    coli_segment_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_SEGMENT_ABI_VERSION;
+    capabilities->flags = LMA_SEGMENT_CAP_SNAPSHOT |
+                          LMA_SEGMENT_CAP_RANGE_NATIVE |
+                          LMA_SEGMENT_CAP_MULTI_SESSION |
+                          LMA_SEGMENT_CAP_CPU;
+    lma_segment_capability_string(capabilities->engine_id,
                                    sizeof(capabilities->engine_id), "olmoe");
-    coli_segment_capability_string(capabilities->state_schema,
+    lma_segment_capability_string(capabilities->state_schema,
                                    sizeof(capabilities->state_schema),
                                    "olmoe/kv-f32-v1");
-    coli_segment_capability_string(capabilities->numeric_class,
+    lma_segment_capability_string(capabilities->numeric_class,
                                    sizeof(capabilities->numeric_class),
                                    "olmoe/f32-int8/cpu-v1");
-    capabilities->state_dtype = COLI_SEGMENT_DTYPE_F32;
+    capabilities->state_dtype = LMA_SEGMENT_DTYPE_F32;
     capabilities->state_width = (uint32_t)config.hidden;
     capabilities->max_batch_rows = 128;
     capabilities->max_context_tokens = 4096;
@@ -2134,15 +2134,15 @@ static void olmoe_segment_engine_destroy(void *engine_impl) {
 
 static int olmoe_segment_session_create(
     void *engine_impl, void **session_impl,
-    const ColiSegmentSessionOptions *options, char *error, size_t error_size) {
+    const LmaSegmentSessionOptions *options, char *error, size_t error_size) {
     OlmoeSegmentEngine *engine = (OlmoeSegmentEngine *)engine_impl;
     if (!engine || !session_impl || !options)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "invalid OLMoE Segment session");
     *session_impl = NULL;
     OlmoeSegmentSession *session = calloc(1, sizeof(*session));
     if (!session)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory creating OLMoE session");
     session->engine = engine;
     session->context_tokens = options->context_tokens;
@@ -2151,9 +2151,9 @@ static int olmoe_segment_session_create(
     session->V = calloc((size_t)layers, sizeof(*session->V));
     if (!session->K || !session->V) goto oom;
     size_t cells;
-    if (coli_segment_size_mul((size_t)engine->model.c.n_heads,
+    if (lma_segment_size_mul((size_t)engine->model.c.n_heads,
                               options->context_tokens, &cells) ||
-        coli_segment_size_mul(cells, (size_t)engine->model.c.head_dim,
+        lma_segment_size_mul(cells, (size_t)engine->model.c.head_dim,
                               &cells)) goto oom;
     for (uint32_t layer = engine->layer_begin; layer < engine->layer_end;
          layer++) {
@@ -2171,7 +2171,7 @@ oom:
             free(session->K[layer]); free(session->V[layer]);
         }
     free(session->K); free(session->V); free(session);
-    return coli_segment_adapter_error(error, error_size,
+    return lma_segment_adapter_error(error, error_size,
                                        "out of memory allocating OLMoE KV");
 }
 
@@ -2186,15 +2186,15 @@ static void olmoe_segment_session_destroy(void *session_impl) {
 }
 
 static int olmoe_segment_session_run(void *session_impl,
-                                     const ColiSegmentRunRequest *request,
+                                     const LmaSegmentRunRequest *request,
                                      char *error, size_t error_size) {
     OlmoeSegmentSession *session = (OlmoeSegmentSession *)session_impl;
     if (!session || !request || request->position != session->position)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "OLMoE Segment requires contiguous positions");
     if (request->should_cancel &&
         request->should_cancel(request->cancel_user_data))
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "OLMoE Segment run cancelled");
     OlmoeSegmentEngine *engine = session->engine;
     if (request->output != request->input)
@@ -2217,20 +2217,20 @@ static int olmoe_segment_payload_size(const OlmoeSegmentSession *session,
                                       uint32_t position, size_t *bytes) {
     size_t cells = (size_t)(session->engine->layer_end -
                             session->engine->layer_begin);
-    if (coli_segment_size_mul(cells, 2, &cells) ||
-        coli_segment_size_mul(cells,
+    if (lma_segment_size_mul(cells, 2, &cells) ||
+        lma_segment_size_mul(cells,
                               (size_t)session->engine->model.c.n_heads,
                               &cells) ||
-        coli_segment_size_mul(cells, position, &cells) ||
-        coli_segment_size_mul(cells,
+        lma_segment_size_mul(cells, position, &cells) ||
+        lma_segment_size_mul(cells,
                               (size_t)session->engine->model.c.head_dim,
                               &cells) ||
-        coli_segment_size_mul(cells, sizeof(float), bytes)) return -1;
+        lma_segment_size_mul(cells, sizeof(float), bytes)) return -1;
     return 0;
 }
 
 static uint64_t olmoe_segment_state_hash(const OlmoeSegmentSession *session) {
-    uint64_t hash = COLI_SEGMENT_HASH_INIT;
+    uint64_t hash = LMA_SEGMENT_HASH_INIT;
     size_t row_bytes = (size_t)session->position *
                        session->engine->model.c.head_dim * sizeof(float);
     int heads = session->engine->model.c.n_heads;
@@ -2241,27 +2241,27 @@ static uint64_t olmoe_segment_state_hash(const OlmoeSegmentSession *session) {
         for (int kv = 0; kv < 2; kv++) {
             float *state = kv ? session->V[layer] : session->K[layer];
             for (int head = 0; head < heads; head++)
-                hash = coli_segment_hash_update(hash, state + head * stride,
+                hash = lma_segment_hash_update(hash, state + head * stride,
                                                 row_bytes);
         }
     return hash;
 }
 
 static int olmoe_segment_session_snapshot(
-    void *session_impl, ColiSegmentWriteFn write_fn, void *write_user_data,
+    void *session_impl, LmaSegmentWriteFn write_fn, void *write_user_data,
     char *error, size_t error_size) {
     OlmoeSegmentSession *session = (OlmoeSegmentSession *)session_impl;
     size_t payload_bytes;
     if (!session || olmoe_segment_payload_size(session, session->position,
                                                &payload_bytes))
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "OLMoE snapshot size overflow");
-    ColiSegmentSnapshotHeader header;
-    coli_segment_snapshot_header_init(
+    LmaSegmentSnapshotHeader header;
+    lma_segment_snapshot_header_init(
         &header, "olmoe", session->engine->layer_begin,
         session->engine->layer_end, session->context_tokens, session->position,
         payload_bytes, olmoe_segment_state_hash(session));
-    if (coli_segment_stream_write(write_fn, write_user_data, &header,
+    if (lma_segment_stream_write(write_fn, write_user_data, &header,
                                   sizeof(header), error, error_size)) return -1;
     size_t row_bytes = (size_t)session->position *
                        session->engine->model.c.head_dim * sizeof(float);
@@ -2273,7 +2273,7 @@ static int olmoe_segment_session_snapshot(
         for (int kv = 0; kv < 2; kv++) {
             float *state = kv ? session->V[layer] : session->K[layer];
             for (int head = 0; head < heads; head++)
-                if (coli_segment_stream_write(
+                if (lma_segment_stream_write(
                         write_fn, write_user_data, state + head * stride,
                         row_bytes, error, error_size)) return -1;
         }
@@ -2281,32 +2281,32 @@ static int olmoe_segment_session_snapshot(
 }
 
 static int olmoe_segment_session_restore(
-    void *session_impl, ColiSegmentReadFn read_fn, void *read_user_data,
+    void *session_impl, LmaSegmentReadFn read_fn, void *read_user_data,
     char *error, size_t error_size) {
     OlmoeSegmentSession *session = (OlmoeSegmentSession *)session_impl;
-    ColiSegmentSnapshotHeader header;
-    if (!session || coli_segment_stream_read(read_fn, read_user_data, &header,
+    LmaSegmentSnapshotHeader header;
+    if (!session || lma_segment_stream_read(read_fn, read_user_data, &header,
                                              sizeof(header), error, error_size))
         return -1;
     size_t payload_bytes;
     if (olmoe_segment_payload_size(session, header.position, &payload_bytes) ||
-        coli_segment_snapshot_header_valid(
+        lma_segment_snapshot_header_valid(
             &header, "olmoe", session->engine->layer_begin,
             session->engine->layer_end, session->context_tokens, payload_bytes,
             error, error_size)) return -1;
     unsigned char *payload = payload_bytes ? malloc(payload_bytes) : NULL;
     if (payload_bytes && !payload)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory restoring OLMoE KV");
-    if (coli_segment_stream_read(read_fn, read_user_data, payload, payload_bytes,
+    if (lma_segment_stream_read(read_fn, read_user_data, payload, payload_bytes,
                                  error, error_size)) {
         free(payload);
         return -1;
     }
-    if (coli_segment_hash_update(COLI_SEGMENT_HASH_INIT, payload,
+    if (lma_segment_hash_update(LMA_SEGMENT_HASH_INIT, payload,
                                  payload_bytes) != header.payload_hash) {
         free(payload);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "OLMoE snapshot checksum mismatch");
     }
     size_t row_bytes = (size_t)header.position *
@@ -2329,20 +2329,20 @@ static int olmoe_segment_session_restore(
     return 0;
 }
 
-static const ColiSegmentAdapter olmoe_segment_adapter = {
-    sizeof(ColiSegmentAdapter), COLI_SEGMENT_ABI_VERSION, "olmoe",
+static const LmaSegmentAdapter olmoe_segment_adapter = {
+    sizeof(LmaSegmentAdapter), LMA_SEGMENT_ABI_VERSION, "olmoe",
     olmoe_segment_engine_open, olmoe_segment_engine_destroy,
     olmoe_segment_session_create, olmoe_segment_session_destroy,
     olmoe_segment_session_run, olmoe_segment_session_snapshot,
     olmoe_segment_session_restore, {0}
 };
 
-int coli_olmoe_segment_adapter_register(void) {
-    return coli_segment_adapter_register(&olmoe_segment_adapter);
+int lma_olmoe_segment_adapter_register(void) {
+    return lma_segment_adapter_register(&olmoe_segment_adapter);
 }
-#endif /* COLI_SEGMENT_ADAPTER */
+#endif /* LMA_SEGMENT_ADAPTER */
 
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 /* ---------- engine-owned model Edge adapter --------------------------- */
 
 typedef struct {
@@ -2362,19 +2362,19 @@ static void olmoe_edge_engine_destroy(void *engine_impl) {
 }
 
 static int olmoe_edge_engine_open(
-    void **engine_impl, ColiEdgeCapabilities *capabilities,
-    const ColiEdgeEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaEdgeCapabilities *capabilities,
+    const LmaEdgeEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "invalid OLMoE Edge open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_EDGE_CAP_CPU))
-        return coli_edge_adapter_error(error, error_size,
+        (options->backend_mask & ~LMA_EDGE_CAP_CPU))
+        return lma_edge_adapter_error(error, error_size,
                                        "OLMoE Edge supports CPU only");
     OlmoeEdgeEngine *engine = calloc(1, sizeof(*engine));
     if (!engine)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "out of memory opening OLMoE Edge");
     load_cfg(&engine->model.c, options->model_dir);
     st_init(&engine->model.S, options->model_dir);
@@ -2391,28 +2391,28 @@ static int olmoe_edge_engine_open(
     uint64_t resident = (2u * cells + (uint64_t)config->hidden) * sizeof(float);
     if (options->memory_limit_bytes && resident > options->memory_limit_bytes) {
         olmoe_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "OLMoE Edge exceeds memory limit");
     }
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_EDGE_ABI_VERSION;
-    capabilities->flags = COLI_EDGE_CAP_TOKENIZE |
-                          COLI_EDGE_CAP_DETOKENIZE |
-                          COLI_EDGE_CAP_GREEDY | COLI_EDGE_CAP_LOGITS |
-                          COLI_EDGE_CAP_CPU;
-    coli_edge_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_EDGE_ABI_VERSION;
+    capabilities->flags = LMA_EDGE_CAP_TOKENIZE |
+                          LMA_EDGE_CAP_DETOKENIZE |
+                          LMA_EDGE_CAP_GREEDY | LMA_EDGE_CAP_LOGITS |
+                          LMA_EDGE_CAP_CPU;
+    lma_edge_capability_string(capabilities->engine_id,
                                 sizeof(capabilities->engine_id), "olmoe");
-    coli_edge_capability_string(capabilities->state_schema,
+    lma_edge_capability_string(capabilities->state_schema,
                                 sizeof(capabilities->state_schema),
                                 "olmoe/kv-f32-v1");
-    coli_edge_capability_string(capabilities->numeric_class,
+    lma_edge_capability_string(capabilities->numeric_class,
                                 sizeof(capabilities->numeric_class),
                                 "olmoe/f32-int8/cpu-v1");
-    coli_edge_capability_string(capabilities->tokenizer_class,
+    lma_edge_capability_string(capabilities->tokenizer_class,
                                 sizeof(capabilities->tokenizer_class),
                                 "olmoe/byte-bpe-v1");
-    capabilities->state_dtype = COLI_EDGE_DTYPE_F32;
+    capabilities->state_dtype = LMA_EDGE_DTYPE_F32;
     capabilities->state_width = (uint32_t)config->hidden;
     capabilities->vocab_size = (uint32_t)config->vocab;
     capabilities->max_batch_rows = 128;
@@ -2430,7 +2430,7 @@ static int olmoe_edge_tokenize(
     int32_t *token_ids, size_t token_capacity, size_t *token_count,
     char *error, size_t error_size) {
     OlmoeEdgeEngine *engine = (OlmoeEdgeEngine *)engine_impl;
-    return coli_edge_tok_tokenize(&engine->tokenizer, text, text_bytes,
+    return lma_edge_tok_tokenize(&engine->tokenizer, text, text_bytes,
                                   token_ids, token_capacity, token_count,
                                   error, error_size);
 }
@@ -2440,13 +2440,13 @@ static int olmoe_edge_detokenize(
     char *text, size_t text_capacity, size_t *text_bytes,
     char *error, size_t error_size) {
     OlmoeEdgeEngine *engine = (OlmoeEdgeEngine *)engine_impl;
-    return coli_edge_tok_detokenize(&engine->tokenizer, token_ids, token_count,
+    return lma_edge_tok_detokenize(&engine->tokenizer, token_ids, token_count,
                                     text, text_capacity, text_bytes,
                                     error, error_size);
 }
 
 static int olmoe_edge_embed(void *engine_impl,
-                            const ColiEdgeEmbedRequest *request,
+                            const LmaEdgeEmbedRequest *request,
                             char *error, size_t error_size) {
     OlmoeEdgeEngine *engine = (OlmoeEdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -2454,7 +2454,7 @@ static int olmoe_edge_embed(void *engine_impl,
     for (uint32_t row = 0; row < request->rows; row++) {
         int token = request->token_ids[row];
         if (token < 0 || token >= config->vocab)
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "OLMoE token ID is out of range");
         memcpy(output + (size_t)row * config->hidden,
                engine->model.embed + (size_t)token * config->hidden,
@@ -2464,7 +2464,7 @@ static int olmoe_edge_embed(void *engine_impl,
 }
 
 static int olmoe_edge_select(void *engine_impl,
-                             const ColiEdgeSelectRequest *request,
+                             const LmaEdgeSelectRequest *request,
                              char *error, size_t error_size) {
     OlmoeEdgeEngine *engine = (OlmoeEdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -2475,18 +2475,18 @@ static int olmoe_edge_select(void *engine_impl,
         if (request->should_cancel &&
             request->should_cancel(request->cancel_user_data)) {
             free(logits); free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "OLMoE Edge selection cancelled");
         }
         rmsnorm_row(normalized, input + (size_t)row * config->hidden,
                     engine->model.final_norm, config->hidden, config->eps);
         matmul(logits, normalized, engine->model.lm_head,
                1, config->hidden, config->vocab);
-        if (coli_edge_argmax(logits, (uint32_t)config->vocab,
+        if (lma_edge_argmax(logits, (uint32_t)config->vocab,
                             &request->token_ids[row],
                             request->scores ? &request->scores[row] : NULL)) {
             free(logits); free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "OLMoE Edge head failed");
         }
     }
@@ -2495,7 +2495,7 @@ static int olmoe_edge_select(void *engine_impl,
 }
 
 static int olmoe_edge_logits(void *engine_impl,
-                             const ColiEdgeLogitsRequest *request,
+                             const LmaEdgeLogitsRequest *request,
                              char *error, size_t error_size) {
     OlmoeEdgeEngine *engine = (OlmoeEdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -2505,7 +2505,7 @@ static int olmoe_edge_logits(void *engine_impl,
         if (request->should_cancel &&
             request->should_cancel(request->cancel_user_data)) {
             free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "OLMoE Edge logits cancelled");
         }
         rmsnorm_row(normalized, input + (size_t)row * config->hidden,
@@ -2518,14 +2518,14 @@ static int olmoe_edge_logits(void *engine_impl,
     return 0;
 }
 
-static const ColiEdgeAdapter olmoe_edge_adapter = {
-    sizeof(ColiEdgeAdapter), COLI_EDGE_ABI_VERSION, "olmoe",
+static const LmaEdgeAdapter olmoe_edge_adapter = {
+    sizeof(LmaEdgeAdapter), LMA_EDGE_ABI_VERSION, "olmoe",
     olmoe_edge_engine_open, olmoe_edge_engine_destroy,
     olmoe_edge_tokenize, olmoe_edge_detokenize,
     olmoe_edge_embed, olmoe_edge_select, olmoe_edge_logits, {0}
 };
 
-int coli_olmoe_edge_adapter_register(void) {
-    return coli_edge_adapter_register(&olmoe_edge_adapter);
+int lma_olmoe_edge_adapter_register(void) {
+    return lma_edge_adapter_register(&olmoe_edge_adapter);
 }
-#endif /* COLI_EDGE_ADAPTER */
+#endif /* LMA_EDGE_ADAPTER */

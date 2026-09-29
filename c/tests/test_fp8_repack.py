@@ -22,7 +22,7 @@ shape (nblkO*nblkI==O, where a tensor's block-scale byte count coincides with a
 per-row int8 scale byte count -- GLM-5.2's own self_attn.o_proj.weight
 [6144,16384] is a real instance) used to be refused unconditionally. It is now
 refused only when nothing can resolve it on READ: qt_resolve_fmt's "THE STAMPED
-CASE IS UNCHANGED by this inversion" branch (colibri.c) resolves a STAMPED
+CASE IS UNCHANGED by this inversion" branch (glm52.c) resolves a STAMPED
 tensor at that shape through TRUST-VERIFY-REFUSE, which is the case the stamp
 mechanism was built for; an UNSTAMPED one still resolves to int8-row silently.
 Which tensors are stamp-resolvable is a reader-side fact, not a writer's
@@ -163,7 +163,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_routed_experts_selected_but_never_stamped(self):
         """Routed experts are repacked (they are the bulk of the checkpoint's fp8
-        bytes) but must NEVER appear in the stamp map: colibri.c's three
+        bytes) but must NEVER appear in the stamp map: glm52.c's three
         routed-expert load sites all call qt_resolve_fmt with stamped_name=NULL,
         so a stamp there is written and never read -- and st.h's
         ST_FMT_STAMP_MAX (4096) is sized on exactly that premise, so stamping
@@ -305,7 +305,7 @@ class SelectionTest(unittest.TestCase):
         """#528's invariant, as the mechanism actually states it: a resident
         tensor at the collision shape is EMITTED, and carries the stamp that
         resolves it. qt_resolve_fmt's "THE STAMPED CASE IS UNCHANGED by this
-        inversion" branch (colibri.c) reads such a tensor back as fmt=8 through
+        inversion" branch (glm52.c) reads such a tensor back as fmt=8 through
         TRUST-VERIFY-REFUSE. Nothing here relaxes the unstamped rule -- the
         unstamped polarity is the next test."""
         name = "model.layers.0.self_attn.o_proj.weight"
@@ -320,7 +320,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_ambiguous_shape_still_refused_for_an_unstamped_routed_expert(self):
         """I-4, the half that must NOT widen. A routed expert at the same shape
-        is refused, because nothing can resolve it on read: colibri.c's
+        is refused, because nothing can resolve it on read: glm52.c's
         routed-expert load sites pass stamped_name=NULL, so the reader's
         INVERSION resolves the collision to fmt=1 (int8-row) and every weight is
         silently misread. This is the case the old unconditional refusal was
@@ -411,7 +411,7 @@ class EmissionGateIndependenceTest(unittest.TestCase):
     def test_the_2x2_over_name_kind_and_stamp_state(self):
         """The decisive matrix. ROUTED/STAMPED is the cell that used to leak: a
         stamp on a routed expert is written into __metadata__ and NEVER read
-        (colibri.c:2414/:2612/:2811 all pass stamped_name=NULL), so at the
+        (glm52.c:2414/:2612/:2811 all pass stamped_name=NULL), so at the
         collision shape qt_resolve_fmt's INVERSION resolves it to fmt=1 and every
         weight in that expert is silently misread as int8. Shapes: [2,256] (the
         auditor's) and [2,200] (the validator's) -- both genuine collisions
@@ -479,7 +479,7 @@ class EmissionGateIndependenceTest(unittest.TestCase):
 
     def test_gate_predicate_is_the_EMITTED_qs_length(self):
         """The gate's collision predicate is len(.qs) == O -- what the reader
-        actually counts (ns == O*4 bytes, colibri.c) -- not _nblk(O)*_nblk(I) == O,
+        actually counts (ns == O*4 bytes, glm52.c) -- not _nblk(O)*_nblk(I) == O,
         which coincides with it only because _check_geometry already pinned the
         block shape. That pinning is the selection-side assumption this gate exists
         NOT to depend on. [4,256] has _nblk product 2 != O=4, so the old predicate
@@ -521,7 +521,7 @@ class EmissionGateIndependenceTest(unittest.TestCase):
     def test_catch_all_kind_is_repacked_but_not_stampable(self):
         """classify()'s "q" is a fallback for ANY unmatched name ending .weight,
         so a stamp on such a tensor would rest on a fallback rather than on an
-        audited colibri.c load site. It stays a repack target (it is fp8 and
+        audited glm52.c load site. It stays a repack target (it is fp8 and
         belongs in the container) but is not stampable, which makes both gates
         refuse it at the collision shape instead of emitting it under an
         unverified stamp. The kinds that DO have audited load sites are
@@ -605,7 +605,7 @@ class ResumeAndParamsGuardTest(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.outdir, "config.json")))
 
     def test_metadata_stamp_present_and_correct(self):
-        """End-to-end through the real CLI: __metadata__["colibri.fmt"] must be
+        """End-to-end through the real CLI: __metadata__["lma.fmt"] must be
         present, parse as JSON, and name exactly the selected STAMPABLE tensors
         -- routed experts are in the container but must not be in the stamp map
         -- the real round trip a unit-level rp.repack_shard() call can't
@@ -615,8 +615,8 @@ class ResumeAndParamsGuardTest(unittest.TestCase):
         self.assertEqual(len(outs), 1)
         hdr = _read_header(outs[0])
         self.assertIn("__metadata__", hdr)
-        self.assertIn("colibri.fmt", hdr["__metadata__"])
-        stamp = json.loads(hdr["__metadata__"]["colibri.fmt"])
+        self.assertIn("lma.fmt", hdr["__metadata__"])
+        stamp = json.loads(hdr["__metadata__"]["lma.fmt"])
         self.assertEqual(set(stamp.keys()), STAMPED)
         for name, fmt_name in stamp.items():
             self.assertEqual(fmt_name, rp.FORMAT_NAME, f"{name}: stamped format name mismatch")
@@ -635,7 +635,7 @@ class ResumeAndParamsGuardTest(unittest.TestCase):
         for path in outs:
             meta = _read_header(path)["__metadata__"]
             self.assertIn(rp.CONTAINER_FORMATS_KEY, meta)
-            self.assertEqual(rp.CONTAINER_FORMATS_KEY, "colibri.container.formats")
+            self.assertEqual(rp.CONTAINER_FORMATS_KEY, "lma.container.formats")
             declared = json.loads(meta[rp.CONTAINER_FORMATS_KEY])
             self.assertEqual(declared, ["fp8-e4m3-b128"])
             self.assertTrue(all(isinstance(v, str) for v in meta.values()),
@@ -643,7 +643,7 @@ class ResumeAndParamsGuardTest(unittest.TestCase):
 
     def test_repeated_mint_is_byte_identical(self):
         """Regression test for D1's diagnosis
-        (colibri_lab/reports/D1_MINT_DIVERGENCE_2026-08-18.md): save_file's
+        (lmatomic_lab/reports/D1_MINT_DIVERGENCE_2026-08-18.md): save_file's
         Rust extension does not preserve `__metadata__`'s key order, so two
         independent mints of the SAME checkpoint used to be able to disagree
         byte-for-byte on header bytes alone -- identical tensor payloads,
@@ -693,7 +693,7 @@ class ResumeAndParamsGuardTest(unittest.TestCase):
         a second pass into the SAME outdir with its own out-mtp-fp8pass- prefix,
         its own resume manifest and its own #383-class params sidecar -- so the
         two passes cannot be mistaken for resumes of each other. The engine
-        detects MTP by tensor NAME (colibri.c's has_mtp probe over
+        detects MTP by tensor NAME (glm52.c's has_mtp probe over
         model.layers.<n_layers>.*), not by filename."""
         mtp_shard = os.path.join(self.indir, "model-00002-of-00002.safetensors")
         torch.manual_seed(11)
@@ -717,7 +717,7 @@ class ResumeAndParamsGuardTest(unittest.TestCase):
         self.assertIn("model.layers.5.mlp.experts.0.gate_proj.weight", hdr)
         self.assertIn("model.layers.5.eh_proj.weight", hdr)
         self.assertNotIn("model.layers.0.self_attn.o_proj.weight", hdr)
-        stamp = json.loads(hdr["__metadata__"]["colibri.fmt"])
+        stamp = json.loads(hdr["__metadata__"]["lma.fmt"])
         self.assertIn("model.layers.5.self_attn.o_proj.weight", stamp)
         self.assertNotIn("model.layers.5.mlp.experts.0.gate_proj.weight", stamp)
         # both passes coexist in one outdir: separate manifests, separate guards
@@ -1037,8 +1037,8 @@ class CanonicalizerSlotFitTest(unittest.TestCase):
         # canonicalizer's json.dumps re-escapes it to \\uXXXX, inflating the
         # header past its slot.
         save_file({"w": torch.zeros(4, 4)}, self.path,
-                  metadata={"colibri.fmt": '{"pésééééééé": "x"}',
-                            "colibri.container.formats": '["fp8-e4m3-b128"]'})
+                  metadata={"lma.fmt": '{"pésééééééé": "x"}',
+                            "lma.container.formats": '["fp8-e4m3-b128"]'})
 
     def tearDown(self):
         self.tmp.cleanup()

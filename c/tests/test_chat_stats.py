@@ -1,7 +1,7 @@
 """#1475: the chat footer is a rendering of measured generation statistics,
 not a hard-coded line. gen_stats() takes the server's exact completion_tokens
 when it sent them and falls back to the chars/4 estimate; render_gen_stats()
-lays the result out per --stats mode (COLI_CHAT_STATS sets the default)."""
+lays the result out per --stats mode (LMA_CHAT_STATS sets the default)."""
 import importlib.machinery
 import importlib.util
 import os
@@ -10,15 +10,15 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-CLI = Path(__file__).resolve().parent.parent / "coli"
+CLI = Path(__file__).resolve().parent.parent / "lmatomic"
 
 
 def load_cli():
-    loader = importlib.machinery.SourceFileLoader("coli_stats_t", str(CLI))
+    loader = importlib.machinery.SourceFileLoader("lma_stats_t", str(CLI))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     argv = sys.argv
-    sys.argv = ["coli"]
+    sys.argv = ["lmatomic"]
     try:
         loader.exec_module(module)
     finally:
@@ -63,16 +63,16 @@ class ChatStatsTest(unittest.TestCase):
     def test_mode_resolution(self):
         m = self.m
         self.assertEqual(m.chat_stats_mode(SimpleNamespace(stats="compact")), "compact")
-        old = os.environ.get("COLI_CHAT_STATS")
+        old = os.environ.get("LMA_CHAT_STATS")
         try:
-            os.environ["COLI_CHAT_STATS"] = "off"
+            os.environ["LMA_CHAT_STATS"] = "off"
             self.assertEqual(m.chat_stats_mode(SimpleNamespace(stats=None)), "off")
             self.assertEqual(m.chat_stats_mode(SimpleNamespace(stats="full")), "full")   # the flag wins
-            os.environ["COLI_CHAT_STATS"] = "bogus"
+            os.environ["LMA_CHAT_STATS"] = "bogus"
             self.assertEqual(m.chat_stats_mode(SimpleNamespace()), "full")
         finally:
-            if old is None: os.environ.pop("COLI_CHAT_STATS", None)
-            else: os.environ["COLI_CHAT_STATS"] = old
+            if old is None: os.environ.pop("LMA_CHAT_STATS", None)
+            else: os.environ["LMA_CHAT_STATS"] = old
 
 
 if __name__ == "__main__":

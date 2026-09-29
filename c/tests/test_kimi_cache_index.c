@@ -1,7 +1,7 @@
 /* Model-free regression for Kimi K3's expert -> slot index and ws[] promotion.
  * Synthetic pointers prove that swapping a loaded working slot still recycles
  * the victim allocation; no checkpoint or substantial memory is involved. */
-#define COLI_CACHE_INDEX_TEST 1
+#define LMA_CACHE_INDEX_TEST 1
 #define main kimi_k3_main_unused
 #include "../kimi_k3.c"
 #undef main

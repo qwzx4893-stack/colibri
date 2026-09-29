@@ -14,8 +14,8 @@
  * No model file needed: exercises argmax_v / dist_build / dist_sample directly. */
 #include <assert.h>
 #include <math.h>
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 static int approx1(double x){ return x > 0.999 && x < 1.001; }

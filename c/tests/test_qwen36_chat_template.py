@@ -15,7 +15,7 @@ verde sarebbe peggio che non averlo -- percio' un salto esce con codice 2,
 distinto dallo 0 di un confronto riuscito.
 
 RIFERIMENTO (scaricato 2026-09-10):
-  repo     Qwen/Qwen3.6-35B-A3B      (repo vendor; il container colibri dava 404)
+  repo     Qwen/Qwen3.6-35B-A3B      (repo vendor; il container lmatomic dava 404)
   file     chat_template.jinja
   sha256   e84f32a23fdda27689f868aa4a1a5621f41133e51a48d7f3efcbea2839574259
   hf download Qwen/Qwen3.6-35B-A3B chat_template.jinja

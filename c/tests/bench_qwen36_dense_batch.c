@@ -66,7 +66,7 @@ static int shared_benchmark(void) {
 }
 
 int main(void) {
-    unsetenv("COLI_DENSE_I8");
+    unsetenv("LMA_DENSE_I8");
     float *x=falloc((int64_t)S*I),*a=falloc((int64_t)S*O),*b=falloc((int64_t)S*O);
     int8_t *q=malloc((size_t)O*I);float *sc=falloc(O);
     if(!q){fputs("OOM qwen dense benchmark\n",stderr);return 2;}

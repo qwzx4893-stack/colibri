@@ -13,7 +13,7 @@ int main(void) {
         {64,64,0,49152,98304,2},
         {96,2048,64,385024,770047,1},
     };
-    setenv("COLI_CUDA","1",1); setenv("COLI_GPUS","0",1);
+    setenv("LMA_CUDA","1",1); setenv("LMA_GPUS","0",1);
     setenv("QT_NO_WARMSTART","1",1); setenv("HEAT_FILE","",1);
     for(size_t i=0;i<sizeof cases/sizeof *cases;i++) {
         char gb[64];snprintf(gb,sizeof gb,"%.17g",cases[i].budget/1073741824.0);

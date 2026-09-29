@@ -5,8 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 static int fail(const char *s){ fprintf(stderr,"FAIL: %s\n",s); return 1; }
@@ -54,17 +54,17 @@ static int test_expert_layout(int fd){
     uring_batch_reset(&batch);
     int li=uring_load_add(&batch,&m,1,7,&slot,1);
     if(li!=0 || uring_submit_batch(&batch) || uring_finalize_load(&batch,li,1)){
-        coli_uring_close(&batch.ring); free(m.S.t); return fail("expert batch load");
+        lma_uring_close(&batch.ring); free(m.S.t); return fail("expert batch load");
     }
     int bad=!expert_slot_matches(&slot,data,scales,7);
-    coli_uring_close(&batch.ring);
+    lma_uring_close(&batch.ring);
     compat_aligned_free(slot.slab); free(slot.fslab);
     if(bad){ for(int i=0;i<m.S.n;i++) free(m.S.t[i].name); free(m.S.t); return fail("expert tensor views"); }
 
     /* #1165: a real second fd with different bytes proves URING reads the
      * routed replica. The completion counters and request source also make the
      * PROF/DROP contract observable without requiring two physical SSDs. */
-    char mirror_path[]="/tmp/coli-uring-mirror-XXXXXX";
+    char mirror_path[]="/tmp/lmatomic-uring-mirror-XXXXXX";
     int mirror_fd=mkstemp(mirror_path);
     if(mirror_fd<0){ free(m.S.t); return fail("mirror mkstemp"); }
     unlink(mirror_path);
@@ -97,7 +97,7 @@ static int test_expert_layout(int fd){
     for(int i=0;i<mirror_batch.nreq;i++)
         if(mirror_batch.req[i].fd!=mirror_fd || mirror_batch.req[i].rep!=1)
             bad=1;
-    coli_uring_close(&mirror_batch.ring);
+    lma_uring_close(&mirror_batch.ring);
     compat_aligned_free(mirror_slot.slab); free(mirror_slot.fslab);
     if(bad) return fail("mirror routing/accounting");
 
@@ -121,7 +121,7 @@ static int test_expert_layout(int fd){
     for(int i=0;i<fallback_batch.nreq;i++)
         if(fallback_batch.req[i].fd!=fd || fallback_batch.req[i].rep!=0)
             bad=1;
-    coli_uring_close(&fallback_batch.ring);
+    lma_uring_close(&fallback_batch.ring);
     compat_aligned_free(fallback_slot.slab); free(fallback_slot.fslab);
     if(bad) return fail("mirror runtime fallback");
     m.S.nrep=0; m.S.mfds[0][0]=-1; m.S.mdfds[0][0]=-1;
@@ -140,7 +140,7 @@ static int test_expert_layout(int fd){
     pilot_uring_batch(&m);
     bad=m.ecn[1]!=1 || m.ecache[1][0].eid!=7 || g_pilot_inflight[1]!=0
         || atomic_load(&g_pilot_loads)!=1 || atomic_load(&g_pilot_drops)!=0;
-    coli_uring_close(&g_ub_pilot.ring);
+    lma_uring_close(&g_ub_pilot.ring);
     compat_aligned_free(m.ecache[1][0].slab); free(m.ecache[1][0].fslab);
     free(m.ecache[1]);
     free(m.pin); free(m.npin); free(m.ecache); free(m.ecn);
@@ -150,7 +150,7 @@ static int test_expert_layout(int fd){
 }
 
 int main(void){
-    char path[]="/tmp/coli-uring-XXXXXX";
+    char path[]="/tmp/lmatomic-uring-XXXXXX";
     int fd=mkstemp(path); if(fd<0) return fail("mkstemp");
     unlink(path);
     enum { N=4, SZ=4096 };
@@ -160,40 +160,40 @@ int main(void){
         for(int j=0;j<SZ;j++) src[i][j]=(unsigned char)(i*37+j);
         if(pwrite(fd,src[i],SZ,(off_t)i*SZ)!=SZ){ close(fd); return fail("pwrite fixture"); }
     }
-    ColiUring ring;
-    if(coli_uring_init(&ring,8)){
+    LmaUring ring;
+    if(lma_uring_init(&ring,8)){
         if(errno==EPERM || errno==ENOSYS || errno==EACCES){
             printf("test_uring: skipped (%s)\n",strerror(errno)); close(fd); return 0;
         }
         close(fd); return fail("io_uring_setup");
     }
-    if(coli_uring_set_workers(&ring,4)){
-        coli_uring_close(&ring); close(fd); return fail("io-wq worker limit");
+    if(lma_uring_set_workers(&ring,4)){
+        lma_uring_close(&ring); close(fd); return fail("io-wq worker limit");
     }
-    for(int i=0;i<N;i++) if(coli_uring_prep_read(&ring,fd,dst[i],SZ,(off_t)i*SZ,(uint64_t)i+1)){
-        coli_uring_close(&ring); close(fd); return fail("prepare read");
+    for(int i=0;i<N;i++) if(lma_uring_prep_read(&ring,fd,dst[i],SZ,(off_t)i*SZ,(uint64_t)i+1)){
+        lma_uring_close(&ring); close(fd); return fail("prepare read");
     }
-    if(coli_uring_enter(&ring,0)<0){ coli_uring_close(&ring); close(fd); return fail("submit"); }
+    if(lma_uring_enter(&ring,0)<0){ lma_uring_close(&ring); close(fd); return fail("submit"); }
     int seen[N]={0},complete=0;
     while(complete<N){
         struct io_uring_cqe cqe; int reaped=0;
-        while(coli_uring_peek(&ring,&cqe)){
+        while(lma_uring_peek(&ring,&cqe)){
             reaped=1;
             if(cqe.user_data<1 || cqe.user_data>N || cqe.res!=SZ){
-                coli_uring_close(&ring); close(fd); return fail("bad completion");
+                lma_uring_close(&ring); close(fd); return fail("bad completion");
             }
             int i=(int)cqe.user_data-1;
-            if(seen[i]++){ coli_uring_close(&ring); close(fd); return fail("duplicate completion"); }
+            if(seen[i]++){ lma_uring_close(&ring); close(fd); return fail("duplicate completion"); }
             complete++;
         }
-        if(!reaped && complete<N && coli_uring_enter(&ring,1)<0){
-            coli_uring_close(&ring); close(fd); return fail("completion wait");
+        if(!reaped && complete<N && lma_uring_enter(&ring,1)<0){
+            lma_uring_close(&ring); close(fd); return fail("completion wait");
         }
     }
     for(int i=0;i<N;i++) if(memcmp(src[i],dst[i],SZ)){
-        coli_uring_close(&ring); close(fd); return fail("read data mismatch");
+        lma_uring_close(&ring); close(fd); return fail("read data mismatch");
     }
-    coli_uring_close(&ring);
+    lma_uring_close(&ring);
     if(ftruncate(fd,0) || test_expert_layout(fd)){ close(fd); return 1; }
     close(fd);
     puts("test_uring: ok"); return 0;

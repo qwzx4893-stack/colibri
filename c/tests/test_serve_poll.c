@@ -1,4 +1,4 @@
-/* coli_serve_stdin_ready: la guardata a stdin che rende possibile un CANCEL a
+/* lma_serve_stdin_ready: la guardata a stdin che rende possibile un CANCEL a
  * meta' turno (#1332).
  *
  * La proprieta' pericolosa e' una sola, e questo test esiste per quella: la
@@ -53,7 +53,7 @@ int main(void) {
     /* ---- 1. pipe vuota: niente da leggere, e SUBITO ---- */
     struct timespec t0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    int ready = coli_serve_stdin_ready();
+    int ready = lma_serve_stdin_ready();
     double elapsed = seconds_since(t0);
     check(ready == 0, "pipe vuota: non deve esserci niente da leggere");
     check(elapsed < 0.25,
@@ -64,7 +64,7 @@ int main(void) {
     const char *command = "CANCEL r1\n";
     if (write(pipefd[1], command, strlen(command)) < 0) { perror("write"); return 1; }
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    ready = coli_serve_stdin_ready();
+    ready = lma_serve_stdin_ready();
     elapsed = seconds_since(t0);
     check(ready == 1, "con un comando in coda deve dire che stdin e' pronto");
     check(elapsed < 0.25, "anche con dati pronti la chiamata deve tornare subito");
@@ -74,12 +74,12 @@ int main(void) {
     if (!fgets(line, sizeof(line), stdin)) { printf("  FAIL: fgets non legge\n"); return 1; }
     check(strncmp(line, "CANCEL r1", 9) == 0, "la riga letta non e' quella scritta");
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    check(coli_serve_stdin_ready() == 0, "dopo il consumo la pipe deve tornare vuota");
+    check(lma_serve_stdin_ready() == 0, "dopo il consumo la pipe deve tornare vuota");
     check(seconds_since(t0) < 0.25, "la chiamata su pipe svuotata deve tornare subito");
 
     /* ---- 4. chiusura in scrittura: pronto (una lettura darebbe EOF) ---- */
     close(pipefd[1]);
-    check(coli_serve_stdin_ready() == 1,
+    check(lma_serve_stdin_ready() == 1,
           "una pipe chiusa e' 'pronta': la lettura ritorna EOF, e il chiamante "
           "deve poterlo vedere invece di restare appeso");
 

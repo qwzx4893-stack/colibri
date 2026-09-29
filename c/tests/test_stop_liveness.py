@@ -1,20 +1,20 @@
-"""#1049: `coli stop` must actually find a live serve, on every platform.
+"""#1049: `lmatomic stop` must actually find a live serve, on every platform.
 
 The bug these cover: `os.kill(pid, 0)` is the POSIX liveness idiom, but on
 Windows os.kill() has no signal semantics and raises OSError [WinError 87] for
 a pid the caller did not spawn. cmd_stop swallowed that as "not running", so
-`coli stop` reported "nothing running" while the port was still LISTENING and
+`lmatomic stop` reported "nothing running" while the port was still LISTENING and
 ~5 GB of engines were resident.
 """
 import importlib.machinery, importlib.util, os, subprocess, sys, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-COLI = os.path.join(os.path.dirname(HERE), "coli")
+LMATOMIC = os.path.join(os.path.dirname(HERE), "lmatomic")
 
 
 def load_coli():
-    loader = importlib.machinery.SourceFileLoader("coli_mod", COLI)
-    spec = importlib.util.spec_from_loader("coli_mod", loader)
+    loader = importlib.machinery.SourceFileLoader("lma_mod", LMATOMIC)
+    spec = importlib.util.spec_from_loader("lma_mod", loader)
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
     return mod
@@ -22,29 +22,29 @@ def load_coli():
 
 class StopLivenessTest(unittest.TestCase):
     def setUp(self):
-        self.coli = load_coli()
+        self.lmatomic = load_coli()
 
     def test_probe_exists(self):
         """cmd_stop must not use the raw POSIX idiom for liveness."""
-        self.assertTrue(hasattr(self.coli, "_pid_alive"))
-        with open(COLI, encoding="utf-8") as f: src = f.read()
+        self.assertTrue(hasattr(self.lmatomic, "_pid_alive"))
+        with open(LMATOMIC, encoding="utf-8") as f: src = f.read()
         stop = src[src.index("def cmd_stop("):]
         stop = stop[:stop.index("\ndef ")]
         self.assertNotIn("os.kill(pid,0)", stop)
         self.assertIn("_pid_alive(pid)", stop)
 
     def test_self_is_alive(self):
-        self.assertTrue(self.coli._pid_alive(os.getpid()))
+        self.assertTrue(self.lmatomic._pid_alive(os.getpid()))
 
     def test_reaped_child_is_not_alive(self):
         """A process we started and waited on must read as dead."""
         p = subprocess.Popen([sys.executable, "-c", "pass"])
         p.wait()
-        self.assertFalse(self.coli._pid_alive(p.pid))
+        self.assertFalse(self.lmatomic._pid_alive(p.pid))
 
     def test_sigkill_lookup_is_guarded(self):
         """signal.SIGKILL is absent on win32 and AttributeError is not OSError."""
-        with open(COLI, encoding="utf-8") as f: src = f.read()
+        with open(LMATOMIC, encoding="utf-8") as f: src = f.read()
         stop = src[src.index("def cmd_stop("):]
         stop = stop[:stop.index("\ndef ")]
         # the *call* must not name it directly; the explanatory comment may.

@@ -123,11 +123,11 @@ static void test_malformed_submit_cannot_become_a_control(void)
 
 static void test_max_tokens_is_a_ceiling(void)
 {
-    /* coli chat sends interactive_max_output=16384 against K3_MAXT=8192. */
-    assert(coli_serve_budget(2,16384,8192,0)==8190);
-    assert(coli_serve_budget(100,50,8192,0)==50);
-    assert(coli_serve_budget(8192,1,8192,0)==-1);
-    assert(coli_serve_budget(8192,0,8192,1)==0);
+    /* lmatomic chat sends interactive_max_output=16384 against K3_MAXT=8192. */
+    assert(lma_serve_budget(2,16384,8192,0)==8190);
+    assert(lma_serve_budget(100,50,8192,0)==50);
+    assert(lma_serve_budget(8192,1,8192,0)==-1);
+    assert(lma_serve_budget(8192,0,8192,1)==0);
 }
 
 int main(void)

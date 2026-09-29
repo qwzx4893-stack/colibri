@@ -2,7 +2,7 @@
 # arm64 macOS. (An earlier version of this header claimed GNU-ld --wrap as a
 # hard dependency; nothing here has used --wrap for a while, and macOS
 # portability rides compat.h: posix_fadvise -> F_RDADVISE, O_DIRECT ->
-# F_NOCACHE.) The parent Makefile gates COLI_V4_SUPPORTED.
+# F_NOCACHE.) The parent Makefile gates LMA_V4_SUPPORTED.
 
 ifeq ($(OS),Windows_NT)
 IS_WIN := 1
@@ -29,20 +29,20 @@ endif
 endif
 endif
 
-COLI_V4_OK :=
+LMA_V4_OK :=
 ifeq ($(IS_WIN),1)
-COLI_V4_OK := 1
+LMA_V4_OK := 1
 else ifeq ($(UNAME_S),Linux)
 ifneq (,$(filter x86_64 amd64 aarch64 arm64,$(UNAME_M)))
-COLI_V4_OK := 1
+LMA_V4_OK := 1
 endif
 else ifeq ($(UNAME_S),Darwin)
 ifneq (,$(filter arm64,$(UNAME_M)))
-COLI_V4_OK := 1
+LMA_V4_OK := 1
 endif
 endif
 
-ifneq ($(COLI_V4_OK),1)
+ifneq ($(LMA_V4_OK),1)
 $(error Makefile.deepseek-v4 supports x86-64/aarch64 Linux, Windows/MSYS2, and arm64 macOS)
 endif
 
@@ -52,10 +52,10 @@ ARCH ?= x86-64-v3
 CFLAGS = -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -O3 -march=$(ARCH) -fopenmp \
 	-include pthread.h -Wall -Wextra -Wno-unused-parameter \
 	-Wno-misleading-indentation -Wno-unused-function \
-	-DCOLI_V4_MAX_PIN_SLOTS_PER_LAYER=16 \
-	-DCOLI_V4_PIN_RAMP_REQUESTS=24 \
-	-DCOLI_V4_GPU_TIER \
-	-DCOLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
+	-DLMA_V4_MAX_PIN_SLOTS_PER_LAYER=16 \
+	-DLMA_V4_PIN_RAMP_REQUESTS=24 \
+	-DLMA_V4_GPU_TIER \
+	-DLMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
 LDFLAGS = -lm -fopenmp -static -pthread
 V4_BINARY := deepseek_v4.exe
 V4_WIN_EXTRA_OBJS = backend_loader_dsv4.o
@@ -95,9 +95,9 @@ endif
 CFLAGS = -D_GNU_SOURCE -O3 $(OMPC) -pthread -include pthread.h \
 	-Wall -Wextra -Wno-unused-parameter \
 	-Wno-misleading-indentation -Wno-unused-function \
-	-DCOLI_V4_MAX_PIN_SLOTS_PER_LAYER=16 \
-	-DCOLI_V4_PIN_RAMP_REQUESTS=24 \
-	-DCOLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
+	-DLMA_V4_MAX_PIN_SLOTS_PER_LAYER=16 \
+	-DLMA_V4_PIN_RAMP_REQUESTS=24 \
+	-DLMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
 LDFLAGS = -lm $(OMPL) -pthread
 V4_BINARY := deepseek_v4
 else
@@ -106,9 +106,9 @@ ARCH ?= native
 CFLAGS = -D_GNU_SOURCE -O3 -march=$(ARCH) -fopenmp -pthread -include pthread.h \
 	-Wall -Wextra -Wno-unused-parameter \
 	-Wno-misleading-indentation -Wno-unused-function \
-	-DCOLI_V4_MAX_PIN_SLOTS_PER_LAYER=16 \
-	-DCOLI_V4_PIN_RAMP_REQUESTS=24 \
-	-DCOLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
+	-DLMA_V4_MAX_PIN_SLOTS_PER_LAYER=16 \
+	-DLMA_V4_PIN_RAMP_REQUESTS=24 \
+	-DLMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
 LDFLAGS = -lm -fopenmp -pthread
 V4_BINARY := deepseek_v4
 V4_WIN_EXTRA_OBJS =
@@ -125,7 +125,7 @@ LDFLAGS += -flto
 endif
 
 # ---- Linux/macOS CUDA tier (opt-in): CUDA=1 ---------------------------------
-# On Windows the tier lives in coli_cuda_dsv4*.dll, resolved at runtime by
+# On Windows the tier lives in lma_cuda_dsv4*.dll, resolved at runtime by
 # backend_loader_dsv4.o. Elsewhere there is no loader: the same
 # backend_cuda_dsv4.cu is compiled by nvcc and linked straight into the
 # engine, so the dsv4_cuda_* symbols are the real ones. Defaults to the
@@ -152,7 +152,7 @@ DEEPGEMM_PIN ?= 39fb4447a062b418fd08ce17cd308adb28559417
 DEEPGEMM_STAMP = $(DEEPGEMM_HOME)/deep_gemm/include/deep_gemm/impls/sm120_bf16_gemm.cuh
 V4_DEEPGEMM_DEP = $(DEEPGEMM_STAMP)
 V4_CUDA_GENCODE = -gencode arch=compute_120a,code=sm_120a
-V4_DEEPGEMM_FLAGS = -DCOLI_DSV4_DEEPGEMM \
+V4_DEEPGEMM_FLAGS = -DLMA_DSV4_DEEPGEMM \
                 -I$(DEEPGEMM_HOME)/deep_gemm/include -I$(DEEPGEMM_HOME)/cutlass/include \
                 -I$(DEEPGEMM_HOME)/third-party/cutlass/include
 else
@@ -193,15 +193,15 @@ else
 V4_CUDA_GENCODE = -arch=$(CUDA_ARCH)
 endif
 endif
-# NO_TC=1 adds -DCOLI_DSV4_NO_TC: builds on toolkits older than 12.8 that lack
+# NO_TC=1 adds -DLMA_DSV4_NO_TC: builds on toolkits older than 12.8 that lack
 # the cuBLASLt block-scaling APIs (opt-in DSV4_CUDA_TC path is compiled out).
 NO_TC ?= 0
 ifeq ($(NO_TC),1)
-V4_DEEPGEMM_FLAGS += -DCOLI_DSV4_NO_TC
+V4_DEEPGEMM_FLAGS += -DLMA_DSV4_NO_TC
 endif
 V4_NVCCFLAGS = -O3 -std=c++20 --expt-relaxed-constexpr --expt-extended-lambda -Xcompiler=-fPIC \
                $(V4_CUDA_GENCODE) $(V4_DEEPGEMM_FLAGS)
-CFLAGS += -DCOLI_V4_GPU_TIER
+CFLAGS += -DLMA_V4_GPU_TIER
 V4_WIN_EXTRA_OBJS += backend_cuda_dsv4.o
 # libcuda (driver API, TMA descriptors) is linked from the toolkit stubs: the
 # driver package (and WSL2's /usr/lib/wsl/lib) ships libcuda.so.1 but often no
@@ -216,16 +216,16 @@ include Makefile.deepseek-v4.units
 
 TARGET_OBJS = $(addsuffix .o,$(V4_TARGET_UNITS))
 TEST_UNIT_OBJS = $(addsuffix .o,$(V4_TEST_UNITS))
-V4_HOT_TEST_OBJ = COLI_V4_UNIT_EXPERT_STORE_HOT_ROWS16_TEST.o
-V4_BATCH_TEST_OBJ = COLI_V4_UNIT_NATIVE_QUANT_BATCH_TEST.o
+V4_HOT_TEST_OBJ = LMA_V4_UNIT_EXPERT_STORE_HOT_ROWS16_TEST.o
+V4_BATCH_TEST_OBJ = LMA_V4_UNIT_NATIVE_QUANT_BATCH_TEST.o
 V4_OBJS = $(TARGET_OBJS) $(V4_WIN_EXTRA_OBJS) $(REGISTRY_OBJ)
 REGISTRY_OBJ = expert_store_registry.o
 V4_SERVE_TEST := tests/test_v4_serve_framing$(if $(IS_WIN),.exe,)
-V4_SERVE_TEST_OBJS := $(filter-out COLI_V4_UNIT_GENERATE_STATS.o,$(V4_OBJS))
+V4_SERVE_TEST_OBJS := $(filter-out LMA_V4_UNIT_GENERATE_STATS.o,$(V4_OBJS))
 
 # The objects are named after the unit, not after the flags they were built
 # with, and three builds share them: this engine (CUDA=1 adds
-# -DCOLI_V4_GPU_TIER), the parent's test-c (no GPU tier) and its test-asan
+# -DLMA_V4_GPU_TIER), the parent's test-c (no GPU tier) and its test-asan
 # (EXTRA_CFLAGS). Timestamps cannot tell those apart, so make would report
 # "is up to date" and link one build's objects into another (#1702). The
 # compiler line is recorded here and rewritten only when it changes; every
@@ -242,7 +242,7 @@ FORCE:
 
 # The same defect one level down. backend_cuda_dsv4.o is named after its source,
 # but what it contains comes from $(NVCC) $(V4_NVCCFLAGS): -arch=$(CUDA_ARCH)
-# (or the -gencode preset), the -DCOLI_DSV4_NO_TC guard and the DeepGEMM defines
+# (or the -gencode preset), the -DLMA_DSV4_NO_TC guard and the DeepGEMM defines
 # all arrive through it. $(CFLAGS) above does not cover it, so without this:
 #
 #   make -f Makefile.deepseek-v4 deepseek-v4 CUDA=1 CUDA_ARCH=sm_86
@@ -281,7 +281,7 @@ $(V4_BINARY): $(V4_OBJS)
 	$(CC) $(V4_OBJS) -o $@ $(LDFLAGS)
 
 # Pluggable expert-store backend registry (standalone; not a deepseek_v4.c unit).
-# Linked into the binary so the engine can dispatch COLI_EXPERT_STORE backends.
+# Linked into the binary so the engine can dispatch LMA_EXPERT_STORE backends.
 $(REGISTRY_OBJ): expert_store_registry.c expert_store_registry.h expert_store.h \
 	$(V4_FLAGS_STAMP)
 	$(CC) $(CFLAGS) -c expert_store_registry.c -o $@
@@ -296,22 +296,22 @@ $(TARGET_OBJS) $(TEST_UNIT_OBJS): %.o: deepseek_v4.c moe_router.h deepseek_v4.h 
 $(V4_HOT_TEST_OBJ): deepseek_v4.c moe_router.h deepseek_v4.h deepseek_v4_internal.h \
 		st.h json.h compat.h tensor.h quant.h fp8_format.h route_trace.h sse41_kernels.h \
 		native_quant.h native_quant_fp4_rows16.h expert_store_registry.h $(V4_FLAGS_STAMP)
-	$(CC) $(CFLAGS) -DCOLI_V4_TEST_HOOKS \
-		-DCOLI_V4_UNIT_EXPERT_STORE_HOT_ROWS16 -c deepseek_v4.c -o $@
+	$(CC) $(CFLAGS) -DLMA_V4_TEST_HOOKS \
+		-DLMA_V4_UNIT_EXPERT_STORE_HOT_ROWS16 -c deepseek_v4.c -o $@
 
 $(V4_BATCH_TEST_OBJ): deepseek_v4.c moe_router.h deepseek_v4.h deepseek_v4_internal.h \
 		tensor.h quant.h fp8_format.h native_quant.h native_quant_batch.h $(V4_FLAGS_STAMP) sse41_kernels.h
-	$(CC) $(CFLAGS) -DCOLI_V4_TEST_HOOKS \
-		-DCOLI_V4_UNIT_NATIVE_QUANT_BATCH -c deepseek_v4.c -o $@
+	$(CC) $(CFLAGS) -DLMA_V4_TEST_HOOKS \
+		-DLMA_V4_UNIT_NATIVE_QUANT_BATCH -c deepseek_v4.c -o $@
 
-COLI_V4_UNIT_GENERATE_STATS.o: serve_codec.h
+LMA_V4_UNIT_GENERATE_STATS.o: serve_codec.h
 
 $(V4_SERVE_TEST): tests/test_v4_serve_framing.c deepseek_v4.c moe_router.h deepseek_v4.h \
 		deepseek_v4_internal.h serve_codec.h $(V4_SERVE_TEST_OBJS)
 	$(CC) $(CFLAGS) $< $(V4_SERVE_TEST_OBJS) -o $@ $(LDFLAGS)
 
 # The CUDA tier loader object. Compiled only on Windows, where it is appended
-# to V4_OBJS and resolves the MSVC-built coli_cuda_dsv4.dll at runtime. On
+# to V4_OBJS and resolves the MSVC-built lma_cuda_dsv4.dll at runtime. On
 # Linux it is empty so the engine links without it.
 backend_loader_dsv4.o: backend_loader_dsv4.c backend_cuda_dsv4.h $(V4_FLAGS_STAMP)
 	$(CC) $(CFLAGS) -c backend_loader_dsv4.c -o $@

@@ -31,7 +31,7 @@ Fewer forwards also means less LRU churn, which compounds with cache hit rate.
 ## Usage
 
 ```bash
-GRAMMAR=fit.gbnf COLI_TEMP=0 PROMPT="..." ./colibri 64 4 8
+GRAMMAR=fit.gbnf LMA_TEMP=0 PROMPT="..." ./glm52 64 4 8
 ```
 
 - `GRAMMAR=<file.gbnf>` — arm the draft source with a grammar. Byte-level GBNF
@@ -76,7 +76,7 @@ keys, separators, quotes and enum bodies force everything. Two practical levers:
 
 ## Prior art
 
-The umbrella idea is not colibri's: **jump-forward decoding** (SGLang;
+The umbrella idea is not LM Atomic's: **jump-forward decoding** (SGLang;
 [XGrammar](https://arxiv.org/abs/2411.15100)) skips grammar-deterministic tokens by
 *constraining output*, and Outlines' coalescence does the analogous FSM move. What
 this implementation adds: forced spans as a **draft source verified in the target's

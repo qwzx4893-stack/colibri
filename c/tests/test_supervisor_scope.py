@@ -40,7 +40,7 @@ class SupervisorScopeTests(unittest.TestCase):
                         break
                     time.sleep(0.02)
                 env = os.environ.copy()
-                env.update({"COLI_MODEL": str(own_dir), "TOTAL_SHARDS": "0"})
+                env.update({"LMA_MODEL": str(own_dir), "TOTAL_SHARDS": "0"})
                 result = subprocess.run(
                     ["bash", str(SUPERVISOR)], cwd=C_DIR, env=env,
                     text=True, capture_output=True, timeout=10, check=False,

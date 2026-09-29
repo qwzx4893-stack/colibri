@@ -42,14 +42,14 @@ static int memory_read(void *user_data, void *data, size_t size) {
 }
 
 static int register_all(void) {
-    return coli_glm_segment_adapter_register() ||
-           coli_glm53_segment_adapter_register() ||
-           coli_inkling_segment_adapter_register() ||
-           coli_kimi_segment_adapter_register() ||
-           coli_olmoe_segment_adapter_register() ||
-           coli_qwen36_segment_adapter_register() ||
-           coli_qwen38_segment_adapter_register() ||
-           coli_deepseek_v4_segment_adapter_register();
+    return lma_glm_segment_adapter_register() ||
+           lma_glm53_segment_adapter_register() ||
+           lma_inkling_segment_adapter_register() ||
+           lma_kimi_segment_adapter_register() ||
+           lma_olmoe_segment_adapter_register() ||
+           lma_qwen36_segment_adapter_register() ||
+           lma_qwen38_segment_adapter_register() ||
+           lma_deepseek_v4_segment_adapter_register();
 }
 
 static int close_enough(const float *left, const float *right, size_t count,
@@ -74,68 +74,68 @@ static int close_enough(const float *left, const float *right, size_t count,
 
 static int open_engine_limited(const char *family,const char *model_dir,
                        uint32_t begin,uint32_t end,uint32_t context,
-                       uint64_t memory_limit,ColiSegmentEngine **engine,
-                       ColiSegmentCapabilities *capabilities,
+                       uint64_t memory_limit,LmaSegmentEngine **engine,
+                       LmaSegmentCapabilities *capabilities,
                        char *error,size_t error_size) {
-    ColiSegmentEngineOptions options = {
+    LmaSegmentEngineOptions options = {
         .struct_size = sizeof(options),
         .model_dir = model_dir,
         .layer_begin = begin,
         .layer_end = end,
         .context_tokens = context,
         .memory_limit_bytes = memory_limit,
-        .backend_mask = COLI_SEGMENT_CAP_CPU,
+        .backend_mask = LMA_SEGMENT_CAP_CPU,
     };
-    if (coli_segment_engine_open(family, &options, engine, error, error_size))
+    if (lma_segment_engine_open(family, &options, engine, error, error_size))
         return -1;
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    return coli_segment_engine_capabilities(*engine, capabilities,
+    return lma_segment_engine_capabilities(*engine, capabilities,
                                              error, error_size);
 }
 
 static int open_engine(const char *family, const char *model_dir,
                        uint32_t begin, uint32_t end, uint32_t context,
-                       ColiSegmentEngine **engine,
-                       ColiSegmentCapabilities *capabilities,
+                       LmaSegmentEngine **engine,
+                       LmaSegmentCapabilities *capabilities,
                        char *error, size_t error_size) {
     return open_engine_limited(family,model_dir,begin,end,context,0,engine,
                                capabilities,error,error_size);
 }
 
-static int create_session(ColiSegmentEngine *engine, uint32_t context,
-                          ColiSegmentSession **session,
+static int create_session(LmaSegmentEngine *engine, uint32_t context,
+                          LmaSegmentSession **session,
                           char *error, size_t error_size) {
-    ColiSegmentSessionOptions options = {
+    LmaSegmentSessionOptions options = {
         .struct_size = sizeof(options), .context_tokens = context
     };
-    return coli_segment_session_create(engine, &options, session,
+    return lma_segment_session_create(engine, &options, session,
                                         error, error_size);
 }
 
-static int create_session_limited(ColiSegmentEngine *engine,uint32_t context,
+static int create_session_limited(LmaSegmentEngine *engine,uint32_t context,
                                   uint64_t memory_limit,
-                                  ColiSegmentSession **session,
+                                  LmaSegmentSession **session,
                                   char *error,size_t error_size) {
-    ColiSegmentSessionOptions options = {
+    LmaSegmentSessionOptions options = {
         .struct_size = sizeof(options), .context_tokens = context,
         .memory_limit_bytes = memory_limit,
     };
-    return coli_segment_session_create(engine,&options,session,error,error_size);
+    return lma_segment_session_create(engine,&options,session,error,error_size);
 }
 
-static int run_rows(ColiSegmentSession *session, uint64_t position,
+static int run_rows(LmaSegmentSession *session, uint64_t position,
                     uint32_t rows, uint32_t width, const float *input,
                     float *output, const int32_t *tokens,
                     char *error, size_t error_size) {
     size_t bytes = (size_t)rows * width * sizeof(float);
-    ColiSegmentRunRequest request = {
+    LmaSegmentRunRequest request = {
         .struct_size = sizeof(request), .rows = rows, .position = position,
         .token_ids = tokens, .token_count = rows,
         .input = input, .input_bytes = bytes,
         .output = output, .output_bytes = bytes,
     };
-    return coli_segment_run(session, &request, error, error_size);
+    return lma_segment_run(session, &request, error, error_size);
 }
 
 int main(int argc, char **argv) {
@@ -155,22 +155,22 @@ int main(int argc, char **argv) {
     }
 
     char error[512] = {0};
-    ColiSegmentEngine *full_engine = NULL, *left_engine = NULL,
+    LmaSegmentEngine *full_engine = NULL, *left_engine = NULL,
                       *right_engine = NULL;
-    ColiSegmentSession *full = NULL, *restored = NULL, *left = NULL,
+    LmaSegmentSession *full = NULL, *restored = NULL, *left = NULL,
                        *right = NULL;
-    ColiSegmentCapabilities full_caps, left_caps, right_caps;
+    LmaSegmentCapabilities full_caps, left_caps, right_caps;
     int result = 1;
     if(!strcmp(family,"qwen38")){
         /* The engine cache budget must likewise accept its exact computed
          * minimum and reject one byte less through the public adapter. */
-        ColiSegmentEngine *probe=NULL;ColiSegmentCapabilities probe_caps;
+        LmaSegmentEngine *probe=NULL;LmaSegmentCapabilities probe_caps;
         uint64_t low=0,high=1;
         for(;;){
             error[0]='\0';
             if(!open_engine_limited(family,model_dir,begin,end,context,high,
                                     &probe,&probe_caps,error,sizeof(error))){
-                (void)coli_segment_engine_close(probe,NULL,0);probe=NULL;break;
+                (void)lma_segment_engine_close(probe,NULL,0);probe=NULL;break;
             }
             if(high>UINT64_MAX/2){snprintf(error,sizeof(error),"Qwen3.8 engine limit search overflow");goto cleanup;}
             high*=2;
@@ -179,15 +179,15 @@ int main(int argc, char **argv) {
             uint64_t middle=low+(high-low)/2;error[0]='\0';
             if(open_engine_limited(family,model_dir,begin,end,context,middle,
                                    &probe,&probe_caps,error,sizeof(error)))low=middle;
-            else{(void)coli_segment_engine_close(probe,NULL,0);probe=NULL;high=middle;}
+            else{(void)lma_segment_engine_close(probe,NULL,0);probe=NULL;high=middle;}
         }
         error[0]='\0';
         if(open_engine_limited(family,model_dir,begin,end,context,high,
                                &probe,&probe_caps,error,sizeof(error)))goto cleanup;
-        (void)coli_segment_engine_close(probe,NULL,0);probe=NULL;error[0]='\0';
+        (void)lma_segment_engine_close(probe,NULL,0);probe=NULL;error[0]='\0';
         if(high<1||!open_engine_limited(family,model_dir,begin,end,context,high-1,
                                        &probe,&probe_caps,error,sizeof(error))){
-            if(probe)(void)coli_segment_engine_close(probe,NULL,0);
+            if(probe)(void)lma_segment_engine_close(probe,NULL,0);
             snprintf(error,sizeof(error),"Qwen3.8 accepted a one-byte-short engine limit");goto cleanup;
         }
         error[0]='\0';
@@ -199,11 +199,11 @@ int main(int argc, char **argv) {
         open_engine(family, model_dir, split, end, context,
                     &right_engine, &right_caps, error, sizeof(error)))
         goto cleanup;
-    if (full_caps.state_dtype != COLI_SEGMENT_DTYPE_F32 ||
+    if (full_caps.state_dtype != LMA_SEGMENT_DTYPE_F32 ||
         full_caps.state_width != left_caps.state_width ||
         full_caps.state_width != right_caps.state_width ||
-        !(full_caps.flags & COLI_SEGMENT_CAP_RANGE_NATIVE) ||
-        !(full_caps.flags & COLI_SEGMENT_CAP_SNAPSHOT)) {
+        !(full_caps.flags & LMA_SEGMENT_CAP_RANGE_NATIVE) ||
+        !(full_caps.flags & LMA_SEGMENT_CAP_SNAPSHOT)) {
         snprintf(error, sizeof(error), "incompatible real-adapter capabilities");
         goto cleanup;
     }
@@ -223,14 +223,14 @@ int main(int argc, char **argv) {
         /* Sessions may request a smaller context than the engine ceiling, and
          * the adapter's computed allocation boundary must be exact. Discover
          * that boundary through the public API, then test N and N-1 bytes. */
-        ColiSegmentSession *probe=NULL;
+        LmaSegmentSession *probe=NULL;
         if(create_session(full_engine,context-1,&probe,error,sizeof(error)))goto cleanup;
-        coli_segment_session_destroy(probe);probe=NULL;
+        lma_segment_session_destroy(probe);probe=NULL;
         uint64_t low=0,high=1;
         for(;;){
             error[0]='\0';
             if(!create_session_limited(full_engine,context,high,&probe,error,sizeof(error))){
-                coli_segment_session_destroy(probe);probe=NULL;break;
+                lma_segment_session_destroy(probe);probe=NULL;break;
             }
             if(high>UINT64_MAX/2){snprintf(error,sizeof(error),"Qwen3.8 session limit search overflow");goto cleanup;}
             high*=2;
@@ -238,13 +238,13 @@ int main(int argc, char **argv) {
         while(low+1<high){
             uint64_t middle=low+(high-low)/2;error[0]='\0';
             if(create_session_limited(full_engine,context,middle,&probe,error,sizeof(error)))low=middle;
-            else{coli_segment_session_destroy(probe);probe=NULL;high=middle;}
+            else{lma_segment_session_destroy(probe);probe=NULL;high=middle;}
         }
         error[0]='\0';
         if(create_session_limited(full_engine,context,high,&probe,error,sizeof(error)))goto cleanup;
-        coli_segment_session_destroy(probe);probe=NULL;error[0]='\0';
+        lma_segment_session_destroy(probe);probe=NULL;error[0]='\0';
         if(high<1||!create_session_limited(full_engine,context,high-1,&probe,error,sizeof(error))){
-            if(probe)coli_segment_session_destroy(probe);
+            if(probe)lma_segment_session_destroy(probe);
             snprintf(error,sizeof(error),"Qwen3.8 accepted a one-byte-short session limit");goto cleanup;
         }
         error[0]='\0';
@@ -290,11 +290,11 @@ int main(int argc, char **argv) {
         goto free_buffers;
 
     MemoryStream checkpoint = {0};
-    if (coli_segment_snapshot(full, memory_write, &checkpoint,
+    if (lma_segment_snapshot(full, memory_write, &checkpoint,
                               error, sizeof(error)))
         goto free_buffers;
     checkpoint.offset = 0;
-    if (coli_segment_restore(restored, memory_read, &checkpoint,
+    if (lma_segment_restore(restored, memory_read, &checkpoint,
                              error, sizeof(error))) {
         free(checkpoint.data);
         goto free_buffers;
@@ -316,15 +316,15 @@ int main(int argc, char **argv) {
     }
 
     MemoryStream before_bad = {0}, after_bad = {0};
-    if (coli_segment_snapshot(restored, memory_write, &before_bad,
+    if (lma_segment_snapshot(restored, memory_write, &before_bad,
                               error, sizeof(error))) {
         free(checkpoint.data);
         goto free_buffers;
     }
     /* Header metadata is untrusted too.  In particular, a forged context
      * must be rejected before an adapter derives any state spans from it. */
-    const size_t position_offset = offsetof(ColiSegmentSnapshotHeader, position);
-    const size_t context_offset = offsetof(ColiSegmentSnapshotHeader,
+    const size_t position_offset = offsetof(LmaSegmentSnapshotHeader, position);
+    const size_t context_offset = offsetof(LmaSegmentSnapshotHeader,
                                            context_tokens);
     if (checkpoint.size <= position_offset || checkpoint.size <= context_offset) {
         snprintf(error, sizeof(error), "snapshot header is unexpectedly small");
@@ -334,7 +334,7 @@ int main(int argc, char **argv) {
     unsigned char saved_position_byte = checkpoint.data[position_offset];
     checkpoint.data[position_offset] ^= 0x80;
     checkpoint.offset = 0;
-    if (coli_segment_restore(restored, memory_read, &checkpoint,
+    if (lma_segment_restore(restored, memory_read, &checkpoint,
                              error, sizeof(error)) == 0) {
         snprintf(error, sizeof(error), "malformed snapshot position was accepted");
         free(before_bad.data); free(checkpoint.data);
@@ -344,7 +344,7 @@ int main(int argc, char **argv) {
     unsigned char saved_context_byte = checkpoint.data[context_offset];
     checkpoint.data[context_offset] ^= 0x01;
     checkpoint.offset = 0;
-    if (coli_segment_restore(restored, memory_read, &checkpoint,
+    if (lma_segment_restore(restored, memory_read, &checkpoint,
                              error, sizeof(error)) == 0) {
         snprintf(error, sizeof(error), "malformed snapshot header was accepted");
         free(before_bad.data); free(checkpoint.data);
@@ -356,7 +356,7 @@ int main(int argc, char **argv) {
          * semantically invalid history a matching checksum: validation must
          * happen while the generic restore helper is still staging bytes, so
          * this failure cannot partially commit the payload. */
-        ColiSegmentSnapshotHeader header;
+        LmaSegmentSnapshotHeader header;
         memcpy(&header, checkpoint.data, sizeof(header));
         unsigned char needle[sizeof(int) + 2 * sizeof(int64_t)];
         int history_len = 2; int64_t history[2] = {7, 23};
@@ -377,12 +377,12 @@ int main(int argc, char **argv) {
         }
         int invalid_len = 3;
         memcpy(checkpoint.data + found, &invalid_len, sizeof(invalid_len));
-        header.payload_hash = coli_segment_hash_update(
-            COLI_SEGMENT_HASH_INIT, checkpoint.data + sizeof(header),
+        header.payload_hash = lma_segment_hash_update(
+            LMA_SEGMENT_HASH_INIT, checkpoint.data + sizeof(header),
             checkpoint.size - sizeof(header));
         memcpy(checkpoint.data, &header, sizeof(header));
         checkpoint.offset = 0;
-        if (coli_segment_restore(restored, memory_read, &checkpoint,
+        if (lma_segment_restore(restored, memory_read, &checkpoint,
                                  error, sizeof(error)) == 0) {
             snprintf(error, sizeof(error),
                      "malformed Qwen3.8 PLE history was accepted");
@@ -390,21 +390,21 @@ int main(int argc, char **argv) {
             goto free_buffers;
         }
         memcpy(checkpoint.data + found, &history_len, sizeof(history_len));
-        header.payload_hash = coli_segment_hash_update(
-            COLI_SEGMENT_HASH_INIT, checkpoint.data + sizeof(header),
+        header.payload_hash = lma_segment_hash_update(
+            LMA_SEGMENT_HASH_INIT, checkpoint.data + sizeof(header),
             checkpoint.size - sizeof(header));
         memcpy(checkpoint.data, &header, sizeof(header));
     }
     if (checkpoint.size) checkpoint.data[checkpoint.size - 1] ^= 0x5a;
     checkpoint.offset = 0;
-    if (coli_segment_restore(restored, memory_read, &checkpoint,
+    if (lma_segment_restore(restored, memory_read, &checkpoint,
                              error, sizeof(error)) == 0) {
         snprintf(error, sizeof(error), "corrupt snapshot was accepted");
         free(before_bad.data); free(checkpoint.data);
         goto free_buffers;
     }
     error[0] = '\0';
-    if (coli_segment_snapshot(restored, memory_write, &after_bad,
+    if (lma_segment_snapshot(restored, memory_write, &after_bad,
                               error, sizeof(error)) ||
         before_bad.size != after_bad.size ||
         memcmp(before_bad.data, after_bad.data, before_bad.size)) {
@@ -420,13 +420,13 @@ free_buffers:
     free(next_input); free(chain_first); free(left_first); free(full_first);
     free(first_input);
 cleanup:
-    if (right) coli_segment_session_destroy(right);
-    if (left) coli_segment_session_destroy(left);
-    if (restored) coli_segment_session_destroy(restored);
-    if (full) coli_segment_session_destroy(full);
-    if (right_engine) (void)coli_segment_engine_close(right_engine, NULL, 0);
-    if (left_engine) (void)coli_segment_engine_close(left_engine, NULL, 0);
-    if (full_engine) (void)coli_segment_engine_close(full_engine, NULL, 0);
+    if (right) lma_segment_session_destroy(right);
+    if (left) lma_segment_session_destroy(left);
+    if (restored) lma_segment_session_destroy(restored);
+    if (full) lma_segment_session_destroy(full);
+    if (right_engine) (void)lma_segment_engine_close(right_engine, NULL, 0);
+    if (left_engine) (void)lma_segment_engine_close(left_engine, NULL, 0);
+    if (full_engine) (void)lma_segment_engine_close(full_engine, NULL, 0);
     if (result) {
         fprintf(stderr, "%s real Segment adapter failed: %s\n", family,
                 error[0] ? error : "numerical mismatch");

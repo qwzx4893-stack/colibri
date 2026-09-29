@@ -246,7 +246,7 @@ def main():
             nb = o1 - o0
             hdr[name] = {"dtype": dt, "shape": list(shape), "data_offsets": [off, off + nb]}; off += nb
             meta[name] = "fmt=raw"
-    meta["colibri.dense"] = "inkling-int4g64-v1"
+    meta["lmatomic.dense"] = "inkling-int4g64-v1"
     hdr["__metadata__"] = meta
     hjson = json.dumps(hdr, separators=(",", ":")).encode()
     pad = (8 - (len(hjson) % 8)) % 8               # header allineato a 8 byte

@@ -64,8 +64,8 @@ jobs:
       # only after a release is tagged and published.
       - uses: actions/upload-artifact@v4
         with:
-          name: colibri-windows-exe
-          path: c/colibri.exe
+          name: lmatomic-windows-exe
+          path: c/glm52.exe
 
   k3-tiny:
     name: Linux (generated tiny K3 vendor oracle)
@@ -119,7 +119,7 @@ jobs:
       # The dashboard's Brain and Profile tabs read EMAP/HITS/PROF from the
       # engine's stdout. GLM-5.3-Flash emitted none of them and both tabs were
       # blank (Discord, 2026-09-06). This drives the built engine through
-      # `coli serve` and the /experts and /profile endpoints on a streaming
+      # `lmatomic serve` and the /experts and /profile endpoints on a streaming
       # fixture, the same path the dashboard takes, so a family that stops
       # emitting a line fails here and not on a user's screen.
       - name: Build glm53 and check the dashboard contract
@@ -128,8 +128,8 @@ jobs:
           python c/tools/make_glm53_multimodal_tiny.py --output /tmp/glm53_mm
           python c/tools/make_glm53_streaming_pair.py --fixture /tmp/glm53_mm --output /tmp/glm53_stream
           python c/tools/make_edge_tiny_tokenizer.py --vocab-size 281 /tmp/glm53_stream-i4
-          cd c && COLI_GLM53_FIXTURE=/tmp/glm53_stream-i4 python -m unittest -v tests.test_glm53_dashboard
-          COLI_GLM53_FIXTURE=/tmp/glm53_stream-i4 python -m unittest -v tests.test_glm53_context_exceeded
+          cd c && LMA_GLM53_FIXTURE=/tmp/glm53_stream-i4 python -m unittest -v tests.test_glm53_dashboard
+          LMA_GLM53_FIXTURE=/tmp/glm53_stream-i4 python -m unittest -v tests.test_glm53_context_exceeded
       # The two stdlib-only oracles used to be argparse scripts that `make
       # test-python` collected as zero tests (#1700). They run here, on the
       # fixtures generated above, token-exact against transformers in f32.
@@ -140,7 +140,7 @@ jobs:
   macos:
     # clang; libomp for the threaded path (Makefile falls back to
     # single-threaded automatically if it's ever missing).
-    name: macOS (colibri + V4 platform gate)
+    name: macOS (lmatomic + V4 platform gate)
     runs-on: macos-latest
     # `make check` here now takes about 14.5 minutes; at 15 the job was cut
     # off inside the Python suite with no test failed, and showed as red.

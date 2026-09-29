@@ -1,4 +1,4 @@
-"""`coli chat` on GLM-5.2 must keep reading the engine's stderr whatever the locale.
+"""`lmatomic chat` on GLM-5.2 must keep reading the engine's stderr whatever the locale.
 
 cmd_chat drains the engine's stderr into a temporary log opened in the
 locale's code page. The engine writes UTF-8: its per-layer progress line is
@@ -29,7 +29,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-CLI = Path(__file__).resolve().parent.parent / "coli"
+CLI = Path(__file__).resolve().parent.parent / "lmatomic"
 LINES = ("—", "·")
 
 CHILD_ENV = {**os.environ, "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0",
@@ -84,10 +84,10 @@ DRIVER = textwrap.dedent("""
     cli, engine, turns, engine_writes_progress = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
     if all(ch.encode(locale.getpreferredencoding(False), "ignore") for ch in %r):
         print(json.dumps({"skip": locale.getpreferredencoding(False)})); sys.exit(0)
-    loader = SourceFileLoader("coli_chat_stderr", cli)
+    loader = SourceFileLoader("lma_chat_stderr", cli)
     spec = importlib.util.spec_from_loader(loader.name, loader)
-    coli = importlib.util.module_from_spec(spec)
-    loader.exec_module(coli)
+    lmatomic = importlib.util.module_from_spec(spec)
+    loader.exec_module(lmatomic)
 
     model = tempfile.mkdtemp()
     Path(model, "config.json").write_text('{"model_type": "glm_moe_dsa"}')
@@ -118,22 +118,22 @@ DRIVER = textwrap.dedent("""
         except StopIteration:
             raise EOFError
 
-    args = coli.argparse.Namespace(model=model, cap=None, ngen=16, ram=0, topp=0, topk=0,
+    args = lmatomic.argparse.Namespace(model=model, cap=None, ngen=16, ram=0, topp=0, topk=0,
                                    no_attach=True, attach=None, api_key=None, stats="off",
                                    temp=None, think=None, effort=None, ctx=0)
     out = io.StringIO()
     code = None
-    with mock.patch.object(coli, "need_model"), \\
-         mock.patch.object(coli, "banner"), \\
-         mock.patch.object(coli, "env_for", return_value=dict(os.environ)), \\
-         mock.patch.object(coli, "TTY", False), \\
-         mock.patch.object(coli, "Spinner", Spinner), \\
-         mock.patch.object(coli.subprocess, "Popen",
+    with mock.patch.object(lmatomic, "need_model"), \\
+         mock.patch.object(lmatomic, "banner"), \\
+         mock.patch.object(lmatomic, "env_for", return_value=dict(os.environ)), \\
+         mock.patch.object(lmatomic, "TTY", False), \\
+         mock.patch.object(lmatomic, "Spinner", Spinner), \\
+         mock.patch.object(lmatomic.subprocess, "Popen",
                            lambda cmd, **kw: real_popen([sys.executable, engine], **kw)), \\
          mock.patch("builtins.input", fake_input), \\
          mock.patch.object(sys, "stdout", out):
         try:
-            coli.cmd_chat(args)
+            lmatomic.cmd_chat(args)
         except SystemExit as exit_:
             code = str(exit_)
     print(json.dumps({"output": out.getvalue(), "turns": len(sent), "ticks": ticks,
@@ -152,7 +152,7 @@ def chat(scenario, turns=2):
                                      "1" if scenario == "chat" else "0"],
                                     env=CHILD_ENV, capture_output=True, timeout=90)
         except subprocess.TimeoutExpired:
-            raise AssertionError(f"{scenario}: `coli chat` hung (engine blocked on a full stderr pipe)")
+            raise AssertionError(f"{scenario}: `lmatomic chat` hung (engine blocked on a full stderr pipe)")
     if result.returncode:
         raise AssertionError(result.stderr.decode("utf-8", "replace")[-3000:])
     report = json.loads(result.stdout.decode("ascii").strip().splitlines()[-1])

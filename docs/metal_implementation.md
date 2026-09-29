@@ -64,7 +64,7 @@ KV cache	yes	partial	extend
 
 Goal:
 - Avoid writing new Metal code wherever existing kernels already exist.
-- Add this analysis as a section in /Users/doug/code/colibri-dev/docs/kimi_metal_gap_analysis.md
+- Add this analysis as a section in /Users/doug/code/lmatomic-dev/docs/kimi_metal_gap_analysis.md
 
 Identified reusable Metal kernels
 
@@ -120,32 +120,32 @@ No inference yet.
 
 Ported all operations already implemented in the shared backend (backend_metal). The Kimi K3 `w_matmul()` is Metal-dispatched (quantized fmt=0/1/4); `kimima_forward_metal()` remains a monolithic stub for future use; granular Metal dispatch embedded in `kda_forward()`/`mla_forward()` handles current GPU path.
 
-**Wired in `colibri.c` (shared backend path):**
-- `coli_metal_gemm()` — GEMM for all quantization formats (colibri.c:689)
-- `coli_metal_attn_decode()` — MLA decode attention (colibri.c:2614)
-- `coli_metal_layer_decode()` — Full layer decode (colibri.c:4824)
-- `coli_metal_moe_block{_begin,_end}()` — MoE expert routing + block dispatch (colibri.c:3584)
-- `coli_metal_rtop8()` — Serial/parallel top-8 selection (backend_metal.h:125)
-- `coli_metal_register/unregister()` — Buffer registration on metal-everywhere paths (colibri.c:1495+)
+**Wired in `glm52.c` (shared backend path):**
+- `lma_metal_gemm()` — GEMM for all quantization formats (glm52.c:689)
+- `lma_metal_attn_decode()` — MLA decode attention (glm52.c:2614)
+- `lma_metal_layer_decode()` — Full layer decode (glm52.c:4824)
+- `lma_metal_moe_block{_begin,_end}()` — MoE expert routing + block dispatch (glm52.c:3584)
+- `lma_metal_rtop8()` — Serial/parallel top-8 selection (backend_metal.h:125)
+- `lma_metal_register/unregister()` — Buffer registration on metal-everywhere paths (glm52.c:1495+)
 
 **API available in `backend_metal.h`:**
 | Function | Purpose |
 |---|---|
-| `coli_metal_rmsnorm()` | RMS normalization |
-| `coli_metal_add()` | Element-wise residual add |
-| `coli_metal_silu_mul()` | SwiGLU activation |
-| `coli_metal_matmul()` | GEMM via tensor handle API |
-| `coli_metal_gemm()` | Direct GEMM (F32, Q8, I4 grouped) |
-| `coli_metal_rtop8()` | Router top-k selection |
-| `coli_metal_attn_decode()` | Multi-latent attention (decode) |
-| `coli_metal_layer_decode()` | Full decoder layer |
-| `coli_metal_moe_block*()` | MoE expert block (begin/block/end) |
-| `coli_metal_register()` | Map host memory for GPU access |
+| `lma_metal_rmsnorm()` | RMS normalization |
+| `lma_metal_add()` | Element-wise residual add |
+| `lma_metal_silu_mul()` | SwiGLU activation |
+| `lma_metal_matmul()` | GEMM via tensor handle API |
+| `lma_metal_gemm()` | Direct GEMM (F32, Q8, I4 grouped) |
+| `lma_metal_rtop8()` | Router top-k selection |
+| `lma_metal_attn_decode()` | Multi-latent attention (decode) |
+| `lma_metal_layer_decode()` | Full decoder layer |
+| `lma_metal_moe_block*()` | MoE expert block (begin/block/end) |
+| `lma_metal_register()` | Map host memory for GPU access |
 
 **Kimi K3 independent path (Phase 4 ≠ Phase 8):**
 - `kimima_forward_metal()` — returns 0 (`NOT IMPLEMENTED`, stub for future monolithic Metal path)
-- `w_matmul()` — Metal dispatch via `coli_metal_matmul()` for fmt=0/1/4 (implemented Phase 5.2)
-- `k3_matmul_f32()` — Metal dispatch via `coli_metal_matmul(fmt=0)` for f32 weights (Phase 8.1)
+- `w_matmul()` — Metal dispatch via `lma_metal_matmul()` for fmt=0/1/4 (implemented Phase 5.2)
+- `k3_matmul_f32()` — Metal dispatch via `lma_metal_matmul(fmt=0)` for f32 weights (Phase 8.1)
 - CPU fallbacks preserved in both paths when Metal unavailable
 
 **Standalone op battery test (Phase 5 expanded coverage):**
@@ -176,18 +176,18 @@ Since routing, expert selection, and scheduling already exist on CPU/Vulkan, Pha
 - Token-to-expert scatter/gather logic
 
 **Ported to Metal:**
-- Expert matrix multiplication (per-expert GEMM) — `coli_metal_moe_block()` (backend_metal.mm)
+- Expert matrix multiplication (per-expert GEMM) — `lma_metal_moe_block()` (backend_metal.mm)
 - Expert activation (SwiGLU per-expert) — fused inside moe_block command buffer
 - Output accumulation (weighted scatter-add back to token-space) — fused in same submit
 
-**Wired in `colibri.c`:**
-- `coli_metal_moe_block_begin()` at colibri.c:3584 — async two-phase encode+commit
-- `coli_metal_moe_block()` at colibri.c:3646 — synchronous fallback path
-- `coli_metal_moe_block_end()` at colibri.c:3650 — wait, fault-check, scatter-add
+**Wired in `glm52.c`:**
+- `lma_metal_moe_block_begin()` at glm52.c:3584 — async two-phase encode+commit
+- `lma_metal_moe_block()` at glm52.c:3646 — synchronous fallback path
+- `lma_metal_moe_block_end()` at glm52.c:3650 — wait, fault-check, scatter-add
 
 **Tests:**
-- Diagnostics via `coli_metal_moe_counts()`, `coli_metal_moe_times()`, `coli_metal_moe_kernel_time()` (backend_metal.h)
-- Counters printed at colibri.c:5651-5657 during inference
+- Diagnostics via `lma_metal_moe_counts()`, `lma_metal_moe_times()`, `lma_metal_moe_kernel_time()` (backend_metal.h)
+- Counters printed at glm52.c:5651-5657 during inference
 
 ---
 
@@ -196,16 +196,16 @@ Since routing, expert selection, and scheduling already exist on CPU/Vulkan, Pha
 **Implemented primitives:**
 | Function | Location | Purpose |
 |---|---|---|
-| `coli_metal_kv_write()` | backend_metal.mm:1249 | Write S KV-cache rows: rmsnorm(L) + rope_interleave(R) |
-| `coli_metal_kv_clear()` | backend_metal.mm:1306 | Zero cache rows [from, to) on GPU |
+| `lma_metal_kv_write()` | backend_metal.mm:1249 | Write S KV-cache rows: rmsnorm(L) + rope_interleave(R) |
+| `lma_metal_kv_clear()` | backend_metal.mm:1306 | Zero cache rows [from, to) on GPU |
 
 **Fused path (shared backend, GLM models):**
-- `coli_metal_attn_decode()` at colibri.c:2614 — single command buffer: q_a -> rmsnorm -> q_b -> RoPE, kv_a -> latent rmsnorm@pos + krot RoPE@pos (cache write), MLA absorption, o_proj
-- `coli_metal_layer_decode()` at colibri.c:4824 — full layer: in_ln -> attention -> residual -> post_ln -> shared expert -> router+top-K
+- `lma_metal_attn_decode()` at glm52.c:2614 — single command buffer: q_a -> rmsnorm -> q_b -> RoPE, kv_a -> latent rmsnorm@pos + krot RoPE@pos (cache write), MLA absorption, o_proj
+- `lma_metal_layer_decode()` at glm52.c:4824 — full layer: in_ln -> attention -> residual -> post_ln -> shared expert -> router+top-K
 
 **Buffer management:**
-- KV cache allocation with page-aligned `falloc()` at colibri.c:4996-5007
-- Metal registration/unregistration of `Lc`/`Rc` buffers at colibri.c:4985, colibri.c:5007
+- KV cache allocation with page-aligned `falloc()` at glm52.c:4996-5007
+- Metal registration/unregistration of `Lc`/`Rc` buffers at glm52.c:4985, glm52.c:5007
 - All KV rows accessible zero-copy from Metal shaders
 
 **Test coverage (`test_backend_metal.mm`):**
@@ -220,8 +220,8 @@ Since routing, expert selection, and scheduling already exist on CPU/Vulkan, Pha
 | `kv_multiseq 3 seqs len=8` | Multi-sequence independent KV state |
 
 **Kimi K3 independent path (COMPLETED):**
-- `coli_metal_kv_write()` wired into `mla_forward()` (kimi_k3.c) — batched GPU write of L+rmsnorm + R for each prefill chunk; CPU fallback when Metal unavailable
-- `coli_metal_kv_clear()` wired into `model_state_reset()` (kimi_k3.c) — GPU zero of Lc/Rc range [0, max_t) on cache reset, preserving buffers for reuse
+- `lma_metal_kv_write()` wired into `mla_forward()` (kimi_k3.c) — batched GPU write of L+rmsnorm + R for each prefill chunk; CPU fallback when Metal unavailable
+- `lma_metal_kv_clear()` wired into `model_state_reset()` (kimi_k3.c) — GPU zero of Lc/Rc range [0, max_t) on cache reset, preserving buffers for reuse
 - `kv_alloc()` Metal-aware: reuses existing buffers when `max_t` hasn't grown; frees+reallocs only when growing beyond capacity
 
 ---
@@ -284,7 +284,7 @@ Without k_idx, Phase 8 still works in a bypass mode (full context).
 - `load_cfg()`: DSA fields loaded from JSON (`index_hd`, `index_nh`, `index_topk`, optional `index_layers`, `rope_theta`)
 - `model_init()`: DSA weights loaded from shards for full layers only (`wk`, `wq`, `wp`, `knw`, `knb`)
 - `kv_alloc()`: `Ic` buffer allocated per full layer at `[max_t * index_hd]`
-- `model_state_reset()`: `Ic` cleared — Metal path: `coli_metal_kv_clear(Ic)`, CPU path: `free(Ic)`
+- `model_state_reset()`: `Ic` cleared — Metal path: `lma_metal_kv_clear(Ic)`, CPU path: `free(Ic)`
 - `mla_forward()` prefill: Ic write wired after L/R KV cache write; guarded by `index_hd > 0 && idx_type[li]`
 - CPU helper `dsa_rope()`: rope_interleave on first `qk_rope` dimensions, inline cache, in-place on `[index_hd]`
 - CPU helper `DsaEntry` + `dsa_entry_cmp_desc()`: score+index struct used for `qsort` top-K selection
@@ -296,7 +296,7 @@ Without k_idx, Phase 8 still works in a bypass mode (full context).
 - Decode step in `mla_forward()`: call `dsa_score_single()` + top-K selection before absorption loop,
   materialize `k_idx[]` from `dsa_sel[d]`
 - Absorption loop: when `k_idx` is non-NULL, iterate `k_idx` instead of full `[0, nk)`;
-  passes `dsel/dnsel` to signal filtered subset (mirrors colibri.c:2826 pattern)
+  passes `dsel/dnsel` to signal filtered subset (mirrors glm52.c:2826 pattern)
 - Sheet-beam DSA scoring Metal kernel (future: parallelize `dsa_score_single` over cache positions)
 
 **CPU helpers:**
@@ -372,14 +372,14 @@ state recurrence loop (decay, update, merge for [heads × hd × hd] state).
 ### 8.1 — Q/K/V preparation ✅ DONE
 
 **Metal wires completed:**
-- Quantized projections (q, k, v, g) dispatch through `w_matmul()` → `coli_metal_matmul(fmt)` (Phase 5, reused)
-- f32 low-rank projections (fa, fb, bp) dispatch through `k3_matmul_f32()` → `coli_metal_matmul(fmt=0)` (Phase 8.1 new)
+- Quantized projections (q, k, v, g) dispatch through `w_matmul()` → `lma_metal_matmul(fmt)` (Phase 5, reused)
+- f32 low-rank projections (fa, fb, bp) dispatch through `k3_matmul_f32()` → `lma_metal_matmul(fmt=0)` (Phase 8.1 new)
 - Output projection (o) dispatches through `w_matmul()` (Phase 5, reused)
 
 **New infrastructure in `kimi_k3.c`:**
 | Additions | Purpose |
 |---|---|
-| `k3_matmul_f32(ColiMetalTensor**, ...)` | Metal-dispatching wrapper for f32 GEMM — calls `coli_metal_matmul()` when Metal available, falls back to `matmul()` |
+| `k3_matmul_f32(LmaMetalTensor**, ...)` | Metal-dispatching wrapper for f32 GEMM — calls `lma_metal_matmul()` when Metal available, falls back to `matmul()` |
 | `Kda.metal_fa`, `metal_fb`, `metal_bp` | Metal tensor wrappers for three f32 weight matrices |
 
 **Changes to `kda_forward()`:**
@@ -437,22 +437,22 @@ over the dependent axis, while independent axes are parallelized across threadgr
 **New infrastructure in `backend_metal.h`:**
 | Addition | Purpose |
 |---|---|
-| `int coli_metal_kda_state(float *S, const float *meta_qn, const float *meta_kn, const float *meta_vh, const float *meta_alpha, const float *meta_beta, int H, int hd)` | Dispatch Metal state recurrence kernel for one chunk of C=1 tokens |
+| `int lma_metal_kda_state(float *S, const float *meta_qn, const float *meta_kn, const float *meta_vh, const float *meta_alpha, const float *meta_beta, int H, int hd)` | Dispatch Metal state recurrence kernel for one chunk of C=1 tokens |
 
 **New infrastructure in `backend_metal.mm`:**
 | Addition | Purpose |
 |---|---|
 | `k3_kda_state` in SHADER string | Metal kernel: two-pass state recurrence |
 | `g_k3_kda_state` | Pipeline state global |
-| `P("k3_kda_state")` in `coli_metal_init()` | Pipeline compilation |
-| `coli_metal_kda_state()` dispatch function | Wraps host memory into SharedBuffers, binds 7 params, dispatches `[H,hd]` threadgroups |
+| `P("k3_kda_state")` in `lma_metal_init()` | Pipeline compilation |
+| `lma_metal_kda_state()` dispatch function | Wraps host memory into SharedBuffers, binds 7 params, dispatches `[H,hd]` threadgroups |
 
 **Changes to `kda_forward()` (kimi_k3.c):**
 - Allocates per-token temp buffers `meta_qn[H*hd]`, `meta_kn[H*hd]`, `meta_alpha[H*hd]`, `meta_vh[H*hd]`,
   `meta_beta[H]`, `meta_oh[H*hd]` — freed at end of token loop
 - When `g_k3_metal` is set:
   - Serial loop (no OMP) fills Metal temp arrays: L2-normalize q/k, compute alpha/beta, prepare gated V
-  - `coli_metal_kda_state()` dispatches state sweep for all heads at once
+  - `lma_metal_kda_state()` dispatches state sweep for all heads at once
   - Post-loop: per-head RMSNorm + sigmoid gate readback from `meta_oh` into `on[t*h*hd:]`
 - When `g_k3_metal` is not set: existing CPU path (OMP parallel, AVX2 vectorized) is preserved
 - Conv1d+SiLU phase now Metal-dispatched via Phase 8.3 kernels
@@ -463,7 +463,7 @@ No host-device synchronization of state tensor required.
 
 **Verification:**
 - Clean compile with `METAL=1` confirmed 2026-07-31.
-- Metal `colibri` and `kimi_k3` binaries build without warnings.
+- Metal `lmatomic` and `kimi_k3` binaries build without warnings.
 - CPU fallback path (non-Metal) preserved for correctness oracle.
 
 ### 8.3 — Conv1d + SiLU + L2 normalization ✅ DONE
@@ -489,8 +489,8 @@ Writes q/k in-place. Single dispatch for all heads.
 **New infrastructure in `backend_metal.h`:**
 | Addition | Purpose |
 |---|---|
-| `int coli_metal_kda_conv_silu(float *conv_win, float *vec, const float *taps, int P, int K)` | Shift window, dot taps, SiLU gate — one projection |
-| `int coli_metal_kda_l2_norm(float *q, float *k, int H, int hd, float qscale)` | In-place L2 normalization per head for q and k |
+| `int lma_metal_kda_conv_silu(float *conv_win, float *vec, const float *taps, int P, int K)` | Shift window, dot taps, SiLU gate — one projection |
+| `int lma_metal_kda_l2_norm(float *q, float *k, int H, int hd, float qscale)` | In-place L2 normalization per head for q and k |
 
 **New infrastructure in `backend_metal.mm`:**
 | Addition | Purpose |
@@ -498,14 +498,14 @@ Writes q/k in-place. Single dispatch for all heads.
 | `kda_conv_silu` in SHADER string | Metal kernel: conv1d depthwise + SiLU for `[P]` dims |
 | `kda_l2_norm` in SHADER string | Metal kernel: L2 norm for `[H]` heads of Q and K |
 | `g_kda_conv_silu`, `g_kda_l2_norm` | Pipeline state globals |
-| `P("kda_conv_silu")`, `P("kda_l2_norm")` in `coli_metal_init()` | Pipeline compilation |
-| `coli_metal_kda_conv_silu()` | Host dispatch: binds 3 buffers + 2 scalar params, threads=P |
-| `coli_metal_kda_l2_norm()` | Host dispatch: binds 2 buffers + 3 scalar params, threads=H |
+| `P("kda_conv_silu")`, `P("kda_l2_norm")` in `lma_metal_init()` | Pipeline compilation |
+| `lma_metal_kda_conv_silu()` | Host dispatch: binds 3 buffers + 2 scalar params, threads=P |
+| `lma_metal_kda_l2_norm()` | Host dispatch: binds 2 buffers + 3 scalar params, threads=H |
 
 **Changes to `kda_forward()` (kimi_k3.c):**
 - When `g_k3_metal` is set (inside per-token loop):
-  - Call `coli_metal_kda_conv_silu()` in a loop of 3 (q, k, v projections), replacing OMP conv loop
-  - Call `coli_metal_kda_l2_norm()` once for all H heads, replacing OMP L2 loops
+  - Call `lma_metal_kda_conv_silu()` in a loop of 3 (q, k, v projections), replacing OMP conv loop
+  - Call `lma_metal_kda_l2_norm()` once for all H heads, replacing OMP L2 loops
   - Subsequent state preparation (alpha, beta, gated V) runs on CPU, reading GPU-processed q/k
 - When `g_k3_metal` is not set: existing CPU path preserved
 
@@ -526,7 +526,7 @@ create → encode → commit → waitUntilCompleted + readback, at ~150 μs per
 round-trip on macOS. Total overhead: ~750 μs/token just in dispatch
 overhead, before any kernel compute time.
 
-**Metal dispatch consolidation (IMPLEMENTED):** `coli_metal_kda_fused_token()`
+**Metal dispatch consolidation (IMPLEMENTED):** `lma_metal_kda_fused_token()`
 creates a single `MTLCommandBuffer`, encodes all 5 kernels sequentially into it
 (conv_silu×3 → l2_norm → state), then commits and waits once. This reduces
 the per-token Metal overhead from ~750 μs to ~150 μs — a ~5× overhead reduction.
@@ -553,25 +553,25 @@ All GPU writes are visible to the CPU after `waitUntilCompleted` returns.
 **New infrastructure in `backend_metal.h`:**
 | Addition | Purpose |
 |---|---|
-| `int coli_metal_kda_fused_token(win_q, qt, win_k, kt, win_v, tv, taps_q, taps_k, taps_v, S, alpha, beta, oh, P, K, H, hd)` | Single-CB dispatch: conv_silu×3 + l2_norm + state recurrence |
+| `int lma_metal_kda_fused_token(win_q, qt, win_k, kt, win_v, tv, taps_q, taps_k, taps_v, S, alpha, beta, oh, P, K, H, hd)` | Single-CB dispatch: conv_silu×3 + l2_norm + state recurrence |
 
 **New infrastructure in `backend_metal.mm`:**
 | Addition | Purpose |
 |---|---|
-| `coli_metal_kda_fused_token()` | Creates one `MTLCommandBuffer`, reuses existing `g_kda_conv_silu`, `g_kda_l2_norm`, `g_kda_state` pipelines, encodes 5 dispatches, commits, waits |
+| `lma_metal_kda_fused_token()` | Creates one `MTLCommandBuffer`, reuses existing `g_kda_conv_silu`, `g_kda_l2_norm`, `g_kda_state` pipelines, encodes 5 dispatches, commits, waits |
 
 **Changes to `kda_forward()` (kimi_k3.c):**
 - Pre-allocates `meta_oh[C*P]`, `meta_alpha[C*P]`, `meta_beta[C*H]` when `g_k3_metal` is set
 - Per-token Metal path:
   1. CPU: compute `meta_alpha[t]` and `meta_beta[t]` from `graw[t]`, `dt`, `A`, `gate_lb`, `braw[t]`
   2. Memzero `meta_oh[t]` for state kernel accumulation
-  3. GPU: `coli_metal_kda_fused_token()` dispatches all 5 kernels in one command buffer
+  3. GPU: `lma_metal_kda_fused_token()` dispatches all 5 kernels in one command buffer
   4. CPU: per-head RMSNorm + sigmoid gate from `meta_oh[t]` → `on[t]`
 - If fused dispatch fails: sets `g_k3_metal = 0`, falls through to CPU path
 - Non-Metal CPU path: preserved, including OMP parallelism and AVX2 vectorization
 
-**Related fix:** `k3_matmul_f32()` parameter type changed from `ColiMetalTensor**` to `void*`
-to allow compilation when `COLI_METAL` is not defined. Cast sites updated accordingly.
+**Related fix:** `k3_matmul_f32()` parameter type changed from `LmaMetalTensor**` to `void*`
+to allow compilation when `LMA_METAL` is not defined. Cast sites updated accordingly.
 
 **Verification:**
 - Clean compile with `METAL=1` confirmed 2026-08-01.
@@ -580,7 +580,7 @@ to allow compilation when `COLI_METAL` is not defined. Cast sites updated accord
 - CPU fallback path preserved for correctness oracle.
 
 **Functional test:** End-to-end KDA output comparison vs CPU reference, 2026-08-01.
-- Prompt "hello", 20 tokens decode (C=1 per token), `COLI_TEMP=0` for greedy sampling.
+- Prompt "hello", 20 tokens decode (C=1 per token), `LMA_TEMP=0` for greedy sampling.
 - **Prefill** (C=2 tokens, chunked at default chunk=32): Metal output identical to CPU.
 - **Decode** (20 tokens, C=1): Metal output identical to CPU.
 - Result: `diff metal_out.txt cpu_out.txt` — zero differences. ✅ PASSED
@@ -600,28 +600,28 @@ within `kda_forward()` and `mla_forward()` via `g_k3_metal` gates — no separat
 **Metal path coverage per layer type:**
 | Component | Metal dispatch | Notes |
 |---|---|---|
-| KDA projections (q,k,v,g,o) | `w_matmul()` → `coli_metal_matmul()` | Phase 5, Phase 8.1 |
-| KDA low-rank (fa,fb,bp) | `k3_matmul_f32()` → `coli_metal_matmul(fmt=0)` | Phase 8.1 |
-| KDA conv_silu | `coli_metal_kda_conv_silu()` | Phase 8.3 |
-| KDA l2_norm | `coli_metal_kda_l2_norm()` | Phase 8.3 |
-| KDA state recurrence | `coli_metal_kda_fused_token()` | Phase 8.4, fused CB |
-| MLA KV cache (Lc/Rc) | `coli_metal_kv_write()` | Phase 7a |
-| MLA projections (qa,qb,kva,g,o) | `w_matmul()` → `coli_metal_matmul()` | Phase 5 |
+| KDA projections (q,k,v,g,o) | `w_matmul()` → `lma_metal_matmul()` | Phase 5, Phase 8.1 |
+| KDA low-rank (fa,fb,bp) | `k3_matmul_f32()` → `lma_metal_matmul(fmt=0)` | Phase 8.1 |
+| KDA conv_silu | `lma_metal_kda_conv_silu()` | Phase 8.3 |
+| KDA l2_norm | `lma_metal_kda_l2_norm()` | Phase 8.3 |
+| KDA state recurrence | `lma_metal_kda_fused_token()` | Phase 8.4, fused CB |
+| MLA KV cache (Lc/Rc) | `lma_metal_kv_write()` | Phase 7a |
+| MLA projections (qa,qb,kva,g,o) | `w_matmul()` → `lma_metal_matmul()` | Phase 5 |
 | MLA attention loop | CPU | Not Metal-dispatched |
 | MoE expert routing | CPU | Not Metal-dispatched |
-| MoE expert matmul | `coli_metal_moe_block()` | Phase 6 |
+| MoE expert matmul | `lma_metal_moe_block()` | Phase 6 |
 | RMSNorm, res_mix, moe_forward | CPU | CPU-only |
-| lm_head (final projection) | `w_matmul()` → `coli_metal_matmul()` | Phase 5 |
-| KV cache clear/reset | `coli_metal_kv_clear()` | Phase 7a |
+| lm_head (final projection) | `w_matmul()` → `lma_metal_matmul()` | Phase 5 |
+| KV cache clear/reset | `lma_metal_kv_clear()` | Phase 7a |
 
 **Fallback mechanism:**
-- KDA fused dispatch (`coli_metal_kda_fused_token`): explicit return value check at kimi_k3.c:824.
+- KDA fused dispatch (`lma_metal_kda_fused_token`): explicit return value check at kimi_k3.c:824.
   On failure, `g_k3_metal = 0`, falls through to CPU path. Self-healing.
-- MLA `coli_metal_kv_write`: CPU fallback only when `g_k3_metal == 0` (init failure). Return value
+- MLA `lma_metal_kv_write`: CPU fallback only when `g_k3_metal == 0` (init failure). Return value
   not checked — reliable in 6+ test runs without incident.
-- All other Metal dispatches: guarded by `g_k3_metal && coli_metal_available()`.
+- All other Metal dispatches: guarded by `g_k3_metal && lma_metal_available()`.
 
-**A/B test results (all `COLI_TEMP=0` for deterministic greedy sampling):**
+**A/B test results (all `LMA_TEMP=0` for deterministic greedy sampling):**
 
 | Test | Prompt | Tokens | Prefill | Decode | Result |
 |---|---|---|---|---|---|
@@ -669,7 +669,7 @@ within `kda_forward()` and `mla_forward()` via `g_k3_metal` gates — no separat
 
 Each tensor: 7168 floats (D=7168), dumped as ASCII to `K3_VALIDATE_OUT` file.
 
-**Validation runs:** Three layers tested on both Metal and CPU with identical K3_X0-injected inputs (2 tokens, `COLI_TEMP=0`, greedy sampling):
+**Validation runs:** Three layers tested on both Metal and CPU with identical K3_X0-injected inputs (2 tokens, `LMA_TEMP=0`, greedy sampling):
 
 | Layer | Type | nrm_attn | att | nrm_mlp | mlp | hidden |
 |---|---|---|---|---|---|---|
@@ -682,10 +682,10 @@ All values are maximum absolute error (maxAbs) across all 7168 dimensions per te
 **Results:** All 15 tensor comparisons across 3 layers show **maxAbs = 0.00e+00** — bit-for-bit identical outputs between Metal and CPU paths.
 
 This confirms:
-- `coli_metal_kda_fused_token()` (fused conv_silu×3 + l2_norm + state recurrence) produces identical state and gate outputs
-- `coli_metal_kv_write()` produces identical KV cache entries
-- `coli_metal_matmul()` produces identical projections at all quantization levels (f32, q8, i4)
-- `coli_metal_moe_block()` produces identical expert outputs
+- `lma_metal_kda_fused_token()` (fused conv_silu×3 + l2_norm + state recurrence) produces identical state and gate outputs
+- `lma_metal_kv_write()` produces identical KV cache entries
+- `lma_metal_matmul()` produces identical projections at all quantization levels (f32, q8, i4)
+- `lma_metal_moe_block()` produces identical expert outputs
 - No floating-point reordering effects from Metal's execution model
 
 **Code changes:** `c/kimi_k3.c` — added `g_k3_val_layer`, `g_k3_val_token`, `g_k3_val_fp` globals; `val_dump()` helper; capture hooks in `step_chunk()` layer loop; cleanup in `main()` exit paths.
@@ -698,7 +698,7 @@ End-to-end inference validation across the complete 93-layer Kimi K3 model on Me
 
 **Critical bug discovered and fixed during Phase 10:**
 
-### fmt=0 scales NULL crash in `coli_metal_matmul()`
+### fmt=0 scales NULL crash in `lma_metal_matmul()`
 
 **Symptom:** Metal inference crashed with SIGSEGV (exit 139) at `newBufferWithBytes` inside `wrap()` during the 5th matmul call per layer (tanh activation, `fmt=0`). All 4 quantized projections (fmt=4) succeeded; every layer crashed on the tanh call.
 
@@ -712,7 +712,7 @@ The caller (`w_matmul()` in `kimi_k3.c:317`) correctly passes `scales=NULL` for 
 - `c/backend_metal.mm:588` — `fmt_scale_bytes()` logic
 - `c/kimi_k3.c:317` — preserved `scales=NULL` for fmt=0 (was already correct)
 
-**Debug approach:** Layered dprintf tracing at every step inside `coli_metal_matmul()` revealed crash at `[MT3]` (post-weight-wrap, pre-scale-wrap). The pattern (4 fmt=4 calls succeed, 1 fmt=0 call crashes) was identical across all 93 layers.
+**Debug approach:** Layered dprintf tracing at every step inside `lma_metal_matmul()` revealed crash at `[MT3]` (post-weight-wrap, pre-scale-wrap). The pattern (4 fmt=4 calls succeed, 1 fmt=0 call crashes) was identical across all 93 layers.
 
 ### Memory management fix: f_free on late-initialized buffers
 
@@ -726,7 +726,7 @@ The caller (`w_matmul()` in `kimi_k3.c:317`) correctly passes `scales=NULL` for 
 
 **Purpose:** When `K3_X0=0`, the GPU is used for the fused KDA kernel (conv_silu, l2_norm, state recurrence) but `w_matmul` falls back to CPU matmul. This provides a controlled path to isolate fused-kernel correctness from projection correctness.
 
-**Implementation:** `coli_metal_kda_fused_token()` dispatches normally under `g_k3_metal`, while `w_matmul()` checks `g_k3_metal && coli_metal_available()` and falls through to CPU when `K3_X0=0` unsets the GPU dispatch flag.
+**Implementation:** `lma_metal_kda_fused_token()` dispatches normally under `g_k3_metal`, while `w_matmul()` checks `g_k3_metal && lma_metal_available()` and falls through to CPU when `K3_X0=0` unsets the GPU dispatch flag.
 
 **Performance:** `K3_X0=0` mode confirmed f_free fix — runs all 93 layers with GPU fused kernel + CPU projections without pointer corruption.
 
@@ -769,7 +769,7 @@ The existing GLM Metal path should remain bit-for-bit identical or within establ
 - Phase 10: Full model validation exit-0, correct token generation, corrected fmt=0 scales crash
 - KDA fused kernel (Phase 8.4): conv_silu×3 + l2_norm + state recurrence in single MTLCommandBuffer
 - KDA conv_silu, l2_norm, state kernels verified correct (Phase 8.3, 8.2)
-- `coli_metal_init()` validated: `MTLCreateSystemDefaultDevice`, shader compile, all pipeline states
+- `lma_metal_init()` validated: `MTLCreateSystemDefaultDevice`, shader compile, all pipeline states
 
 **What is left to do:**
 - Phase 11: GLM Metal regression (GLM models still untested with Kimi K3 Metal changes)
@@ -792,26 +792,26 @@ The existing GLM Metal path should remain bit-for-bit identical or within establ
 - Input floats (qn, kn, vh, alpha, beta) verified matching between Metal and CPU to 6-7 digits
 
 **What is working:**
-- `coli_metal_kda_fused_token()`: All 5 kernels (conv_silu×3, l2_norm, state) execute in one command buffer
-- `coli_metal_kda_conv_silu()`: Conv1d depthwise + SiLU gate, 3 dispatches per token
-- `coli_metal_kda_l2_norm()`: Per-head L2 normalization for q and k
-- `coli_metal_kda_state()`: State recurrence with two-pass algorithm (decay+accumulate, expand+merge)
-- `coli_metal_matmul()`: All quantization formats (f32 fmt=0, q8 fmt=1, i4 grouped fmt=4)
-- `coli_metal_moe_block()`: Expert routing + block dispatch
-- `coli_metal_kv_write()`: KV cache write with rmsnorm + rope
-- `coli_metal_kv_clear()`: KV cache zeroing on model reset
+- `lma_metal_kda_fused_token()`: All 5 kernels (conv_silu×3, l2_norm, state) execute in one command buffer
+- `lma_metal_kda_conv_silu()`: Conv1d depthwise + SiLU gate, 3 dispatches per token
+- `lma_metal_kda_l2_norm()`: Per-head L2 normalization for q and k
+- `lma_metal_kda_state()`: State recurrence with two-pass algorithm (decay+accumulate, expand+merge)
+- `lma_metal_matmul()`: All quantization formats (f32 fmt=0, q8 fmt=1, i4 grouped fmt=4)
+- `lma_metal_moe_block()`: Expert routing + block dispatch
+- `lma_metal_kv_write()`: KV cache write with rmsnorm + rope
+- `lma_metal_kv_clear()`: KV cache zeroing on model reset
 - Metal inference produces exit-0 with correct tokens (93 layers, 93/93 Metal-backed)
 
 **Active investigation:**
 - **Meta KDA dot ratio discrepancy**: CPU_DOT_RATIO ~8.054e-3 vs META_DOT_RATIO ~5.432e-3 (1.48x off). Metal output is uniform across all 128 dims, input floats verified matching to 6-7 digits. Root cause unknown — could be different qn/kn normalization, different dot product accumulation, or different vh/beta values between CPU and Metal code paths. Requires isolating CPU-side dot(qn,kn)*vh*beta to compare with Metal-side computation.
 
 **What is not working (or not yet tested):**
-- `--metal` CLI flag: Does not exist (compile-time `-DCOLI_METAL` + runtime `K3_METAL=1` env var only)
+- `--metal` CLI flag: Does not exist (compile-time `-DLMA_METAL` + runtime `K3_METAL=1` env var only)
 - GLM Metal path: Not retested after Kimi K3 Metal integration
 - `kimi_k3.c` source: Was accidentally deleted and restored from git, then restored from Time Machine backup (08:16 AM, Aug 2) — verified backup contains all local modifications (2112 lines, K3_DEBUG_OUT, META_DIMS, CPU_DOT_RATIO, etc.)
 
 **Metal dispatch activation:**
-- Build: `make -C c kimi_k3 METAL=1` (pass `-DCOLI_METAL` to compiler)
+- Build: `make -C c kimi_k3 METAL=1` (pass `-DLMA_METAL` to compiler)
 - Run: `K3_METAL=1 ./kimi_k3 /Volumes/4Tb990Pro/Kimi-K3 "prompt"`
 - Debug: `K3_DEBUG_OUT=/tmp/k3_debug.txt` for per-dim Metal/CPU comparison file
 - Max tokens: `K3_MAX_TOK=N` to limit generation for quick testing

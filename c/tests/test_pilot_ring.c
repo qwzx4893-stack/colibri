@@ -4,11 +4,11 @@
  *
  * This gates the new lock-free primitive without needing a model (the slot
  * reservation logic in pilot_realload is exercised end-to-end by the token-exact
- * oracle; here we prove the ring claim itself). Includes colibri.c for the real
+ * oracle; here we prove the ring claim itself). Includes glm52.c for the real
  * pilot_ring_claim / pilot_q / pilot_w / pilot_r (same pattern as the other tests).
  */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 #include <pthread.h>
 #include <stdint.h>

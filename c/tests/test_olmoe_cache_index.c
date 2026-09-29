@@ -1,6 +1,6 @@
 /* Model-free regression for OLMoE's expert -> slot index.  No checkpoint,
  * tokenizer, GPU, or meaningful RAM is required. */
-#define COLI_CACHE_INDEX_TEST 1
+#define LMA_CACHE_INDEX_TEST 1
 #define main olmoe_main_unused
 #include "../olmoe.c"
 #undef main

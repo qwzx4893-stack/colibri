@@ -2,7 +2,7 @@
 from pathlib import Path
 import unittest
 
-SRC = Path(__file__).resolve().parents[1] / "coli"
+SRC = Path(__file__).resolve().parents[1] / "lmatomic"
 
 class GLM53CapLaunchSourceTests(unittest.TestCase):
     @classmethod

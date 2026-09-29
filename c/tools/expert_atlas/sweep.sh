@@ -3,7 +3,7 @@
 #
 #   cd c && ./tools/expert_atlas/sweep.sh [probes.json] [outdir]
 #
-# Env: COLI_MODEL, NGEN (default 64), COLI (default ./coli)
+# Env: LMA_MODEL, NGEN (default 64), LMATOMIC (default ./lmatomic)
 #
 # ---------------------------------------------------------------------------------------------
 # THE CONFOUNDS THIS SCRIPT EXISTS TO CONTROL. Each one silently corrupts the atlas.
@@ -25,8 +25,8 @@
 #
 #   --temp 0    Greedy: deterministic continuation, reproducible atlas.
 #
-#   rm .coli_usage before EVERY run
-#               eusage is LOADED from <model>/.coli_usage at startup and written back at exit, so
+#   rm .lma_usage before EVERY run
+#               eusage is LOADED from <model>/.lma_usage at startup and written back at exit, so
 #               a naive STATS dump contains ALL PRIOR HISTORY, not this run. Removing it per run
 #               makes each dump exactly one probe. The user's learned cache is backed up and
 #               restored on exit.
@@ -38,18 +38,18 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PROBES="${1:-$HERE/probes.json}"
 OUT="${2:-./atlas_out}"
-COLI="${COLI:-./coli}"
+LMATOMIC="${LMATOMIC:-./lmatomic}"
 NGEN="${NGEN:-64}"
-MODEL="${COLI_MODEL:?set COLI_MODEL to the snapshot directory}"
+MODEL="${LMA_MODEL:?set LMA_MODEL to the snapshot directory}"
 
 [ -f "$PROBES" ] || { echo "no probe file: $PROBES" >&2; exit 1; }
-[ -x "$COLI" ]   || { echo "no coli at $COLI (run from c/, or set COLI=)" >&2; exit 1; }
+[ -x "$COLI" ]   || { echo "no lmatomic at $COLI (run from c/, or set LMATOMIC=)" >&2; exit 1; }
 mkdir -p "$OUT/stats"
 
-export COLI_MODEL="$MODEL" MTP=0 DRAFT=0 TOPP=0
+export LMA_MODEL="$MODEL" MTP=0 DRAFT=0 TOPP=0
 
-USAGE="$MODEL/.coli_usage"
-BACKUP="$OUT/.coli_usage.backup"
+USAGE="$MODEL/.lma_usage"
+BACKUP="$OUT/.lma_usage.backup"
 [ -f "$USAGE" ] && cp "$USAGE" "$BACKUP" && echo "backed up $USAGE"
 restore(){ [ -f "$BACKUP" ] && cp "$BACKUP" "$USAGE" && echo "restored $USAGE"; }
 trap restore EXIT

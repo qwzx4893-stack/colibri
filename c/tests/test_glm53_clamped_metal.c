@@ -19,11 +19,11 @@ int main(void) {
     float expect[N];
     for (int i=0;i<N;i++) expect[i]=ref(g[i],u[i],limit);
 
-    if (!coli_metal_init() || !coli_metal_available()) {
+    if (!lma_metal_init() || !lma_metal_available()) {
         fprintf(stderr,"SKIP: Metal unavailable\n");
         return 77;
     }
-    if (!coli_metal_silu_mul_clamped(g,u,N,limit)) {
+    if (!lma_metal_silu_mul_clamped(g,u,N,limit)) {
         fprintf(stderr,"FAIL: Metal clamped SwiGLU call failed\n");
         return 2;
     }
@@ -41,7 +41,7 @@ int main(void) {
         }
     }
     printf("GLM53 clamped SwiGLU oracle: n=%d limit=%.3f max_abs=%.9g max_rel=%.9g\n",N,limit,max_abs,max_rel);
-    coli_metal_shutdown();
+    lma_metal_shutdown();
     if (bad) { fprintf(stderr,"FAIL: %d mismatches\n",bad); return 1; }
     puts("GLM53 clamped SwiGLU oracle: OK");
     return 0;

@@ -1,4 +1,4 @@
-// Apple-GPU (Metal) backend for colibrì. Runtime-compiled shader (no Xcode needed),
+// Apple-GPU (Metal) backend for LM Atomic. Runtime-compiled shader (no Xcode needed),
 // zero-copy over unified memory. See backend_metal.h and docs/plans/2026-07-10-*.
 #import <Metal/Metal.h>
 #import <Foundation/Foundation.h>
@@ -14,7 +14,7 @@
 // nibble layout as fmt=2, but scale is PER-GROUP (gsz elements of I), buffer(1) holds
 // [O, ceil(I/gsz)] floats indexed scale[o*ng+g] -- so unlike fmt 1-3, the group scale is
 // folded into the accumulation itself (see the fmt==4 branch), not applied once at the end.
-// fmt=8 (native FP8-e4m3 passthrough -- see colibri.c): raw byte
+// fmt=8 (native FP8-e4m3 passthrough -- see glm52.c): raw byte
 // layout identical to fmt=1 (one e4m3 byte per element, no packing), but the scale is
 // per-128x128 BLOCK of [O,I] -- buffer(1) holds [ceil(O/128),ceil(I/128)] floats indexed
 // scale[(o/128)*nblkI+i/128]. Folded into acc like fmt=4's per-group scale, for the
@@ -409,14 +409,14 @@ kernel void r_top8(device const float* sig [[buffer(0)]], device const float* bi
 // (same ops, same order => bitwise-identical results; metal-test enforces this with
 // memcmp). Contract: E<=256 (ch[8]/taken mask sizing: ceil(E/32)<=8) — the defensive
 // return below makes an out-of-contract dispatch a visible no-op (idx/w/keff untouched),
-// never an OOB write; both call sites (coli_metal_layer_decode's dispatch and the
-// standalone coli_metal_rtop8 runner) additionally gate on E<=256 in host code before
+// never an OOB write; both call sites (lma_metal_layer_decode's dispatch and the
+// standalone lma_metal_rtop8 runner) additionally gate on E<=256 in host code before
 // selecting this pipeline at all, so the return here is defense-in-depth, not the only
 // guard. Sentinel-per-lane design (ch[j]=-1e30f for e>=E) makes non-multiple-of-32 E
 // and small E correct without special-casing — validated for E=24, E=168 (REAP
 // expert-pruned packages, see the upstream feature-request thread) and E=256 by metal-test.
 // ASSUMES SIMD width 32 (shuffle offsets 16..1, 32-thread threadgroup per row): enforced
-// at init — coli_metal_init clears g_rtop8_width_ok (and therefore both call sites' use
+// at init — lma_metal_init clears g_rtop8_width_ok (and therefore both call sites' use
 // of this pipeline) if threadExecutionWidth != 32.
 kernel void r_top8_par(device const float* sig [[buffer(0)]], device const float* bias [[buffer(1)]],
                        device int* idx [[buffer(2)]], device float* w [[buffer(3)]],
@@ -589,7 +589,7 @@ kernel void kda_state(
 }
 )METAL";
 
-struct ColiMetalTensor {
+struct LmaMetalTensor {
   id<MTLBuffer> w;      // weights (wrapped, zero-copy when page-aligned)
   id<MTLBuffer> s;      // scales
   int fmt, I, O; size_t wbytes;
@@ -626,34 +626,34 @@ static id<MTLComputePipelineState> g_a_add, g_r_router, g_r_top8, g_r_top8p;
 static id<MTLComputePipelineState> g_kv_rope, g_kv_clear;
 static id<MTLComputePipelineState> g_kda_state;
 static id<MTLComputePipelineState> g_kda_conv_silu, g_kda_l2_norm;
-static int g_rtop8_par = 1;      // COLI_RTOP8 (default ON); COLI_RTOP8=0 opts out to the
-                                  // serial kernel — see coli_metal_init.
+static int g_rtop8_par = 1;      // LMA_RTOP8 (default ON); LMA_RTOP8=0 opts out to the
+                                  // serial kernel — see lma_metal_init.
 static int g_rtop8_width_ok = 1; // hardware fact, independent of the policy gate above:
                                   // false if this device's threadExecutionWidth != 32.
                                   // Consulted by BOTH the engine dispatch site and the
-                                  // standalone coli_metal_rtop8 runner, so no caller can
+                                  // standalone lma_metal_rtop8 runner, so no caller can
                                   // reach r_top8_par's 32-lane reduction on an unsafe
                                   // device even by explicitly requesting par=1.
 static size_t g_tensor_count, g_tensor_bytes;
 static uint64_t g_moe_ok, g_moe_fb, g_moe_experts;   // GPU blocks / CPU-fallback blocks / experts on GPU
 static double g_t_setup, g_t_gpu, g_t_scatter, g_t_kernel;       // per-block time breakdown (seconds)
 static const int TG = 128;
-static MTLResourceOptions g_res_opts = MTLResourceStorageModeShared;   // COLI_METAL_UNTRACKED=1 adds HazardTrackingModeUntracked
+static MTLResourceOptions g_res_opts = MTLResourceStorageModeShared;   // LMA_METAL_UNTRACKED=1 adds HazardTrackingModeUntracked
 #include <mach/mach_time.h>
 static double mnow(){ static mach_timebase_info_data_t tb; if(tb.denom==0) mach_timebase_info(&tb);
   return (double)mach_absolute_time()*tb.numer/tb.denom/1e9; }
 
-extern "C" void coli_metal_moe_counts(uint64_t *ok, uint64_t *fb, uint64_t *ex) {
+extern "C" void lma_metal_moe_counts(uint64_t *ok, uint64_t *fb, uint64_t *ex) {
   if(ok)*ok=g_moe_ok; if(fb)*fb=g_moe_fb; if(ex)*ex=g_moe_experts;
 }
-extern "C" void coli_metal_moe_times(double *setup, double *gpu, double *scatter) {
+extern "C" void lma_metal_moe_times(double *setup, double *gpu, double *scatter) {
   if(setup)*setup=g_t_setup; if(gpu)*gpu=g_t_gpu; if(scatter)*scatter=g_t_scatter;
 }
-extern "C" double coli_metal_moe_kernel_time(void){ return g_t_kernel; }
+extern "C" double lma_metal_moe_kernel_time(void){ return g_t_kernel; }
 static uint64_t g_attn_ok; static double g_attn_wall, g_attn_kernel, g_attn_sched, g_attn_ksched;
-extern "C" void coli_metal_attn_counts(uint64_t *ok, double *wall, double *kernel){
+extern "C" void lma_metal_attn_counts(uint64_t *ok, double *wall, double *kernel){
   if(ok)*ok=g_attn_ok; if(wall)*wall=g_attn_wall; if(kernel)*kernel=g_attn_kernel; }
-extern "C" void coli_metal_attn_lat(double *ksched, double *gsched){
+extern "C" void lma_metal_attn_lat(double *ksched, double *gsched){
   if(ksched)*ksched=g_attn_ksched; if(gsched)*gsched=g_attn_sched; }
 
 // Registry of page-aligned host slabs wrapped zero-copy for the batched MoE path.
@@ -661,7 +661,7 @@ struct Slab { void *base; size_t len; id<MTLBuffer> buf; };
 static std::vector<Slab> g_slabs;
 static std::mutex g_slab_mtx;   // expert_load registers slabs from parallel OpenMP threads
 
-// ---- E5 experiment: COLI_METAL_RESSET=1 -- one persistent MTLResidencySet attached to
+// ---- E5 experiment: LMA_METAL_RESSET=1 -- one persistent MTLResidencySet attached to
 // g_queue (macOS 15+) replaces moe_submit's per-command-buffer useResource: loop over
 // resolved expert weight/scale slabs. Allocation is untouched (same newBufferWithBytesNoCopy
 // wrap as stock); only residency bookkeeping moves off the dispatch hot path -- see
@@ -672,18 +672,18 @@ static std::mutex g_slab_mtx;   // expert_load registers slabs from parallel Ope
 // @available(macOS 15.0, *) guards below, keeping -Wunguarded-availability clean.
 // @available is a runtime guard only: the compiler still resolves MTLResidencySet and its
 // selectors against the SDK headers, which don't declare them before macOS 15 (#596).
-// COLI_HAS_RESSET is the compile-time floor (helpers become no-ops below it); the @available
-// guards stay on top so a macOS 15 SDK build still runs right on macOS 14. -DCOLI_HAS_RESSET=0
+// LMA_HAS_RESSET is the compile-time floor (helpers become no-ops below it); the @available
+// guards stay on top so a macOS 15 SDK build still runs right on macOS 14. -DLMA_HAS_RESSET=0
 // forces the fallback branch on a modern SDK.
-#ifndef COLI_HAS_RESSET
+#ifndef LMA_HAS_RESSET
 #if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
-#define COLI_HAS_RESSET 1
+#define LMA_HAS_RESSET 1
 #else
-#define COLI_HAS_RESSET 0
+#define LMA_HAS_RESSET 0
 #endif
 #endif
 static id g_resset_obj;
-static bool g_resset_enabled;   // COLI_METAL_RESSET=1, macOS 15 SDK+OS, and creation succeeded
+static bool g_resset_enabled;   // LMA_METAL_RESSET=1, macOS 15 SDK+OS, and creation succeeded
 static bool g_resset_dirty;     // addAllocation: calls pending commit; g_resset_mtx-guarded
 // Set mutations + dirty flag get their OWN mutex, never held together with g_slab_mtx: no
 // live Metal call may run under the slab lock the parallel OMP loader threads contend on
@@ -694,17 +694,17 @@ static std::mutex g_resset_mtx;
 static double g_t_resset_flush;   // sec committing pending adds in moe_submit (gate on only)
 
 // Add a just-wrapped buffer to the set; commit deferred (an OMP loader burst batches into
-// one commit at the next moe_submit instead of one per slab). Called by coli_metal_register
+// one commit at the next moe_submit instead of one per slab). Called by lma_metal_register
 // after it drops g_slab_mtx but before it returns -- and the engine cannot dispatch an
 // expert before the load that registers its slab returns, so any slab a given moe_submit
 // can resolve() was added (and marked dirty) under g_resset_mtx strictly before that
 // moe_submit's resset_flush() acquired the same mutex: the flush covers it. The slab-table
 // ordering itself (register-before-resolve) is unchanged and stays under g_slab_mtx.
-// Cost lands in the caller's existing expert-load accounting (t_ewait window in colibri.c);
+// Cost lands in the caller's existing expert-load accounting (t_ewait window in glm52.c);
 // no separate counter for the add/remove side.
 static void resset_add(id<MTLBuffer> b) {
   if (!g_resset_enabled) return;
-#if COLI_HAS_RESSET
+#if LMA_HAS_RESSET
   std::lock_guard<std::mutex> lk(g_resset_mtx);
   if (@available(macOS 15.0, *)) { [(id<MTLResidencySet>)g_resset_obj addAllocation:b]; g_resset_dirty = true; }
 #else
@@ -712,12 +712,12 @@ static void resset_add(id<MTLBuffer> b) {
 #endif
 }
 // Remove + commit immediately, NOT deferred: the caller frees the underlying host memory
-// right after coli_metal_unregister returns, so the removal must be applied before that --
+// right after lma_metal_unregister returns, so the removal must be applied before that --
 // an uncommitted-but-still-resident allocation pointing at freed memory is a use-after-free
 // risk the GPU could act on. Also runs outside g_slab_mtx (see g_resset_mtx above).
 static void resset_remove(id<MTLBuffer> b) {
   if (!g_resset_enabled) return;
-#if COLI_HAS_RESSET
+#if LMA_HAS_RESSET
   std::lock_guard<std::mutex> lk(g_resset_mtx);
   if (@available(macOS 15.0, *)) {
     id<MTLResidencySet> rs = (id<MTLResidencySet>)g_resset_obj;
@@ -733,7 +733,7 @@ static void resset_remove(id<MTLBuffer> b) {
 // only, never g_slab_mtx; the happens-before argument lives at resset_add above.
 static void resset_flush() {
   if (!g_resset_enabled) return;
-#if COLI_HAS_RESSET
+#if LMA_HAS_RESSET
   std::lock_guard<std::mutex> lk(g_resset_mtx);
   if (!g_resset_dirty) return;
   if (@available(macOS 15.0, *)) { [(id<MTLResidencySet>)g_resset_obj commit]; }
@@ -742,9 +742,9 @@ static void resset_flush() {
 }
 // Harness visibility for the flush cost, which sits OUTSIDE the moe_times setup/gpu
 // breakdown (timed around resset_flush in moe_submit, before ts_start). Returns whether
-// the set is active so colibri.c prints the METAL-RESSET line only when the gate is on --
+// the set is active so glm52.c prints the METAL-RESSET line only when the gate is on --
 // stock output stays byte-identical.
-extern "C" int coli_metal_resset_stats(double *flush_s) {
+extern "C" int lma_metal_resset_stats(double *flush_s) {
   if (flush_s) *flush_s = g_t_resset_flush;
   return g_resset_enabled ? 1 : 0;
 }
@@ -767,16 +767,16 @@ static size_t fmt_bytes(int fmt, int I, int O) {
 // Grouped-int4 (fmt=4) scale-array size: one f32 per gsz-element group, per row -> O*ceil(I/gsz).
 // fp8 (fmt=8) scale-array size: one f32 per 128x128 BLOCK -> ceil(O/128)*ceil(I/128) (2D,
 // not per-row -- quant.h isn't included here, so the ceil-div is inlined rather than sharing
-// colibri.c's qt_scale_bytes/fp8_format.h's fp8_nblk). The block is a fixed 128x128, so gs is
+// glm52.c's qt_scale_bytes/fp8_format.h's fp8_nblk). The block is a fixed 128x128, so gs is
 // ignored for fmt==8. f32 is this build's implemented scale
-// ENCODING for fmt=8 (see quant.h/colibri.c) -- this file has no reason to know that a
+// ENCODING for fmt=8 (see quant.h/glm52.c) -- this file has no reason to know that a
 // UE8M0 encoding exists at all: qt_resolve_fmt refuses it on the CPU read path before any
 // tensor in that encoding could ever reach this Metal-side sizing helper.
 static size_t fmt_scale_bytes(int fmt, int I, int O, int gs) {
   // fmt=0 is RAW f32: the weights are already in their final units, so there is no
   // scale array at all and callers legitimately pass scales == NULL (kimi_k3.c's
   // k3_matmul_f32 does, for the KDA fa/fb/bp projections). Returning the per-row
-  // size below for fmt=0 made coli_metal_matmul wrap a NULL pointer, which segfaulted
+  // size below for fmt=0 made lma_metal_matmul wrap a NULL pointer, which segfaulted
   // inside newBufferWithBytes' memmove whenever O*4 was not a page multiple, and
   // silently produced a nil buffer (-> all-zero output) when it was. Must stay 0, and
   // mm_gemv must correspondingly not apply a scale for fmt=0.
@@ -811,11 +811,11 @@ static id<MTLBuffer> wrap_persistent(const void *p, size_t n) {
   return b;
 }
 
-extern "C" int coli_metal_init(void) {
+extern "C" int lma_metal_init(void) {
   if (g_dev) return 1;
-  if (getenv("COLI_METAL_UNTRACKED") && atoi(getenv("COLI_METAL_UNTRACKED")))
+  if (getenv("LMA_METAL_UNTRACKED") && atoi(getenv("LMA_METAL_UNTRACKED")))
     g_res_opts = MTLResourceStorageModeShared | MTLResourceHazardTrackingModeUntracked;
-  { const char *e = getenv("COLI_RTOP8");           // default ON; COLI_RTOP8=0 opts out
+  { const char *e = getenv("LMA_RTOP8");           // default ON; LMA_RTOP8=0 opts out
     if (e && atoi(e) == 0) g_rtop8_par = 0; }
   @autoreleasepool {
     g_dev = MTLCreateSystemDefaultDevice();
@@ -853,13 +853,13 @@ extern "C" int coli_metal_init(void) {
     // 32-thread threadgroup per row). True on all Apple Silicon shipped to date, but a
     // non-32-width device would reduce wrongly AND race multiple lane-0 writers, so this
     // is a hard safety fact (g_rtop8_width_ok), not just a policy default: it gates BOTH
-    // the engine dispatch site and the standalone coli_metal_rtop8 runner (degrade-to-safe,
+    // the engine dispatch site and the standalone lma_metal_rtop8 runner (degrade-to-safe,
     // same pattern as the pool/ring fallbacks elsewhere) — no caller can opt back into an
     // unsafe reduction on such a device, even by explicitly requesting par=1.
     if ([g_r_top8p threadExecutionWidth] != 32) {
       g_rtop8_width_ok = 0;
       if (g_rtop8_par)
-        fprintf(stderr, "[metal] COLI_RTOP8 parallel top-8 disabled: threadExecutionWidth=%lu "
+        fprintf(stderr, "[metal] LMA_RTOP8 parallel top-8 disabled: threadExecutionWidth=%lu "
                         "!= 32 (r_top8_par's reduction assumes 32-lane simdgroups) — serial "
                         "r_top8 in use\n", (unsigned long)[g_r_top8p threadExecutionWidth]);
       g_rtop8_par = 0;
@@ -867,9 +867,9 @@ extern "C" int coli_metal_init(void) {
     if (!g_gemv || !g_moe_gemv || !g_moe_silu || !g_moe_silu_clamped || !g_moe_fwht || !g_a_rms || !g_a_rope || !g_a_copy ||
         !g_a_qabs || !g_a_score || !g_a_smax || !g_a_clat || !g_a_ctx) {
       fprintf(stderr, "[metal] pipeline failed\n"); g_dev = nil; return 0; }
-    // E5 experiment: COLI_METAL_RESSET=1 -- see g_resset_obj comment above.
-    if (getenv("COLI_METAL_RESSET") && atoi(getenv("COLI_METAL_RESSET"))) {
-#if COLI_HAS_RESSET
+    // E5 experiment: LMA_METAL_RESSET=1 -- see g_resset_obj comment above.
+    if (getenv("LMA_METAL_RESSET") && atoi(getenv("LMA_METAL_RESSET"))) {
+#if LMA_HAS_RESSET
       if (@available(macOS 15.0, *)) {
         MTLResidencySetDescriptor *rd = [MTLResidencySetDescriptor new];
         rd.initialCapacity = 4096;   // hint only (internal array presize), not a hard limit
@@ -884,10 +884,10 @@ extern "C" int coli_metal_init(void) {
                   rerr ? [[rerr localizedDescription] UTF8String] : "?");
         }
       } else {
-        fprintf(stderr, "[METAL] COLI_METAL_RESSET=1 requested but OS < macOS 15 -- stock per-CB residency path\n");
+        fprintf(stderr, "[METAL] LMA_METAL_RESSET=1 requested but OS < macOS 15 -- stock per-CB residency path\n");
       }
 #else
-      fprintf(stderr, "[METAL] COLI_METAL_RESSET=1 requested but this binary was built against a "
+      fprintf(stderr, "[METAL] LMA_METAL_RESSET=1 requested but this binary was built against a "
                       "macOS SDK < 15 (MTLResidencySet unavailable) -- stock per-CB residency path\n");
 #endif
     }
@@ -895,7 +895,7 @@ extern "C" int coli_metal_init(void) {
   return 1;
 }
 
-extern "C" void coli_metal_register(void *base, size_t len) {
+extern "C" void lma_metal_register(void *base, size_t len) {
   if (!g_dev || !base) return;
   id<MTLBuffer> b = [g_dev newBufferWithBytesNoCopy:base length:len
                               options:g_res_opts deallocator:nil];
@@ -915,7 +915,7 @@ extern "C" void coli_metal_register(void *base, size_t len) {
   if (old && old != b) resset_remove(old);
   if (old != b) resset_add(b);
 }
-extern "C" void coli_metal_unregister(void *base) {
+extern "C" void lma_metal_unregister(void *base) {
   id<MTLBuffer> b = nil;
   {
     std::lock_guard<std::mutex> lk(g_slab_mtx);
@@ -933,14 +933,14 @@ static id<MTLBuffer> resolve(const void *p, uint64_t *addr) {
   return nil;
 }
 
-// Keep-alive spinner (COLI_METAL_SPIN=1): keeps trivial GPU work in flight so the GPU
+// Keep-alive spinner (LMA_METAL_SPIN=1): keeps trivial GPU work in flight so the GPU
 // doesn't ramp its clock down between the engine's short per-layer bursts. Experiment to
 // quantify how much of the observed submit latency is clock ramp-down.
 #include <thread>
 #include <atomic>
 static std::atomic<bool> g_spin_run{false};
 static std::thread g_spin_thr;
-extern "C" void coli_metal_spin_start(void) {
+extern "C" void lma_metal_spin_start(void) {
   if (!g_dev || g_spin_run.exchange(true)) return;
   g_spin_thr = std::thread([]{
     id<MTLCommandQueue> q = [g_dev newCommandQueue];       // own queue: never blocks real work
@@ -958,11 +958,11 @@ extern "C" void coli_metal_spin_start(void) {
   });
   g_spin_thr.detach();               // never joinable at exit (joinable global -> std::terminate)
 }
-extern "C" void coli_metal_spin_stop(void) { g_spin_run.store(false); }
+extern "C" void lma_metal_spin_stop(void) { g_spin_run.store(false); }
 
-extern "C" void coli_metal_shutdown(void) {
-  coli_metal_spin_stop();
-#if COLI_HAS_RESSET
+extern "C" void lma_metal_shutdown(void) {
+  lma_metal_spin_stop();
+#if LMA_HAS_RESSET
   if (g_resset_enabled) {
     if (@available(macOS 15.0, *)) { [g_queue removeResidencySet:(id<MTLResidencySet>)g_resset_obj]; }
   }
@@ -970,16 +970,16 @@ extern "C" void coli_metal_shutdown(void) {
   g_resset_obj=nil; g_resset_enabled=false; g_resset_dirty=false;
   g_gemv=nil; g_queue=nil; g_dev=nil; g_tensor_count=g_tensor_bytes=0;
 }
-extern "C" int  coli_metal_available(void) { return g_dev != nil; }
-extern "C" void coli_metal_stats(size_t *c, size_t *b) { if(c)*c=g_tensor_count; if(b)*b=g_tensor_bytes; }
-extern "C" int  coli_metal_mem_info(size_t *used, size_t *total) {
+extern "C" int  lma_metal_available(void) { return g_dev != nil; }
+extern "C" void lma_metal_stats(size_t *c, size_t *b) { if(c)*c=g_tensor_count; if(b)*b=g_tensor_bytes; }
+extern "C" int  lma_metal_mem_info(size_t *used, size_t *total) {
   if (!g_dev) return 0;
   if (used) *used = (size_t)[g_dev currentAllocatedSize];
   if (total) *total = (size_t)[g_dev recommendedMaxWorkingSetSize];
   return 1;
 }
 
-extern "C" int coli_metal_matmul(ColiMetalTensor **tp, float *y, const float *x,
+extern "C" int lma_metal_matmul(LmaMetalTensor **tp, float *y, const float *x,
                                  const void *weights, const float *scales,
                                  int fmt, int S, int I, int O, int gs) {
   /* fmt==8 (fp8 passthrough) is an explicit allow-list entry, not folded into the 0..4
@@ -998,9 +998,9 @@ extern "C" int coli_metal_matmul(ColiMetalTensor **tp, float *y, const float *x,
     return 0;
   }
   @autoreleasepool {
-    ColiMetalTensor *t = *tp;
+    LmaMetalTensor *t = *tp;
     if (!t) {
-      t = new ColiMetalTensor();
+      t = new LmaMetalTensor();
       t->fmt = fmt; t->I = I; t->O = O; t->wbytes = fmt_bytes(fmt, I, O);
       t->w = wrap(weights, t->wbytes);
       { size_t sb=fmt_scale_bytes(fmt, I, O, gs); t->s=sb?wrap(scales,sb):0; }
@@ -1165,7 +1165,7 @@ static bool resolve_attn(const AttnW *W, float *Lc, float *Rc,
     return true;
 }
 
-extern "C" int coli_metal_attn_decode(const float* x,
+extern "C" int lma_metal_attn_decode(const float* x,
     const void* qa_w,const float* qa_s,int qa_fmt,int qa_gs,const float* qa_ln,
     const void* qb_w,const float* qb_s,int qb_fmt,int qb_gs,
     const void* kva_w,const float* kva_s,int kva_fmt,int kva_gs,const float* kva_ln,
@@ -1211,7 +1211,7 @@ extern "C" int coli_metal_attn_decode(const float* x,
 // CPU keeps: expert resolve/disk loads + expert CBs + scatter (unchanged). Outputs:
 // x (updated in place), nrm=post_ln(x) (expert input), sh_out (shared-expert output),
 // idx/w/keff (routing). Returns 0 -> CPU fallback (whole layer falls back).
-extern "C" int coli_metal_layer_decode(float *x,
+extern "C" int lma_metal_layer_decode(float *x,
     const float *in_ln, const float *post_ln,
     const void* qa_w,const float* qa_s,int qa_fmt,int qa_gs,const float* qa_ln,
     const void* qb_w,const float* qb_s,int qb_fmt,int qb_gs,
@@ -1278,11 +1278,11 @@ extern "C" int coli_metal_layer_decode(float *x,
     // 5) silu(gate)*up + exact top-K select
     [e setComputePipelineState:g_moe_silu]; [e setBuffer:ash1_ offset:0 atIndex:0]; [e setBuffer:ash2_ offset:0 atIndex:1];
     [e dispatchThreads:MTLSizeMake((size_t)S*SI,1,1) threadsPerThreadgroup:MTLSizeMake(256,1,1)];
-    { // COLI_RTOP8 (default ON) swaps the serial 1-thread-per-row select for the exact-
+    { // LMA_RTOP8 (default ON) swaps the serial 1-thread-per-row select for the exact-
       // match 1-simdgroup-per-row replica (same buffers/args; only pipeline+grid change).
       // E<=256 is required by r_top8_par's ch[8]/32-lane blocking contract; this call
       // site's E is always 256 today (layer_forward_rows' own architecture-shape gate in
-      // colibri.c requires c->n_experts==256 to reach coli_metal_layer_decode at all —
+      // glm52.c requires c->n_experts==256 to reach lma_metal_layer_decode at all —
       // see PR body "Scope statement") but the check is kept here too, defense-in-depth,
       // so a future relaxation of that gate (e.g. to admit REAP-pruned E=168 models into
       // the fused path) degrades safely to the serial kernel instead of mis-dispatching.
@@ -1316,7 +1316,7 @@ extern "C" int coli_metal_layer_decode(float *x,
 // Sync GEMM for large row-batches (prefill): y[S,O] = x[S,I] @ W^T * scale. Weights must be
 // registered (zero-copy); x/y go through grow-only shared scratch. Returns 0 -> CPU fallback.
 static id<MTLBuffer> g_gx, g_gy; static size_t g_gx_cap, g_gy_cap;
-extern "C" int coli_metal_gemm(float *y, const float *x, const void *wp, const float *sp,
+extern "C" int lma_metal_gemm(float *y, const float *x, const void *wp, const float *sp,
                                int fmt, int S, int I, int O, int gs) {
   if (!g_dev || (fmt!=1 && fmt!=2 && fmt!=4)) return 0;
   @autoreleasepool {
@@ -1343,10 +1343,10 @@ extern "C" int coli_metal_gemm(float *y, const float *x, const void *wp, const f
     // ever written scalar (y[row]), so r0*O*4 needs just 4B; and the 16B float4 loads on g_gx
     // execute only inside loops gated by I8=(I&7)?0:(I/8), i.e. only when I%8==0, where r0*I*4 is
     // a multiple of 32. With I%8!=0, I8=0, x4 is never dereferenced and x is read scalar via xr[i].
-    // COLI_GEMM_CHUNK=0 disables chunking (one full dispatch = the buggy pre-fix behavior) so the
+    // LMA_GEMM_CHUNK=0 disables chunking (one full dispatch = the buggy pre-fix behavior) so the
     // fix can be A/B'd on a single binary. Default on.
     static int chunk_on=-1;
-    if(chunk_on<0){ const char*e=getenv("COLI_GEMM_CHUNK"); chunk_on=(e&&e[0]=='0'&&!e[1])?0:1; }
+    if(chunk_on<0){ const char*e=getenv("LMA_GEMM_CHUNK"); chunk_on=(e&&e[0]=='0'&&!e[1])?0:1; }
     const int64_t NT_MAX = chunk_on ? ((int64_t)1<<25) : ((int64_t)1<<62);
     // Clamp in 64-bit BEFORE narrowing: with chunking off NT_MAX/O is ~1.6e14 for kv_b (O=28672),
     // far past INT_MAX, so casting first is implementation-defined. Were it to truncate negative
@@ -1376,7 +1376,7 @@ extern "C" int coli_metal_gemm(float *y, const float *x, const void *wp, const f
 // pipeline choice, so a caller (including metal-test itself) can never reach the parallel
 // kernel out of contract by asking for it — par=1 with E>256, or on a non-32-wide device,
 // transparently runs the serial kernel instead and still returns 1 (success).
-extern "C" int coli_metal_rtop8(int par, const float *sig, const float *bias, int S, int E, int K,
+extern "C" int lma_metal_rtop8(int par, const float *sig, const float *bias, int S, int E, int K,
                                 int Ksel, float topp, int normk, float rscale,
                                 int *idx, float *w, int *keff) {
   if (!g_dev || S < 1 || E < 1 || K < 1 || Ksel < 1 || Ksel > K) return 0;
@@ -1406,12 +1406,12 @@ extern "C" int coli_metal_rtop8(int par, const float *sig, const float *bias, in
   return 1;
 }
 
-extern "C" void coli_metal_tensor_free(ColiMetalTensor *t) {
+extern "C" void lma_metal_tensor_free(LmaMetalTensor *t) {
   if (!t) return;
   g_tensor_count--; g_tensor_bytes -= t->wbytes;
   t->w = nil; t->s = nil; delete t;
 }
-extern "C" size_t coli_metal_tensor_bytes(const ColiMetalTensor *t) { return t ? t->wbytes : 0; }
+extern "C" size_t lma_metal_tensor_bytes(const LmaMetalTensor *t) { return t ? t->wbytes : 0; }
 
 // Batched routed-expert SwiGLU for one block in ONE command buffer. Returns 0 (CPU fallback)
 // if Metal is off or any expert pointer is not in a registered slab.
@@ -1434,13 +1434,13 @@ static id<MTLCommandBuffer> moe_submit_impl(int nb, int D, int Iinter, int fmt, 
       off += n;
     }
   }
-  // COLI_METAL_MOE_EXACT=1: route fmt=4 routed experts to the CPU reference path (bit-exact,
+  // LMA_METAL_MOE_EXACT=1: route fmt=4 routed experts to the CPU reference path (bit-exact,
   // matches matmul_i4_grouped) instead of the fast batched float4 kernel. Opt-in; default is
   // the fast GPU path. Returning nil makes moe() fall back to CPU for fmt=4 experts, exactly
   // like an unresolved slab -- fmt=1/2 stay on the GPU, attention/dense are untouched.
   // (PR #587 gate-2: token-exact mode for trajectories whose gap dips under the drift tail.)
   { static int g_moe_exact = -1;
-    if (g_moe_exact < 0) { const char *e = getenv("COLI_METAL_MOE_EXACT"); g_moe_exact = (e && e[0] && e[0] != '0'); }
+    if (g_moe_exact < 0) { const char *e = getenv("LMA_METAL_MOE_EXACT"); g_moe_exact = (e && e[0] && e[0] != '0'); }
     if (g_moe_exact) return nil; }  /* exact mode is path-scoped, not fmt-scoped: the resident
                                      * tier (fmt=1 on mixed containers) carries the same
                                      * accumulation-order drift, so ALL routed experts fall to
@@ -1470,7 +1470,7 @@ static id<MTLCommandBuffer> moe_submit_impl(int nb, int D, int Iinter, int fmt, 
   memcpy([xg_buf contents], xg, (size_t)R*D*4);
 
   id<MTLCommandBuffer> cb=[g_queue commandBuffer]; id<MTLComputeCommandEncoder> e=[cb computeCommandEncoder];
-  // E5 (COLI_METAL_RESSET=1): the queue-attached MTLResidencySet already guarantees these
+  // E5 (LMA_METAL_RESSET=1): the queue-attached MTLResidencySet already guarantees these
   // buffers are resident, so skip the per-buffer declaration whose count scales with LRU
   // cache size (mechanism history v5). Residency sets don't do hazard tracking (Apple docs),
   // but none was load-bearing here: every buffer in `use` is MTLResourceUsageRead-only and
@@ -1541,7 +1541,7 @@ static int moe_finish(id<MTLCommandBuffer> cb, id<MTLBuffer> hh_buf, int nb, int
   return 1;
 }
 
-extern "C" int coli_metal_moe_block(int nb, int D, int Iinter, int fmt, int qgs,
+extern "C" int lma_metal_moe_block(int nb, int D, int Iinter, int fmt, int qgs,
                          const void *const *g, const void *const *u, const void *const *d,
                          const float *const *gs, const float *const *us, const float *const *ds,
                          const float *xg, const int *xoff, const int *nr,
@@ -1560,7 +1560,7 @@ extern "C" int coli_metal_moe_block(int nb, int D, int Iinter, int fmt, int qgs,
   }
 }
 
-extern "C" int coli_metal_moe_block_clamped(int nb, int D, int Iinter, int fmt, int qgs,
+extern "C" int lma_metal_moe_block_clamped(int nb, int D, int Iinter, int fmt, int qgs,
                          const void *const *g, const void *const *u, const void *const *d,
                          const float *const *gs, const float *const *us, const float *const *ds,
                          const float *xg, const int *xoff, const int *nr,
@@ -1584,12 +1584,12 @@ extern "C" int coli_metal_moe_block_clamped(int nb, int D, int Iinter, int fmt, 
 
 // Async two-phase API: begin submits the block (own scratch, no wait) so the CPU can
 // overlap disk loads with GPU compute; end waits + scatters. Handle owns everything.
-struct ColiMetalMoeHandle {
+struct LmaMetalMoeHandle {
   id<MTLCommandBuffer> cb; id<MTLBuffer> hh;
   std::vector<int> rows; std::vector<float> rwv;
   int nb, R, D;
 };
-extern "C" ColiMetalMoeHandle* coli_metal_moe_block_begin(int nb, int D, int Iinter, int fmt, int qgs,
+extern "C" LmaMetalMoeHandle* lma_metal_moe_block_begin(int nb, int D, int Iinter, int fmt, int qgs,
                          const void *const *g, const void *const *u, const void *const *d,
                          const float *const *gs, const float *const *us, const float *const *ds,
                          const float *xg, const int *xoff, const int *nr,
@@ -1603,13 +1603,13 @@ extern "C" ColiMetalMoeHandle* coli_metal_moe_block_begin(int nb, int D, int Iin
     id<MTLBuffer> bhh=[g_dev newBufferWithLength:(size_t)R*D*4 options:g_res_opts];
     id<MTLCommandBuffer> cb = moe_submit_impl(nb,D,Iinter,fmt,qgs,0,0.0f,g,u,d,gs,us,ds,xg,xoff,nr,R,bxg,bgg,buu,bhh);
     if (!cb) return nullptr;
-    ColiMetalMoeHandle *h = new ColiMetalMoeHandle();
+    LmaMetalMoeHandle *h = new LmaMetalMoeHandle();
     h->cb=cb; h->hh=bhh; h->rows.assign(rows,rows+R); h->rwv.assign(rw,rw+R);
     h->nb=nb; h->R=R; h->D=D;
     return h;
   }
 }
-extern "C" int coli_metal_moe_block_end(ColiMetalMoeHandle *h, float *out) {
+extern "C" int lma_metal_moe_block_end(LmaMetalMoeHandle *h, float *out) {
   if (!h) return 0;
   int ok;
   @autoreleasepool { ok = moe_finish(h->cb,h->hh,h->nb,h->R,h->D,h->rows.data(),h->rwv.data(),out); }
@@ -1633,7 +1633,7 @@ static id<MTLBuffer> cpubuf(id<MTLDevice> dev, const void *cpu, size_t len) {
   return b;
 }
 
-extern "C" int coli_metal_rmsnorm(float *x, const float *w, int nrows, int D, float eps) {
+extern "C" int lma_metal_rmsnorm(float *x, const float *w, int nrows, int D, float eps) {
   if (!g_dev) return 0;
   @autoreleasepool {
     id<MTLCommandBuffer> cb = [g_queue commandBuffer];
@@ -1654,7 +1654,7 @@ extern "C" int coli_metal_rmsnorm(float *x, const float *w, int nrows, int D, fl
   }
 }
 
-extern "C" int coli_metal_add(float *y, const float *a, size_t n) {
+extern "C" int lma_metal_add(float *y, const float *a, size_t n) {
   if (!g_dev || n == 0) return n == 0 ? 1 : 0;
   @autoreleasepool {
     id<MTLCommandBuffer> cb = [g_queue commandBuffer];
@@ -1674,7 +1674,7 @@ extern "C" int coli_metal_add(float *y, const float *a, size_t n) {
   }
 }
 
-extern "C" int coli_metal_silu_mul_clamped(float *g, const float *u, size_t n, float limit) {
+extern "C" int lma_metal_silu_mul_clamped(float *g, const float *u, size_t n, float limit) {
   if (!g_dev || n == 0 || !(limit > 0.0f)) return n == 0 ? 1 : 0;
   @autoreleasepool {
     id<MTLCommandBuffer> cb = [g_queue commandBuffer];
@@ -1695,7 +1695,7 @@ extern "C" int coli_metal_silu_mul_clamped(float *g, const float *u, size_t n, f
   }
 }
 
-extern "C" int coli_metal_silu_mul(float *g, const float *u, size_t n) {
+extern "C" int lma_metal_silu_mul(float *g, const float *u, size_t n) {
   if (!g_dev || n == 0) return n == 0 ? 1 : 0;
   @autoreleasepool {
     id<MTLCommandBuffer> cb = [g_queue commandBuffer];
@@ -1729,7 +1729,7 @@ static int cpy(id<MTLCommandBuffer> cb, id<MTLBuffer> dst, ptrdiff_t doff,
   return cb.status != MTLCommandBufferStatusError;
 }
 
-extern "C" int coli_metal_kv_write(float *Lc, float *Rc, const float *L_raw, const float *R_raw,
+extern "C" int lma_metal_kv_write(float *Lc, float *Rc, const float *L_raw, const float *R_raw,
     const float *kv_a_ln, int S, int pos_base, int kv_lora, int qk_rope, float eps, float theta) {
   if (!g_dev || S <= 0) return S <= 0 ? 1 : 0;
   @autoreleasepool {
@@ -1786,7 +1786,7 @@ extern "C" int coli_metal_kv_write(float *Lc, float *Rc, const float *L_raw, con
   }
 }
 
-extern "C" int coli_metal_kv_clear(float *Lc, float *Rc, int from, int to, int kv_lora, int qk_rope) {
+extern "C" int lma_metal_kv_clear(float *Lc, float *Rc, int from, int to, int kv_lora, int qk_rope) {
   if (!g_dev) return 0;
   int nr = to - from;
   if (nr <= 0) return 1;
@@ -1816,7 +1816,7 @@ extern "C" int coli_metal_kv_clear(float *Lc, float *Rc, int from, int to, int k
 
 // — KDA state recurrence —
 
-extern "C" int coli_metal_kda_state(float *S, const float *qn, const float *kn, const float *vh,
+extern "C" int lma_metal_kda_state(float *S, const float *qn, const float *kn, const float *vh,
                                      const float *alpha, const float *beta, float *oh,
                                      int H, int hd) {
   if (!g_dev || H <= 0) return H <= 0 ? 1 : 0;
@@ -1853,7 +1853,7 @@ extern "C" int coli_metal_kda_state(float *S, const float *qn, const float *kn, 
 
 // — KDA Conv1d + SiLU (one projection) —
 
-extern "C" int coli_metal_kda_conv_silu(float *conv_win, float *vec, const float *taps, int P, int K) {
+extern "C" int lma_metal_kda_conv_silu(float *conv_win, float *vec, const float *taps, int P, int K) {
   if (!g_dev || P <= 0) return P <= 0 ? 1 : 0;
   @autoreleasepool {
     id<MTLCommandBuffer> cb = [g_queue commandBuffer];
@@ -1882,7 +1882,7 @@ extern "C" int coli_metal_kda_conv_silu(float *conv_win, float *vec, const float
 
 // — KDA L2 normalization (q and k, in-place) —
 
-extern "C" int coli_metal_kda_l2_norm(float *q, float *k, int H, int hd, float qscale) {
+extern "C" int lma_metal_kda_l2_norm(float *q, float *k, int H, int hd, float qscale) {
   if (!g_dev || H <= 0) return H <= 0 ? 1 : 0;
   @autoreleasepool {
     id<MTLCommandBuffer> cb = [g_queue commandBuffer];
@@ -1913,7 +1913,7 @@ extern "C" int coli_metal_kda_l2_norm(float *q, float *k, int H, int hd, float q
  * Alpha and beta are precomputed on CPU (graw+dt → alpha, braw → beta).
  * oh[] is written by state kernel; caller must zero before call.
  * After return, CPU performs per-head RMSNorm + sigmoid gate from oh → on. */
-extern "C" int coli_metal_kda_fused_token(
+extern "C" int lma_metal_kda_fused_token(
     float *win_q, float *qt,
     float *win_k, float *kt,
     float *win_v, float *tv,

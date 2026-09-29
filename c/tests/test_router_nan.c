@@ -13,15 +13,15 @@
  *
  * Fix under test: moe_router.h maps a failed scan to a deterministic in-range
  * expert and warns once (the shared implementation every engine now uses; its
- * own unit test is tests/test_moe_router.c). This file pins the colibri.c
+ * own unit test is tests/test_moe_router.c). This file pins the glm52.c
  * integration -- router_select_topk(), which moe() calls -- so the wiring, not
  * only the helper, is covered. Degrade + diagnose, never index out of range.
  *
  * No model file needed: exercises the guard and the exact scan that trips it. */
 #include <assert.h>
 #include <math.h>
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 /* the selection scan as written in moe(), verbatim in shape */

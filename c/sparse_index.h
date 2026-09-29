@@ -1,5 +1,5 @@
-#ifndef COLIBRI_SPARSE_INDEX_H
-#define COLIBRI_SPARSE_INDEX_H
+#ifndef LMA_SPARSE_INDEX_H
+#define LMA_SPARSE_INDEX_H
 
 /*
  * DeepSeek-style sparse attention with k-pooling, as GLM-5.3-Flash runs it.
@@ -35,7 +35,7 @@
 #include <string.h>
 
 /* Width of one query's index row: topk expanded tokens plus the tail. */
-static inline int coli_sparse_index_width(int topk, int pool, int with_tail) {
+static inline int lma_sparse_index_width(int topk, int pool, int with_tail) {
     return with_tail ? topk + pool - 1 : topk;
 }
 
@@ -57,7 +57,7 @@ static inline int coli_sparse_index_width(int topk, int pool, int with_tail) {
  *   valid     [sequence]           0 marks padding
  *
  * Returns 0, or -1 on bad arguments or allocation failure. */
-static inline int coli_sparse_index_select_range(int *out, const float *queries,
+static inline int lma_sparse_index_select_range(int *out, const float *queries,
                                                  const float *keys, const float *gates,
                                                  const float *head_w, const float *ape,
                                                  const unsigned char *valid,
@@ -69,7 +69,7 @@ static inline int coli_sparse_index_select_range(int *out, const float *queries,
         sequence < 1 || heads < 1 || dim < 1 || pool < 1 || topk < pool || topk % pool)
         return -1;
 
-    const int width = coli_sparse_index_width(topk, pool, with_tail);
+    const int width = lma_sparse_index_width(topk, pool, with_tail);
     const int pools = (sequence + pool - 1) / pool;
     const int wanted = topk / pool;
 
@@ -164,13 +164,13 @@ static inline int coli_sparse_index_select_range(int *out, const float *queries,
 }
 
 /* Tutte le query, che e' il caso del prefill. */
-static inline int coli_sparse_index_select(int *out, const float *queries,
+static inline int lma_sparse_index_select(int *out, const float *queries,
                                            const float *keys, const float *gates,
                                            const float *head_w, const float *ape,
                                            const unsigned char *valid,
                                            int sequence, int heads, int dim,
                                            int pool, int topk, int with_tail) {
-    return coli_sparse_index_select_range(out, queries, keys, gates, head_w, ape,
+    return lma_sparse_index_select_range(out, queries, keys, gates, head_w, ape,
                                           valid, sequence, heads, dim, pool, topk,
                                           with_tail, 0, sequence);
 }
@@ -181,7 +181,7 @@ static inline int coli_sparse_index_select(int *out, const float *queries,
  *   indices  [sequence * width], -1 entries skipped
  *
  * Queries, keys and values are laid out [position][head][dim]. */
-static inline int coli_sparse_attention_range(float *out, const float *queries,
+static inline int lma_sparse_attention_range(float *out, const float *queries,
                                              const float *keys, const float *values,
                                              const int *indices, int sequence, int width,
                                              int heads, int key_dim, int value_dim,
@@ -231,12 +231,12 @@ static inline int coli_sparse_attention_range(float *out, const float *queries,
 }
 
 /* Tutte le query, che e' il caso del prefill. */
-static inline int coli_sparse_attention(float *out, const float *queries,
+static inline int lma_sparse_attention(float *out, const float *queries,
                                         const float *keys, const float *values,
                                         const int *indices, int sequence, int width,
                                         int heads, int key_dim, int value_dim) {
-    return coli_sparse_attention_range(out, queries, keys, values, indices, sequence,
+    return lma_sparse_attention_range(out, queries, keys, values, indices, sequence,
                                        width, heads, key_dim, value_dim, 0, sequence);
 }
 
-#endif /* COLIBRI_SPARSE_INDEX_H */
+#endif /* LMA_SPARSE_INDEX_H */

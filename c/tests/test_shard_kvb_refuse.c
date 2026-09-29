@@ -1,10 +1,10 @@
-/* layer_cuda_shard_kvb() (colibri.c, COLI_CUDA_ATTN_SHARD) -- the multi-device kv_b
+/* layer_cuda_shard_kvb() (glm52.c, LMA_CUDA_ATTN_SHARD) -- the multi-device kv_b
  * head-shard uploader. Its rb/weights/scale arithmetic is written for exactly fmt=1/2/3/4
  * (per-row byte strides, per-row or per-group scales); before the guard this file proves,
  * an fmt=8 (fp8-e4m3-b128) kv_b was ADMITTED and only failed safe BY ACCIDENT: fmt=8
  * keeps its raw e4m3 bytes in q8 (q4 stays NULL, per the QT struct comment), so the
  * function selected a NULL weight pointer with an int2 row stride and
- * coli_cuda_tensor_upload_g's !weights check happened to reject the upload before
+ * lma_cuda_tensor_upload_g's !weights check happened to reject the upload before
  * anything dereferenced it -- silent, unnamed, and one refactor away from a misread
  * (fmt=8's per-128x128-BLOCK scale array would ALSO have been sliced with per-row
  * geometry). This probe pins the explicit refusal that replaced the accident:
@@ -18,24 +18,24 @@
  *   (5) an allowlisted fmt (fmt=1) is NOT refused -- with no device context initialized
  *       its upload fails silently and no shard is minted, but no refusal line appears,
  *       so the guard is format-targeted, not a blanket gate.
- * PROOF-OF-BITE: built against the pre-guard colibri.c, (1)/(3)/(4) fail -- the fmt=8
+ * PROOF-OF-BITE: built against the pre-guard glm52.c, (1)/(3)/(4) fail -- the fmt=8
  * call slid past the format check into the accidental-safe upload rejection with no
- * message at all. Needs -DCOLI_CUDA (CUDA=1) to compile the function; a CPU-only build
+ * message at all. Needs -DLMA_CUDA (CUDA=1) to compile the function; a CPU-only build
  * SKIPs loudly instead of pretending to cover it. No GPU work is performed: every path
  * exercised here returns before any device context exists, so this runs on a CUDA build
  * host even without a card.
  * Portable stderr capture: freopen/dup2, same seam as tests/test_kvb_notice.c. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
-#ifndef COLI_CUDA
+#ifndef LMA_CUDA
 int main(void){
-    printf("test_shard_kvb_refuse: SKIP (built without COLI_CUDA -- build with CUDA=1 on a CUDA host to exercise layer_cuda_shard_kvb)\n");
+    printf("test_shard_kvb_refuse: SKIP (built without LMA_CUDA -- build with CUDA=1 on a CUDA host to exercise layer_cuda_shard_kvb)\n");
     return 0;
 }
 #else
@@ -148,4 +148,4 @@ int main(void){
     printf("layer_cuda_shard_kvb refusal probe: ok\n");
     return 0;
 }
-#endif /* COLI_CUDA */
+#endif /* LMA_CUDA */

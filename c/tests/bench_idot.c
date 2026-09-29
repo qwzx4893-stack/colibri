@@ -4,14 +4,14 @@
  * per-core kernel throughput, the same win the NEON path already took ("26->63 GB/s, 2.4x").
  *
  * It re-implements the OLD single-acc AVX-VNNI kernels inline and calls the REAL (new)
- * ones via the include-colibri.c pattern -- one process, identical frozen inputs, warm
+ * ones via the include-glm52.c pattern -- one process, identical frozen inputs, warm
  * caches. Reports median ns/call + GB/s-of-weights + new/old ratio. Measures the kernel's
  * compute ceiling (warm caches), NOT end-to-end tok/s.
  *
  * Run:  make tests/bench_idot ARCH=native && ./tests/bench_idot   (not in TEST_BINS -- not a gate)
  */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 #include <stdint.h>
 #include <string.h>

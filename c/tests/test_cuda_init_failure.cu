@@ -35,40 +35,40 @@ int main(void) {
     int ids[]={0,1}, duplicate[]={0,0},invalid[]={0,2};
     for(int round=0;round<2;round++){
         attempts=0;
-        if(coli_cuda_init(duplicate,2)||attempts||live_streams||coli_cuda_device_count()) return 1;
-        if(coli_cuda_init(invalid,2)||attempts||live_streams||coli_cuda_device_count()) return 2;
+        if(lma_cuda_init(duplicate,2)||attempts||live_streams||lma_cuda_device_count()) return 1;
+        if(lma_cuda_init(invalid,2)||attempts||live_streams||lma_cuda_device_count()) return 2;
         for(fail_stream=1;fail_stream<=2;fail_stream++){
             attempts=0;
-            if(coli_cuda_init(ids,2)||live_streams||coli_cuda_device_count()) return 3;
+            if(lma_cuda_init(ids,2)||live_streams||lma_cuda_device_count()) return 3;
         }
         fail_stream=0;
         for(int device=0;device<2;device++){
             g_current_device=-1; /* force the runtime selection fault past the cache */
             fail_select=device;
-            if(coli_cuda_init(ids,2)||live_streams||coli_cuda_device_count()) return 11;
+            if(lma_cuda_init(ids,2)||live_streams||lma_cuda_device_count()) return 11;
             fail_select=-1;
             fail_props=device;
-            if(coli_cuda_init(ids,2)||live_streams||coli_cuda_device_count()) return 12;
+            if(lma_cuda_init(ids,2)||live_streams||lma_cuda_device_count()) return 12;
             fail_props=-1;
         }
         attempts=0;
-        if(!coli_cuda_init(ids,2)||live_streams!=2||coli_cuda_device_count()!=2) return 4;
+        if(!lma_cuda_init(ids,2)||live_streams!=2||lma_cuda_device_count()!=2) return 4;
         /* Rejected input must leave an existing backend reachable. */
-        if(coli_cuda_init(invalid,2)||live_streams!=2||coli_cuda_device_count()!=2) return 5;
-        if(coli_cuda_init(duplicate,2)||live_streams!=2||coli_cuda_device_count()!=2) return 6;
+        if(lma_cuda_init(invalid,2)||live_streams!=2||lma_cuda_device_count()!=2) return 5;
+        if(lma_cuda_init(duplicate,2)||live_streams!=2||lma_cuda_device_count()!=2) return 6;
         if(cudaMalloc(&g_ctx[0].x,256)!=cudaSuccess) return 10;
         float *scratch=g_ctx[0].x;
         cudaStream_t original=g_ctx[0].stream;
         int before=attempts;
-        if(!coli_cuda_init(ids,2)||attempts!=before||live_streams!=2||g_ctx[0].stream!=original||g_ctx[0].x!=scratch){
+        if(!lma_cuda_init(ids,2)||attempts!=before||live_streams!=2||g_ctx[0].stream!=original||g_ctx[0].x!=scratch){
             puts("FAIL: repeated init replaced live contexts");return 8;
         }
         int reversed[]={1,0};
-        if(coli_cuda_init(ids,1)||coli_cuda_init(reversed,2)||attempts!=before||
-           live_streams!=2||g_ctx[0].stream!=original||g_ctx[0].x!=scratch||coli_cuda_device_count()!=2){
+        if(lma_cuda_init(ids,1)||lma_cuda_init(reversed,2)||attempts!=before||
+           live_streams!=2||g_ctx[0].stream!=original||g_ctx[0].x!=scratch||lma_cuda_device_count()!=2){
             puts("FAIL: device-list change modified active contexts");return 9;
         }
-        coli_cuda_shutdown();if(live_streams||coli_cuda_device_count()) return 7;
+        lma_cuda_shutdown();if(live_streams||lma_cuda_device_count()) return 7;
     }
     puts("CUDA initialization rollback: PASS");return 0;
 }

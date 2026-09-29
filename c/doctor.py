@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only installation diagnostics for colibri."""
+"""Read-only installation diagnostics for lmatomic."""
 
 import os
 import sys
@@ -460,20 +460,20 @@ def deep_container_report(model, mirror_dir=None):
 def windows_backend_dll(image):
     """Which GPU backend DLL a Windows host compiled in, or None if CPU-only.
 
-    backend_loader.c bakes exactly one basename: coli_hip.dll under COLI_HIP_DLL
-    and coli_cuda.dll otherwise. That string is the build marker. The GLM/Qwen
+    backend_loader.c bakes exactly one basename: lma_hip.dll under LMA_HIP_DLL
+    and lma_cuda.dll otherwise. That string is the build marker. The GLM/Qwen
     banner "[CUDA] mode: routed experts" is only printed by those two engines;
     a Kimi K3 CUDA_DLL host links the same loader and prints [K3-CUDA] instead.
     DeepSeek V4 has its own pair and is not this function's job.
     """
     if not image or b"[DSV4 CUDA]" in image:
         return None
-    if b"coli_hip.dll" in image:
-        return "coli_hip.dll"
-    if b"coli_cuda.dll" in image:
-        return "coli_cuda.dll"
+    if b"lma_hip.dll" in image:
+        return "lma_hip.dll"
+    if b"lma_cuda.dll" in image:
+        return "lma_cuda.dll"
     if b"[CUDA] mode: routed experts" in image or b"[K3-CUDA]" in image:
-        return "coli_cuda.dll"
+        return "lma_cuda.dll"
     return None
 
 
@@ -496,7 +496,7 @@ def cuda_linkage(engine_path):
             return {"linked": False, "missing": False}
         # A HIP/ROCm build links libamdhip64 (never libcudart), so match both
         # vendors here or a working AMD engine is reported CPU-only (#663). Mirrors
-        # the vendor-aware probe cuda_binary() already uses in c/coli.
+        # the vendor-aware probe cuda_binary() already uses in c/lmatomic.
         lines = [line for line in result.stdout.splitlines()
                  if "libcudart" in line or "libamdhip64" in line]
         return {"linked": any("not found" not in line for line in lines),
@@ -506,7 +506,7 @@ def cuda_linkage(engine_path):
         # LoadLibrary's its backend at runtime (backend_loader.c), so there's no
         # import-table entry for ldd/dumpbin to see. Detect the GPU build from
         # the backend basename compiled into the host, then require that file
-        # next to the executable. Asking for coli_cuda.dll unconditionally
+        # next to the executable. Asking for lma_cuda.dll unconditionally
         # failed a working HIP host (a hard error, not a warning), and requiring
         # the GLM routed-experts banner missed every Kimi K3 CUDA_DLL build.
         try:
@@ -514,11 +514,11 @@ def cuda_linkage(engine_path):
         except OSError:
             return {"linked": False, "missing": False}
         # The DeepSeek V4 engine has its own loader (backend_loader_dsv4.c):
-        # it tries coli_cuda_dsv4_dg.dll then coli_cuda_dsv4.dll, so either
+        # it tries lma_cuda_dsv4_dg.dll then lma_cuda_dsv4.dll, so either
         # next to the engine means the tier can start.
         if b"[DSV4 CUDA]" in image:
             present = any((engine.parent / name).is_file()
-                          for name in ("coli_cuda_dsv4_dg.dll", "coli_cuda_dsv4.dll"))
+                          for name in ("lma_cuda_dsv4_dg.dll", "lma_cuda_dsv4.dll"))
             return {"linked": present, "missing": not present}
         expected = windows_backend_dll(image)
         if expected is None:
@@ -687,7 +687,7 @@ def run_doctor(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0, *,
             checks.append(_check("placement.plan", "warn", "; ".join(plan["warnings"])))
         else:
             checks.append(_check("placement.plan", "pass", "tier placement has no warnings"))
-        # #379: read-and-display only -- the cached value colibri.c already measured
+        # #379: read-and-display only -- the cached value glm52.c already measured
         # (F_NOCACHE probe) on a Metal+darwin startup, never re-probed here. A cache
         # that exists but is not trusted says WHY (#386 r2, F10) -- "no cached probe
         # yet" would be a lie with a file sitting right there.
@@ -695,7 +695,7 @@ def run_doctor(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0, *,
         ssd_state = plan.get("ssd_probe_state")
         if ssd_gbs is not None:
             checks.append(_check("storage.ssd_probe", "pass",
-                                 f"F_NOCACHE probe: {ssd_gbs:.1f} GB/s (cached, .coli_ssd)", gbs=ssd_gbs))
+                                 f"F_NOCACHE probe: {ssd_gbs:.1f} GB/s (cached, .lma_ssd)", gbs=ssd_gbs))
         elif ssd_state in SSD_PROBE_PENDING:
             checks.append(_check("storage.ssd_probe", "skip",
                                  SSD_PROBE_PENDING[ssd_state], state=ssd_state))
@@ -766,7 +766,7 @@ def run_doctor(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0, *,
 def format_doctor(report):
     icons = {"pass": "ok", "warn": "warn", "fail": "fail", "skip": "skip"}
     # model is null in the JSON when none was given (#724); say that rather than "None"
-    lines = [f"colibri doctor · {report['model'] or '(no model given)'}"]
+    lines = [f"lmatomic doctor · {report['model'] or '(no model given)'}"]
     for check in report["checks"]:
         lines.append(f"[{icons[check['status']]:>4}] {check['id']:<18} {check['summary']}")
     if report["plan"]:

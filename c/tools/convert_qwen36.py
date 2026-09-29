@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert Qwen3.6-35B-A3B (or any Qwen3.5/3.6 MoE) HF checkpoint -> colibri container.
+"""Convert Qwen3.6-35B-A3B (or any Qwen3.5/3.6 MoE) HF checkpoint -> lmatomic container.
 
 Phase-2 converter: it converts ALL layers (GATED-ATTENTION full_attention AND the
 Gated DeltaNet linear_attention layers). Every layer also carries its MoE/MLP block.
@@ -8,7 +8,7 @@ conv1d.weight, dt_bias, A_log, norm.weight, out_proj). The engine implements the
 recurrent gated-delta-rule for these layers; in Phase 1 they were skipped as identity.
 
 Design notes (must stay in sync with c/qwen36.c):
-  * The colibri container is just a directory of safetensors shards (+ config.json +
+  * The lmatomic container is just a directory of safetensors shards (+ config.json +
     qwen36_meta.json). The engine reads them lazily via st_init, paging expert weights
     from disk -- that is the whole "run a huge model in little RAM" trick.
   * Expert weights are stored per-expert as `model.layers.{a}.mlp.experts.{e}.merged_weight`
@@ -236,7 +236,7 @@ from qwen36_tensor_kinds import classify, resolve_prefix, skip_reason, UnknownTe
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Convert Qwen3.6 MoE HF checkpoint -> colibri container")
+    ap = argparse.ArgumentParser(description="Convert Qwen3.6 MoE HF checkpoint -> lmatomic container")
     src = ap.add_mutually_exclusive_group(required=False)
     src.add_argument("--repo", help="HuggingFace repo ID (will be downloaded)")
     src.add_argument("--model", help="Local HF checkpoint directory")
@@ -641,12 +641,12 @@ def main():
 
     # ---- README ----
     if not args.no_readme:
-        lines = ["---", "tags:", "  - colibri", "  - qwen3.6", "  - qwen3.6-35b-a3b", "  - moe",
-                 "library_name: colibri", "---", "",
-                 "colibri container for Qwen3.6-35B-A3B (Phase 2: all layers, incl. Gated DeltaNet).",
+        lines = ["---", "tags:", "  - lmatomic", "  - qwen3.6", "  - qwen3.6-35b-a3b", "  - moe",
+                 "library_name: lmatomic", "---", "",
+                 "lmatomic container for Qwen3.6-35B-A3B (Phase 2: all layers, incl. Gated DeltaNet).",
                  "Every layer (Gated-Attention + Gated DeltaNet linear_attention) carries its",
                  "MoE/MLP block. DeltaNet weights live under model.layers.{i}.linear_attn.* and are",
-                 "run by the recurrent gated-delta-rule in the colibri `qwen36` engine.",
+                 "run by the recurrent gated-delta-rule in the lmatomic `qwen36` engine.",
                  "", "Engine: https://github.com/JustVugg/colibri (c/qwen36.c)"]
         (out / "README.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

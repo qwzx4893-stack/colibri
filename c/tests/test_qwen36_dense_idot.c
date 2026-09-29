@@ -1,4 +1,4 @@
-/* The dense trunk's integer path (COLI_DENSE_IDOT, COLI_DENSE_BITS=4).
+/* The dense trunk's integer path (LMA_DENSE_IDOT, LMA_DENSE_BITS=4).
  *
  * Pins, with no model:
  *  - dense_act_i8's vector path equals the scalar lrintf contract bit for bit
@@ -84,7 +84,7 @@ int main(void) {
         /* the classic path (no flags): int8 rows, f32 activations.
          * dense_idot_on caches its answer: this TU reads the env once, so
          * set it before the first call (matmul_d, via qw_quantize below). */
-        setenv("COLI_DENSE_IDOT", "0", 1); setenv("COLI_DENSE_BITS", "8", 1);
+        setenv("LMA_DENSE_IDOT", "0", 1); setenv("LMA_DENSE_BITS", "8", 1);
         QW w = {0}; qw_quantize(W, I, O, NULL, &w);
         matmul_d(y0, x, &w, S, I, O);
         double g0 = rel_gap(y0, ref, S * O);

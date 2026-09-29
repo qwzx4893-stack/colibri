@@ -1,34 +1,34 @@
 # Multi-disk streaming
 
-Use extra drives when model reads limit inference. `COLI_MODEL_MIRROR` points
+Use extra drives when model reads limit inference. `LMA_MODEL_MIRROR` points
 to read-only copies of the primary model's shards; no RAID setup is required.
 These examples target the GLM-5.2 engine. Other engines have their own I/O
 paths, so check their model guides before applying the same settings.
 
 ## Run with two or more copies
 
-Run from `c/` in a source checkout, or the directory containing `coli` in an
+Run from `c/` in a source checkout, or the directory containing `lmatomic` in an
 unpacked release. Replace the paths with your existing model copies.
 
 Bash, with one primary and two mirrors:
 
 ```bash
-COLI_MODEL_MIRROR='/mnt/nvme2/glm52_i4;/mnt/nvme3/glm52_i4' \
-  python3 ./coli chat --model /mnt/nvme1/glm52_i4
+LMA_MODEL_MIRROR='/mnt/nvme2/glm52_i4;/mnt/nvme3/glm52_i4' \
+  python3 ./lmatomic chat --model /mnt/nvme1/glm52_i4
 ```
 
 PowerShell, with the same three-drive layout:
 
 ```powershell
-$env:COLI_MODEL_MIRROR = 'E:\models\glm52_i4;F:\models\glm52_i4'
-python ./coli chat --model 'D:\models\glm52_i4'
+$env:LMA_MODEL_MIRROR = 'E:\models\glm52_i4;F:\models\glm52_i4'
+python ./lmatomic chat --model 'D:\models\glm52_i4'
 ```
 
 For two drives, supply just one mirror directory. Quote the list: an unquoted
 semicolon separates shell commands. The primary is supplied by `--model`
-(or `COLI_MODEL`); do not repeat it in the mirror list.
+(or `LMA_MODEL`); do not repeat it in the mirror list.
 
-With `COLI_DISK_WEIGHTS` unset, the engine probes bandwidth at startup and prints
+With `LMA_DISK_WEIGHTS` unset, the engine probes bandwidth at startup and prints
 the measured split. An optional override is a comma-separated list of positive
 relative weights, primary first, followed by each usable mirror in list order.
 For example, `9,3,3` requests shares of 60%, 20%, and 20% across three drives;
@@ -38,7 +38,7 @@ probe failures before trusting the split. See the
 
 Missing or divergent mirror shards fall back to the primary. For a smaller
 drive, use the [partial-mirror planner](../README.md#multiple-ssds-stream-model-copies-from-more-than-one-drive)
-to stage a usage-ranked subset. `COLI_MODEL_DIRS` is a different layout: it
+to stage a usage-ranked subset. `LMA_MODEL_DIRS` is a different layout: it
 spreads distinct shards across drives to combine capacity, rather than adding
 replicas of the same shards.
 
@@ -77,10 +77,10 @@ the multi-disk discussion and an earlier mixed-speed report.
    fixed. Keep background disk work idle. Use the same learned usage history
    and cache preparation for each arm, and report cold and warm runs separately.
 2. Start a fresh process for each arm. For the primary-only baseline, clear
-   `COLI_MODEL_MIRROR`, its legacy alias `SNAP_MIRROR`, and any
-   `COLI_DISK_WEIGHTS` override. For the mirror arm, set only
-   `COLI_MODEL_MIRROR` to the copies being tested and let the probe choose the
-   weights. Keep any `COLI_MODEL_DIRS` layout fixed; if it spans drives, label
+   `LMA_MODEL_MIRROR`, its legacy alias `SNAP_MIRROR`, and any
+   `LMA_DISK_WEIGHTS` override. For the mirror arm, set only
+   `LMA_MODEL_MIRROR` to the copies being tested and let the probe choose the
+   weights. Keep any `LMA_MODEL_DIRS` layout fixed; if it spans drives, label
    this a split-layout baseline rather than a single-drive baseline.
 3. Set `PROF=1` in both arms. Save startup `[MIRROR]` messages, throughput,
    TTFT, expert hit rate, and per-drive `MIRROR:` byte/read counters. The GLM
@@ -95,11 +95,11 @@ the multi-disk discussion and an earlier mixed-speed report.
 To return to the primary-only configuration in your shell:
 
 ```bash
-unset COLI_MODEL_MIRROR SNAP_MIRROR COLI_DISK_WEIGHTS
+unset LMA_MODEL_MIRROR SNAP_MIRROR LMA_DISK_WEIGHTS
 ```
 
 ```powershell
-Remove-Item Env:COLI_MODEL_MIRROR, Env:SNAP_MIRROR, Env:COLI_DISK_WEIGHTS -ErrorAction SilentlyContinue
+Remove-Item Env:LMA_MODEL_MIRROR, Env:SNAP_MIRROR, Env:LMA_DISK_WEIGHTS -ErrorAction SilentlyContinue
 ```
 
 PowerShell's `$env:` assignments persist in that session; remove `PROF` too if

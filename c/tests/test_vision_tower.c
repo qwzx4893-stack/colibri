@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
     jval *vc = json_get(root, "vision_config");
     if (!vc) { fprintf(stderr, "config.json senza vision_config\n"); return 1; }
 #define NUM(key) ((int)json_get(vc, key)->num)
-    ColiVisionConfig cfg = {
+    LmaVisionConfig cfg = {
         .depth = NUM("depth"), .hidden = NUM("hidden_size"), .heads = NUM("num_heads"),
         .intermediate = NUM("intermediate_size"), .patch = NUM("patch_size"),
         .temporal = NUM("temporal_patch_size"), .merge = NUM("spatial_merge_size"),
@@ -58,7 +58,7 @@ int main(int argc, char **argv) {
 #undef NUM
     cfg.head_dim = cfg.hidden / cfg.heads;
 
-    ColiVisionBlock *blocks = calloc((size_t)cfg.depth, sizeof(*blocks));
+    LmaVisionBlock *blocks = calloc((size_t)cfg.depth, sizeof(*blocks));
     for (int b = 0; b < cfg.depth; b++) {
         char n[256];
 #define GET(field, suffix, expect) \
@@ -79,7 +79,7 @@ int main(int argc, char **argv) {
         GET(down_b, "mlp.down_proj.bias", cfg.hidden);
 #undef GET
     }
-    ColiVisionTower tower = {
+    LmaVisionTower tower = {
         .config = cfg, .blocks = blocks,
         .patch_w = need(&S, "patch_embed.proj.weight", 0),
         .patch_b = need(&S, "patch_embed.proj.bias", cfg.hidden),
@@ -102,10 +102,10 @@ int main(int argc, char **argv) {
     jval *want = json_get(ref, "output");
 
     const float *pixels = need(&S, "input.pixel_values", 0);
-    int out_tokens = coli_vision_output_tokens(&cfg, gh, gw);
+    int out_tokens = lma_vision_output_tokens(&cfg, gh, gw);
     float *out = malloc((size_t)out_tokens * cfg.out_hidden * sizeof(float));
-    if (coli_vision_forward(out, &tower, pixels, gh, gw)) {
-        fprintf(stderr, "coli_vision_forward ha fallito\n"); return 1;
+    if (lma_vision_forward(out, &tower, pixels, gh, gw)) {
+        fprintf(stderr, "lma_vision_forward ha fallito\n"); return 1;
     }
 
     int n = out_tokens * cfg.out_hidden;

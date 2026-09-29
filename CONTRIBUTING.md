@@ -1,11 +1,11 @@
 # Contributing
 
-Keep changes focused and preserve Colibri's dependency-free default CPU path.
+Keep changes focused and preserve LM Atomic's dependency-free default CPU path.
 
 ## Branches
 
 - **`main`** is the stable branch. It's what users clone, and it stays known-good
-  (engine always passes the oracle: `SNAP=./glm_tiny TF=1 COLI_TEMP=0 ORACLE_STRICT=1 ORACLE_TF_MAX_MISMATCHES=2 ./colibri 64 16 16`,
+  (engine always passes the oracle: `SNAP=./glm_tiny TF=1 LMA_TEMP=0 ORACLE_STRICT=1 ORACLE_TF_MAX_MISMATCHES=2 ./glm52 64 16 16`,
   run from `c/`). The `glm_tiny` fixture is generated, not committed --
   `python3 c/tools/make_glm_oracle.py` builds it (needs torch).
 - **`dev`** is the integration branch. **Open your PR against `dev`.** Reviewed PRs
@@ -19,8 +19,8 @@ targeted validation before merge.
 After generating the fixture, run both enforced comparisons from `c/`:
 
 ```sh
-SNAP=./glm_tiny TF=1 COLI_TEMP=0 ORACLE_STRICT=1 ORACLE_TF_MAX_MISMATCHES=2 ./colibri 64 16 16
-SNAP=./glm_tiny COLI_TEMP=0 ORACLE_STRICT=1 ./colibri 64 16 16
+SNAP=./glm_tiny TF=1 LMA_TEMP=0 ORACLE_STRICT=1 ORACLE_TF_MAX_MISMATCHES=2 ./glm52 64 16 16
+SNAP=./glm_tiny LMA_TEMP=0 ORACLE_STRICT=1 ./glm52 64 16 16
 python3 tests/test_glm_oracle.py
 ```
 

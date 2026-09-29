@@ -1,5 +1,5 @@
 /* Stateful spec_decode callers use kv_out as both the live history length and
- * the .coli_kv record count.  At an NGEN cap the last emitted token therefore
+ * the .lma_kv record count.  At an NGEN cap the last emitted token therefore
  * has to take the normal forward path before kv_out advances.  Otherwise MORE
  * starts from the preceding token and persistence silently omits the visible
  * tail of the answer.
@@ -7,8 +7,8 @@
  * A zero-layer toy model keeps this test dependency-free.  Its embedding and
  * lm_head implement an explicit token->next-token table, while m.n_fw proves
  * the final state was actually forwarded rather than only counted. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #define CHECK(condition) do { \
@@ -132,7 +132,7 @@ static int test_stateful_ngen_and_more(void) {
 
 static int test_persisted_tail(void) {
     const int next[V] = {1, 2, 3, 4, 5, 6, 7, 0};
-    const char *path = "test_spec_decode_state.coli_kv";
+    const char *path = "test_spec_decode_state.lma_kv";
     Toy t;
     toy_init(&t, next);
     reset_decode_globals(0);

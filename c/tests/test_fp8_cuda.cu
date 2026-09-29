@@ -15,10 +15,10 @@
  * compare cannot express.
  *
  * Phase 2 goes through the public API: the upload gate must REFUSE fmt=8
- * before coli_cuda_fp8_set_lut publishes the decode table (a kernel against
+ * before lma_cuda_fp8_set_lut publishes the decode table (a kernel against
  * the zero-initialized table would compute silent zeros), then accept it.
- * After that: coli_cuda_matmul (dense quant_matmul branch) vs the reference,
- * coli_cuda_expert_group (sync) vs the reference, and issue/take (async) vs
+ * After that: lma_cuda_matmul (dense quant_matmul branch) vs the reference,
+ * lma_cuda_expert_group (sync) vs the reference, and issue/take (async) vs
  * sync, which must match bit for bit.
  *
  * Build: nvcc -O2 -std=c++17 -arch=native tests/test_fp8_cuda.cu -o tests/test_fp8
@@ -151,23 +151,23 @@ int main(void){
     /* ---- Phase 2: public API — LUT gate, dense matmul, sync group, async ---- */
     {
         int devs[1]={0};
-        if(!coli_cuda_init(devs,1)){ printf("FAIL cuda init\n"); return 1; }
+        if(!lma_cuda_init(devs,1)){ printf("FAIL cuda init\n"); return 1; }
         uint8_t *hw=(uint8_t*)malloc((size_t)I*D); float *hsc=(float*)malloc(hs_n*4);
         for(size_t i=0;i<(size_t)I*D;i++) hw[i]=rnd_e4m3();
         for(int i=0;i<hs_n;i++) hsc[i]=ldexpf(1.f+rand()/(float)RAND_MAX,-12);
-        ColiCudaTensor *tt=nullptr;
+        LmaCudaTensor *tt=nullptr;
         /* The gate must hold until the LUT is published: a zero table would
          * make every fmt=8 matmul a silent zero. */
-        if(coli_cuda_tensor_upload(&tt,hw,hsc,8,D,I,0)){ printf("FAIL gate open before LUT\n"); return 1; }
-        if(!coli_cuda_fp8_set_lut(lut)){ printf("FAIL set_lut\n"); return 1; }
-        if(!coli_cuda_tensor_upload(&tt,hw,hsc,8,D,I,0)){ printf("FAIL upload\n"); return 1; }
+        if(lma_cuda_tensor_upload(&tt,hw,hsc,8,D,I,0)){ printf("FAIL gate open before LUT\n"); return 1; }
+        if(!lma_cuda_fp8_set_lut(lut)){ printf("FAIL set_lut\n"); return 1; }
+        if(!lma_cuda_tensor_upload(&tt,hw,hsc,8,D,I,0)){ printf("FAIL upload\n"); return 1; }
 
         int api_bad=0;
         {   /* dense: quant_matmul's fmt=8 branch */
             const int S=2;
             float *x=(float*)malloc((size_t)S*D*4),*y=(float*)malloc((size_t)S*I*4),ry[512];
             for(size_t i=0;i<(size_t)S*D;i++) x[i]=(rand()/(float)RAND_MAX-.5f)*2.f;
-            if(!coli_cuda_matmul(&tt,y,x,hw,hsc,8,S,D,I,0,0)){ printf("FAIL dense matmul\n"); return 1; }
+            if(!lma_cuda_matmul(&tt,y,x,hw,hsc,8,S,D,I,0,0)){ printf("FAIL dense matmul\n"); return 1; }
             for(int s=0;s<S;s++){
                 cpu_gemv_f8(hw,hsc,D,I,x+(size_t)s*D,ry);
                 for(int o=0;o<I;o++)
@@ -176,7 +176,7 @@ int main(void){
             free(x);free(y);
         }
         int rows2[COUNT]={1,2,1}, total2=4;
-        ColiCudaTensor *tg[COUNT]={},*tu[COUNT]={},*td[COUNT]={};
+        LmaCudaTensor *tg[COUNT]={},*tu[COUNT]={},*td[COUNT]={};
         uint8_t *hg[COUNT],*hu[COUNT],*hd[COUNT]; float *hgs[COUNT],*hus[COUNT],*hds[COUNT];
         for(int c=0;c<COUNT;c++){
             hg[c]=(uint8_t*)malloc((size_t)I*D); hu[c]=(uint8_t*)malloc((size_t)I*D);
@@ -187,16 +187,16 @@ int main(void){
             for(int i=0;i<hs_n;i++){ hgs[c][i]=ldexpf(1.f+rand()/(float)RAND_MAX,-12);
                                      hus[c][i]=ldexpf(1.f+rand()/(float)RAND_MAX,-12); }
             for(int i=0;i<ds_n;i++) hds[c][i]=ldexpf(1.f+rand()/(float)RAND_MAX,-12);
-            if(!coli_cuda_tensor_upload(&tg[c],hg[c],hgs[c],8,D,I,0)||
-               !coli_cuda_tensor_upload(&tu[c],hu[c],hus[c],8,D,I,0)||
-               !coli_cuda_tensor_upload(&td[c],hd[c],hds[c],8,I,D,0)){
+            if(!lma_cuda_tensor_upload(&tg[c],hg[c],hgs[c],8,D,I,0)||
+               !lma_cuda_tensor_upload(&tu[c],hu[c],hus[c],8,D,I,0)||
+               !lma_cuda_tensor_upload(&td[c],hd[c],hds[c],8,I,D,0)){
                 printf("FAIL expert upload\n"); return 1; }
         }
         float *x=(float*)malloc((size_t)total2*D*4),*ysync=(float*)malloc((size_t)total2*D*4);
         for(size_t i=0;i<(size_t)total2*D;i++) x[i]=(rand()/(float)RAND_MAX-.5f)*2.f;
-        if(!coli_cuda_expert_group(tg,tu,td,rows2,COUNT,ysync,x)){ printf("FAIL sync group\n"); return 1; }
-        if(!coli_cuda_expert_group_issue(tg,tu,td,rows2,COUNT,x)){ printf("FAIL async issue\n"); return 1; }
-        const float *yasync=coli_cuda_expert_group_take(0);
+        if(!lma_cuda_expert_group(tg,tu,td,rows2,COUNT,ysync,x)){ printf("FAIL sync group\n"); return 1; }
+        if(!lma_cuda_expert_group_issue(tg,tu,td,rows2,COUNT,x)){ printf("FAIL async issue\n"); return 1; }
+        const float *yasync=lma_cuda_expert_group_take(0);
         if(!yasync){ printf("FAIL async take\n"); return 1; }
         int off=0;
         for(int c=0;c<COUNT;c++){
@@ -216,13 +216,13 @@ int main(void){
             off+=rows2[c];
         }
         printf("fp8 API: LUT gate + dense vs oracle + sync group vs oracle + async vs sync, %d mismatches\n",api_bad);
-        coli_cuda_tensor_free(tt);
-        for(int c=0;c<COUNT;c++){ coli_cuda_tensor_free(tg[c]);coli_cuda_tensor_free(tu[c]);coli_cuda_tensor_free(td[c]);
+        lma_cuda_tensor_free(tt);
+        for(int c=0;c<COUNT;c++){ lma_cuda_tensor_free(tg[c]);lma_cuda_tensor_free(tu[c]);lma_cuda_tensor_free(td[c]);
             free(hg[c]);free(hu[c]);free(hd[c]);free(hgs[c]);free(hus[c]);free(hds[c]); }
         free(x);free(ysync);free(hw);free(hsc);
         if(api_bad){ printf("FAIL\n"); return 1; }
 
-        /* ---- Byte-accounting regression: coli_cuda_tensor_free must undo
+        /* ---- Byte-accounting regression: lma_cuda_tensor_free must undo
          * exactly what upload charged, per scale shape. fmt=8's 128x128 block
          * scale_count ((O+127)/128 blocks, not O rows) is the shape that once
          * made free() over-count and trip the tensor_bytes >= bytes guard,
@@ -231,14 +231,14 @@ int main(void){
          * free()-side expression. */
         {
             size_t c0,b0,c1,b1;
-            coli_cuda_stats(0,&c0,&b0);
-            ColiCudaTensor *bt=nullptr;
+            lma_cuda_stats(0,&c0,&b0);
+            LmaCudaTensor *bt=nullptr;
             uint8_t *bw=(uint8_t*)malloc((size_t)I*D); float *bs=(float*)malloc(hs_n*4);
             for(size_t i=0;i<(size_t)I*D;i++) bw[i]=rnd_e4m3();
             for(int i=0;i<hs_n;i++) bs[i]=ldexpf(1.f+rand()/(float)RAND_MAX,-12);
-            if(!coli_cuda_tensor_upload(&bt,bw,bs,8,D,I,0)){ printf("FAIL byte-check fmt8 upload\n"); return 1; }
-            coli_cuda_tensor_free(bt);
-            coli_cuda_stats(0,&c1,&b1);
+            if(!lma_cuda_tensor_upload(&bt,bw,bs,8,D,I,0)){ printf("FAIL byte-check fmt8 upload\n"); return 1; }
+            lma_cuda_tensor_free(bt);
+            lma_cuda_stats(0,&c1,&b1);
             if(c1!=c0||b1!=b0){
                 printf("FAIL byte-check fmt8: count %zu->%zu bytes %zu->%zu (want unchanged)\n",c0,c1,b0,b1);
                 return 1;
@@ -247,15 +247,15 @@ int main(void){
 
             const int GI=64,GO=32,GS=32;
             int gng=(GI+GS-1)/GS;
-            ColiCudaTensor *gt=nullptr;
+            LmaCudaTensor *gt=nullptr;
             uint8_t *gw=(uint8_t*)malloc((size_t)((GI+1)/2)*GO);
             float *gsc=(float*)malloc((size_t)GO*gng*4);
             for(size_t i=0;i<(size_t)((GI+1)/2)*GO;i++) gw[i]=(uint8_t)rand();
             for(int i=0;i<GO*gng;i++) gsc[i]=ldexpf(1.f+rand()/(float)RAND_MAX,-4);
-            coli_cuda_stats(0,&c0,&b0);
-            if(!coli_cuda_tensor_upload_g(&gt,gw,gsc,4,GI,GO,0,GS)){ printf("FAIL byte-check fmt4g upload\n"); return 1; }
-            coli_cuda_tensor_free(gt);
-            coli_cuda_stats(0,&c1,&b1);
+            lma_cuda_stats(0,&c0,&b0);
+            if(!lma_cuda_tensor_upload_g(&gt,gw,gsc,4,GI,GO,0,GS)){ printf("FAIL byte-check fmt4g upload\n"); return 1; }
+            lma_cuda_tensor_free(gt);
+            lma_cuda_stats(0,&c1,&b1);
             if(c1!=c0||b1!=b0){
                 printf("FAIL byte-check fmt4g: count %zu->%zu bytes %zu->%zu (want unchanged)\n",c0,c1,b0,b1);
                 return 1;
@@ -264,22 +264,22 @@ int main(void){
             printf("byte accounting: fmt=8 dense + fmt=4 grouped free() restores stats exactly\n");
         }
 
-        /* ---- coli_cuda_tensor_bytes() regression: the live-tensor byte report
+        /* ---- lma_cuda_tensor_bytes() regression: the live-tensor byte report
          * must equal weight_bytes + scale_count*sizeof(float) exactly (fmt=6
          * excepted: no separate scale buffer, so weight_bytes alone). The old
          * `O * ng` shape over-reported fmt=8 (real footprint is (O+127)/128 * ng
          * block scales, not O*ng) and charged fmt=6 a phantom O*ng*4 scale
          * buffer it never allocates -- this is the same shape bug F4 fixed in
          * tensor_free(), here in the sibling accessor most callers actually use
-         * for GPU-tier budget bookkeeping (c/colibri.c). */
+         * for GPU-tier budget bookkeeping (c/glm52.c). */
         {
-            ColiCudaTensor *bt=nullptr;
+            LmaCudaTensor *bt=nullptr;
             uint8_t *bw=(uint8_t*)malloc((size_t)I*D); float *bs=(float*)malloc(hs_n*4);
             for(size_t i=0;i<(size_t)I*D;i++) bw[i]=rnd_e4m3();
             for(int i=0;i<hs_n;i++) bs[i]=ldexpf(1.f+rand()/(float)RAND_MAX,-12);
-            if(!coli_cuda_tensor_upload(&bt,bw,bs,8,D,I,0)){ printf("FAIL bytes-check fmt8 upload\n"); return 1; }
+            if(!lma_cuda_tensor_upload(&bt,bw,bs,8,D,I,0)){ printf("FAIL bytes-check fmt8 upload\n"); return 1; }
             size_t want=bt->weight_bytes+bt->scale_count*sizeof(float);
-            size_t got=coli_cuda_tensor_bytes(bt);
+            size_t got=lma_cuda_tensor_bytes(bt);
             if(got!=want){
                 printf("FAIL bytes-check fmt8: got %zu want %zu (weight_bytes %zu + scale_count %zu*4)\n",
                     got,want,bt->weight_bytes,bt->scale_count);
@@ -295,50 +295,50 @@ int main(void){
                     got,indep,I,D,hs_n,bt->scale_count,hs_n);
                 return 1;
             }
-            coli_cuda_tensor_free(bt);
+            lma_cuda_tensor_free(bt);
             free(bw);free(bs);
 
             const int SI=256,SO=32;   /* fmt=6: one exact 256-wide in-block, no tail */
             size_t srb=row_bytes(6,SI);
-            ColiCudaTensor *st=nullptr;
+            LmaCudaTensor *st=nullptr;
             uint8_t *sw=(uint8_t*)malloc(srb*SO);
             for(size_t i=0;i<srb*(size_t)SO;i++) sw[i]=(uint8_t)rand();
-            if(!coli_cuda_tensor_upload(&st,sw,nullptr,6,SI,SO,0)){ printf("FAIL bytes-check fmt6 upload\n"); return 1; }
+            if(!lma_cuda_tensor_upload(&st,sw,nullptr,6,SI,SO,0)){ printf("FAIL bytes-check fmt6 upload\n"); return 1; }
             want=st->weight_bytes;
-            got=coli_cuda_tensor_bytes(st);
+            got=lma_cuda_tensor_bytes(st);
             if(got!=want||st->scale_count!=0){
                 printf("FAIL bytes-check fmt6: got %zu want %zu scale_count %zu (want 0)\n",
                     got,want,st->scale_count);
                 return 1;
             }
-            coli_cuda_tensor_free(st);
+            lma_cuda_tensor_free(st);
             free(sw);
 
             const int GI=64,GO=32,GS=32;             /* fmt=4 grouped: unchanged regression */
             int gng=(GI+GS-1)/GS;
-            ColiCudaTensor *gt=nullptr;
+            LmaCudaTensor *gt=nullptr;
             uint8_t *gw=(uint8_t*)malloc((size_t)((GI+1)/2)*GO);
             float *gsc=(float*)malloc((size_t)GO*gng*4);
             for(size_t i=0;i<(size_t)((GI+1)/2)*GO;i++) gw[i]=(uint8_t)rand();
             for(int i=0;i<GO*gng;i++) gsc[i]=ldexpf(1.f+rand()/(float)RAND_MAX,-4);
-            if(!coli_cuda_tensor_upload_g(&gt,gw,gsc,4,GI,GO,0,GS)){ printf("FAIL bytes-check fmt4g upload\n"); return 1; }
+            if(!lma_cuda_tensor_upload_g(&gt,gw,gsc,4,GI,GO,0,GS)){ printf("FAIL bytes-check fmt4g upload\n"); return 1; }
             want=gt->weight_bytes+gt->scale_count*sizeof(float);
-            got=coli_cuda_tensor_bytes(gt);
+            got=lma_cuda_tensor_bytes(gt);
             if(got!=want||gt->scale_count!=(size_t)GO*gng){
                 printf("FAIL bytes-check fmt4g: got %zu want %zu scale_count %zu (want %d)\n",
                     got,want,gt->scale_count,GO*gng);
                 return 1;
             }
-            coli_cuda_tensor_free(gt);
+            lma_cuda_tensor_free(gt);
             free(gw);free(gsc);
             printf("tensor_bytes: fmt=8 dense + fmt=6 + fmt=4 grouped report exact footprint\n");
         }
-        coli_cuda_shutdown();
+        lma_cuda_shutdown();
     }
 
     /* ---- Phase 3: LUT-gate lifecycle across shutdown/re-init --------------- */
     {   /* g_fp8_lut_ready is process-wide while the e4m3 table is per-device.
-         * SHUTDOWN is the only site that clears it; coli_cuda_init never writes
+         * SHUTDOWN is the only site that clears it; lma_cuda_init never writes
          * it. That is sufficient because init refuses to rebuild contexts while
          * a set is live: a re-init naming the SAME set returns 1 and leaves the
          * contexts -- and therefore the published table -- untouched, and one
@@ -349,24 +349,24 @@ int main(void){
         enum { LO=4, LI=128 };
         uint8_t lw[LO*LI]; float ls[1]={1.f};
         for(size_t i=0;i<sizeof lw;i++) lw[i]=rnd_e4m3();
-        ColiCudaTensor *lt=nullptr;
+        LmaCudaTensor *lt=nullptr;
 
         /* Edge 1: after shutdown the flag is clear, so a fmt=8 upload is
          * refused until this span publishes its own table. */
-        if(!coli_cuda_init(devs,1)){ printf("FAIL lifecycle re-init\n"); return 1; }
-        if(coli_cuda_tensor_upload(&lt,lw,ls,8,LI,LO,0)){ printf("FAIL gate open after shutdown (stale ready flag)\n"); return 1; }
-        if(!coli_cuda_fp8_set_lut(lut)){ printf("FAIL lifecycle set_lut\n"); return 1; }
-        if(!coli_cuda_tensor_upload(&lt,lw,ls,8,LI,LO,0)){ printf("FAIL upload after republish\n"); return 1; }
-        coli_cuda_tensor_free(lt); lt=nullptr;
+        if(!lma_cuda_init(devs,1)){ printf("FAIL lifecycle re-init\n"); return 1; }
+        if(lma_cuda_tensor_upload(&lt,lw,ls,8,LI,LO,0)){ printf("FAIL gate open after shutdown (stale ready flag)\n"); return 1; }
+        if(!lma_cuda_fp8_set_lut(lut)){ printf("FAIL lifecycle set_lut\n"); return 1; }
+        if(!lma_cuda_tensor_upload(&lt,lw,ls,8,LI,LO,0)){ printf("FAIL upload after republish\n"); return 1; }
+        lma_cuda_tensor_free(lt); lt=nullptr;
 
         /* Edge 2: a SAME-SET re-init returns 1 and does NOT disturb the flag,
          * so the upload still succeeds -- the table it would decode against is
          * the one already published to these very contexts. Asserting a refusal
          * here would assert a republish that buys nothing. */
-        if(coli_cuda_init(devs,1)!=1){ printf("FAIL same-set re-init did not return 1\n"); return 1; }
-        if(coli_cuda_device_count()!=1){ printf("FAIL same-set re-init changed the context count\n"); return 1; }
-        if(!coli_cuda_tensor_upload(&lt,lw,ls,8,LI,LO,0)){ printf("FAIL upload refused after a same-set re-init (flag was disturbed)\n"); return 1; }
-        coli_cuda_tensor_free(lt); lt=nullptr;
+        if(lma_cuda_init(devs,1)!=1){ printf("FAIL same-set re-init did not return 1\n"); return 1; }
+        if(lma_cuda_device_count()!=1){ printf("FAIL same-set re-init changed the context count\n"); return 1; }
+        if(!lma_cuda_tensor_upload(&lt,lw,ls,8,LI,LO,0)){ printf("FAIL upload refused after a same-set re-init (flag was disturbed)\n"); return 1; }
+        lma_cuda_tensor_free(lt); lt=nullptr;
 
         /* Edge 3: a DIFFERENT-SET re-init is refused, and leaves both the
          * context set and the flag alone -- proven by the upload that follows
@@ -376,13 +376,13 @@ int main(void){
          * without rebuilding, which is the property under test. */
         {   int ndev=0; cudaGetDeviceCount(&ndev);
             int other[2]={0, ndev>1 ? 1 : ndev};   /* {0,1} on a multi-GPU box, else out of range */
-            if(coli_cuda_init(other,2)!=0){ printf("FAIL different-set re-init was not refused\n"); return 1; }
-            if(coli_cuda_device_count()!=1){ printf("FAIL refused re-init still changed the context set\n"); return 1; }
-            if(!coli_cuda_tensor_upload(&lt,lw,ls,8,LI,LO,0)){ printf("FAIL refused re-init disturbed the LUT flag\n"); return 1; }
-            coli_cuda_tensor_free(lt); lt=nullptr;
+            if(lma_cuda_init(other,2)!=0){ printf("FAIL different-set re-init was not refused\n"); return 1; }
+            if(lma_cuda_device_count()!=1){ printf("FAIL refused re-init still changed the context set\n"); return 1; }
+            if(!lma_cuda_tensor_upload(&lt,lw,ls,8,LI,LO,0)){ printf("FAIL refused re-init disturbed the LUT flag\n"); return 1; }
+            lma_cuda_tensor_free(lt); lt=nullptr;
         }
 
-        coli_cuda_shutdown();
+        lma_cuda_shutdown();
         printf("lut-gate lifecycle: shutdown clears; same-set re-init keeps; different-set re-init refused\n");
     }
     printf("OK\n"); return 0;

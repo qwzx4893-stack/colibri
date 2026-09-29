@@ -24,12 +24,12 @@ class Glm53MetalClampedSourceTests(unittest.TestCase):
         self.assertIn('P("moe_silu_clamped")', SRC)
 
     def test_public_clamped_moe_api_exists(self):
-        self.assertIn("coli_metal_moe_block_clamped", HDR)
+        self.assertIn("lma_metal_moe_block_clamped", HDR)
         self.assertIn("float swiglu_limit", HDR)
-        self.assertIn('extern "C" int coli_metal_moe_block_clamped', SRC)
+        self.assertIn('extern "C" int lma_metal_moe_block_clamped', SRC)
 
     def test_plain_moe_api_remains_unchanged(self):
-        self.assertIn("int coli_metal_moe_block(int nb", HDR)
+        self.assertIn("int lma_metal_moe_block(int nb", HDR)
         self.assertIn("g_moe_silu];", SRC)
 
 

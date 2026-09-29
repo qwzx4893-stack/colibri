@@ -331,7 +331,7 @@ class EvalGlmEvidenceTests(unittest.TestCase):
         # prefix purely because "index" itself starts with "in", so it is
         # routed into parse_engine_loaded and refused there, rather than
         # returned as an ordinary unowned log line. Confirmed at primary
-        # source (c/colibri.c on origin/dev): no engine anywhere in this
+        # source (c/glm52.c on origin/dev): no engine anywhere in this
         # tree ever prints a line starting with "loaded index" -- the only
         # stdout "loaded" record any engine emits is the exact "loaded in
         # ...s | resident dense: ..." line this module already pins above.
@@ -997,7 +997,7 @@ class EvalGlmEvidenceTests(unittest.TestCase):
             popen.assert_not_called()
 
     def test_partial_run_still_reports_the_table_and_exits_zero(self):
-        # dev's own exit-code contract (coli bench does
+        # dev's own exit-code contract (lmatomic bench does
         # `sys.exit(subprocess.call(cmd, ...))`; diag_harness.py parses
         # this tool's stdout table from a subprocess call) exits nonzero
         # ONLY when the engine produced nothing at all. A partial run --

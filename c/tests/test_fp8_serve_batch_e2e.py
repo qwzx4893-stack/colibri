@@ -3,7 +3,7 @@ SERVE_BATCH mux against a REAL fp8 (fmt=8) `kv_b_proj` container.
 
 The defect: batched serve mode (openai_server's Engine always launches the
 engine with SERVE_BATCH=1; --kv-slots > 1 gives the mux real slots) decodes
-kv_b through the MLA absorb path -- qt_addrow / qt_matvec_rows in colibri.c.
+kv_b through the MLA absorb path -- qt_addrow / qt_matvec_rows in glm52.c.
 Before the fmt=8 absorb branches landed, those functions had no fp8 case:
 the first generation request against a container whose kv_b_proj resolves to
 fmt=8 (fp8-e4m3-b128 -- both production fp8 container classes, f8_full and
@@ -22,52 +22,52 @@ requests with the engine still alive afterwards.
 A real fmt=8 container is hundreds of GB and exists only on the model
 hosts, never in CI, so discovery is by environment variable:
 
-    COLI_FP8_CONTAINER   root of an engine-loadable container whose
+    LMA_FP8_CONTAINER   root of an engine-loadable container whose
                          kv_b_proj is fp8 (fmt=8).  Unset => named SKIP.
-    COLI_ENGINE          engine binary override (same convention as coli);
-                         default: the built `colibri` next to the server.
+    LMA_ENGINE          engine binary override (same convention as lmatomic);
+                         default: the built `lmatomic` next to the server.
                          SET but wrong => loud FAIL, never a skip.
-    COLI_FP8_EXPECT_BITE=1   proof-of-bite mode for the fleet's old-binary
+    LMA_FP8_EXPECT_BITE=1   proof-of-bite mode for the fleet's old-binary
                          half: the run PASSES only if the invocation FAILS
                          to serve AND the captured server stderr carries
                          the named `unsupported fmt=` refusal.  A death
                          without the refusal, or a clean serve, FAILS.
-    COLI_FP8_READY_TIMEOUT   seconds to wait for the server to come up
+    LMA_FP8_READY_TIMEOUT   seconds to wait for the server to come up
                          (default 1800 -- container loads are large).
-    COLI_FP8_GENERATE_TIMEOUT   seconds per generation request (default
+    LMA_FP8_GENERATE_TIMEOUT   seconds per generation request (default
                          1800; two concurrent cold prefills on a
                          storage-bound host can be slow).
 
-Set-but-wrong is a FAILURE, not a skip: if COLI_FP8_CONTAINER names a
+Set-but-wrong is a FAILURE, not a skip: if LMA_FP8_CONTAINER names a
 missing path, a container whose kv_b_proj is NOT fmt=8 (e.g. an int8
 spine), or a shard set with duplicate tensor names, this test would
 otherwise pass (or fail for the wrong reason) without ever entering the
 absorb branch it exists to pin -- the vacuous-gate hazard.  The safetensors
 headers are checked first (pure header reads, no tensor data) and the
 mismatch is a loud failure naming what was found.  The same doctrine covers
-COLI_ENGINE: a set-but-nonexistent engine path fails, it does not skip.
+LMA_ENGINE: a set-but-nonexistent engine path fails, it does not skip.
 (Known unreachable corner: a shape with O == ceil(O/128)*ceil(I/128) makes
 per-row and per-block scale counts collide and the unstamped loader would
 resolve fmt=1 where this check says fmt=8 -- real GLM kv_b O is in the
 thousands, so no planned container can reach it.)
 
-The engine/server child environment is constructed fresh: ambient COLI_*
+The engine/server child environment is constructed fresh: ambient LMA_*
 and engine-knob variables (KV8, KV_TQ, ...) are stripped except an
 explicit backend/location allowlist plus two value-restricted knobs --
 exactly ABSORB=0 (the ratified non-absorb fleet arm; any other ABSORB
-value is stripped), and exactly COLI_CUDA_ATTN=1 WHEN the lane opts in
-with COLI_FP8_E2E_CUDA_ABSORB=1 (default: stripped, so a leaked ambient
-COLI_CUDA_ATTN can never swap the code path under test) -- and a leaked
-COLI_API_KEY cannot 401 the ready poll; the kept/dropped set is printed
+value is stripped), and exactly LMA_CUDA_ATTN=1 WHEN the lane opts in
+with LMA_FP8_E2E_CUDA_ABSORB=1 (default: stripped, so a leaked ambient
+LMA_CUDA_ATTN can never swap the code path under test) -- and a leaked
+LMA_API_KEY cannot 401 the ready poll; the kept/dropped set is printed
 and attached to every failure so the run artifact shows the env the
 invocation actually saw.
 
 Lane semantics, stated exactly: by DEFAULT every lane (CPU or CUDA host)
 exercises the CPU absorb arms -- the CUDA fmt=8 absorb decode is gated
-on COLI_CUDA_ATTN (path selection) AND CUDA_DENSE (kv_b's
+on LMA_CUDA_ATTN (path selection) AND CUDA_DENSE (kv_b's
 cuda_eligible), both of which this test strips unless the lane
-explicitly opts in.  A CUDA lane that sets COLI_FP8_E2E_CUDA_ABSORB=1
-(plus its COLI_CUDA/COLI_GPU bindings and ambient COLI_CUDA_ATTN=1 and
+explicitly opts in.  A CUDA lane that sets LMA_FP8_E2E_CUDA_ABSORB=1
+(plus its LMA_CUDA/LMA_GPU bindings and ambient LMA_CUDA_ATTN=1 and
 CUDA_DENSE=1) pins the CUDA absorb decode end-to-end, and the test then
 REQUIRES the engine's GPU-dense boot line as a witness -- an opt-in run
 whose engine reports resident-dense-on-CPU fails rather than banking a
@@ -91,41 +91,41 @@ from urllib.request import Request, urlopen
 
 HERE = Path(__file__).resolve().parent
 C_DIR = HERE.parent
-CONTAINER = os.environ.get("COLI_FP8_CONTAINER")
-ENGINE_OVERRIDE = os.environ.get("COLI_ENGINE")
-EXPECT_BITE = os.environ.get("COLI_FP8_EXPECT_BITE") == "1"
-READY_TIMEOUT = float(os.environ.get("COLI_FP8_READY_TIMEOUT", "1800"))
-GENERATE_TIMEOUT = float(os.environ.get("COLI_FP8_GENERATE_TIMEOUT", "1800"))
+CONTAINER = os.environ.get("LMA_FP8_CONTAINER")
+ENGINE_OVERRIDE = os.environ.get("LMA_ENGINE")
+EXPECT_BITE = os.environ.get("LMA_FP8_EXPECT_BITE") == "1"
+READY_TIMEOUT = float(os.environ.get("LMA_FP8_READY_TIMEOUT", "1800"))
+GENERATE_TIMEOUT = float(os.environ.get("LMA_FP8_GENERATE_TIMEOUT", "1800"))
 PROMPT = "The primary colors are"           # the DR-10 fixed prompt: short, deterministic continuation
 MAX_TOKENS = 24
 # The refusal family this test exists to keep dead.  Both absorb entry points
 # carry the same named message shape; match the family, not one function, so
 # a regression through either surfaces by name in the failure output.
 REFUSAL = re.compile(r"(qt_addrow|qt_matvec_rows): unsupported fmt=")
-ENGINE_DEATH = "colibri engine exited unexpectedly"
+ENGINE_DEATH = "lmatomic engine exited unexpectedly"
 
 # Child-environment policy (the invocation of record must not ride ambient
 # state): backend selection and read-only model LOCATION are the only knob
-# namespaces a lane may pass through -- CUDA lanes need COLI_CUDA/
-# COLI_GPU(S) per the DR-10 bindings, and a split/mirrored container needs
+# namespaces a lane may pass through -- CUDA lanes need LMA_CUDA/
+# LMA_GPU(S) per the DR-10 bindings, and a split/mirrored container needs
 # the engine to be TOLD where its shards live (location config says where
 # the weights ARE; a behavior knob changes what the engine DOES with them
 # -- only the former class passes):
-#   COLI_MODEL_DIRS    -- extra shard directories (st_init_multi's SPLIT
+#   LMA_MODEL_DIRS    -- extra shard directories (st_init_multi's SPLIT
 #                         layout); stripping it hides the operator's shards
 #                         and fails as a bogus "not an fmt=8 container".
-#   COLI_MODEL_MIRROR  -- read-only replica dirs (multi-SSD read fan-out).
-#   COLI_MMAP          -- how weights are mapped from disk; load
+#   LMA_MODEL_MIRROR  -- read-only replica dirs (multi-SSD read fan-out).
+#   LMA_MMAP          -- how weights are mapped from disk; load
 #                         placement/feasibility, not decode semantics.
-#   COLI_DISK_WEIGHTS  -- disk-resident weight policy; feasibility for
+#   LMA_DISK_WEIGHTS  -- disk-resident weight policy; feasibility for
 #                         hundreds-of-GB loads, not decode semantics.
-# Every other COLI_* (COLI_API_KEY -> 401'd ready poll) and the bare
+# Every other LMA_* (LMA_API_KEY -> 401'd ready poll) and the bare
 # engine knobs below (KV8/KV_TQ change the KV format of record;
 # SNAP/SERVE/SERVE_BATCH/NGEN/KV_SLOTS belong to the server, which sets
 # its own) are stripped, and the strip is recorded.  Documented legacy
 # aliases are stripped ALONGSIDE their primaries so a scrubbed primary
 # cannot resurface under its old name: SNAP_MIRROR (consulted only when
-# COLI_MODEL_MIRROR is unset/empty -- i.e. precisely after this scrub) is
+# LMA_MODEL_MIRROR is unset/empty -- i.e. precisely after this scrub) is
 # name-stripped, and TEMP is stripped only when FULLY NUMERIC (matching
 # temp_from_env's strtod whole-string test: a numeric TEMP is the
 # deprecated sampling alias, a path TEMP is the Windows/ROCm temp
@@ -135,41 +135,41 @@ ENGINE_DEATH = "colibri engine exited unexpectedly"
 # at ABSORB=0/default are ratified-equivalent, so a leaked "0" can shift
 # which path is pinned but never fake a pass).
 #
-# The CUDA-absorb opt-in (COLI_FP8_E2E_CUDA_ABSORB=1) is handled by
+# The CUDA-absorb opt-in (LMA_FP8_E2E_CUDA_ABSORB=1) is handled by
 # INJECTION, not passthrough -- see CUDA_ABSORB_INJECT below.  A first
-# attempt value-allowed COLI_CUDA_ATTN=1 and CUDA_DENSE=1 through the scrub
+# attempt value-allowed LMA_CUDA_ATTN=1 and CUDA_DENSE=1 through the scrub
 # and relied on the LANE to set both ambient; the fresh-env allowlist only
 # ever KEEPS a variable already in the environment, so when the lane set
-# COLI_CUDA_ATTN=1 but not the bare (non-COLI) CUDA_DENSE, the eligibility
+# LMA_CUDA_ATTN=1 but not the bare (non-LMATOMIC) CUDA_DENSE, the eligibility
 # knob never reached the child and the run booted resident-dense-on-CPU
 # (the boot-line witness caught it as a hard failure).  The opt-in is the
 # single source of truth for the bundle the path needs, so the test now
 # SETS it directly and reports it, instead of hoping the lane assembled
 # the same set correctly.
-ENV_KNOBS_ALLOWED = ("COLI_CUDA", "COLI_GPU", "COLI_GPUS", "COLI_NO_OMP_TUNE",
-                     "COLI_MODEL_DIRS", "COLI_MODEL_MIRROR", "COLI_MMAP",
-                     "COLI_DISK_WEIGHTS")
+ENV_KNOBS_ALLOWED = ("LMA_CUDA", "LMA_GPU", "LMA_GPUS", "LMA_NO_OMP_TUNE",
+                     "LMA_MODEL_DIRS", "LMA_MODEL_MIRROR", "LMA_MMAP",
+                     "LMA_DISK_WEIGHTS")
 ENV_KNOBS_VALUE_ALLOWED = {"ABSORB": ("0",)}
 ENV_KNOBS_STRIPPED = ("KV8", "KV_TQ", "ABSORB", "CAP_RAISE", "CUDA_DENSE",
-                      "COLI_CUDA_ATTN", "SNAP", "SNAP_MIRROR", "SERVE",
+                      "LMA_CUDA_ATTN", "SNAP", "SNAP_MIRROR", "SERVE",
                       "SERVE_BATCH", "NGEN", "KV_SLOTS")
-CUDA_ABSORB_OPT_IN = "COLI_FP8_E2E_CUDA_ABSORB"
+CUDA_ABSORB_OPT_IN = "LMA_FP8_E2E_CUDA_ABSORB"
 # The exact engine knobs the CUDA fmt=8 absorb decode needs, INJECTED into
-# the child (with the lane's own COLI_CUDA=1 backend binding) when the lane
-# opts in.  COLI_CUDA_ATTN=1 selects the CUDA absorb dispatch; CUDA_DENSE=1
+# the child (with the lane's own LMA_CUDA=1 backend binding) when the lane
+# opts in.  LMA_CUDA_ATTN=1 selects the CUDA absorb dispatch; CUDA_DENSE=1
 # makes kv_b/o cuda_eligible -- qt_load grants eligibility only under
-# g_cuda_dense (colibri.c:2123) and there is NO VRAM/budget gate on it
-# (colibri.c:10966), so CUDA_DENSE=1 reaching the child is sufficient on a
-# device that fits the dense tensors.  CUDA_DENSE is a bare name (no COLI_
+# g_cuda_dense (glm52.c:2123) and there is NO VRAM/budget gate on it
+# (glm52.c:10966), so CUDA_DENSE=1 reaching the child is sufficient on a
+# device that fits the dense tensors.  CUDA_DENSE is a bare name (no LMA_
 # prefix), which is exactly why passthrough could not carry it and explicit
 # injection is required.  Both are stripped from ambient (above) so an
 # unrequested value can never leak in; under the opt-in the test's own "1"
 # is what the child sees, recorded in the kept-knobs line as injected.
-CUDA_ABSORB_INJECT = {"COLI_CUDA_ATTN": "1", "CUDA_DENSE": "1"}
+CUDA_ABSORB_INJECT = {"LMA_CUDA_ATTN": "1", "CUDA_DENSE": "1"}
 
 # Boot-line witness for the opt-in arm: requesting a path is not proof it
 # ran.  The engine announces its residency decision at boot
-# (colibri.c:11047-11049); under the opt-in this test asserts the GPU-dense
+# (glm52.c:11047-11049); under the opt-in this test asserts the GPU-dense
 # line and REFUSES the CPU-dense line, so a misconfigured lane (e.g. the
 # eligibility knob lost again) can never bank a vacuous green.
 CUDA_DENSE_BOOT = "[CUDA] mode: routed experts + resident dense tensors"
@@ -228,7 +228,7 @@ def _numeric_temp(value):
 def _child_env():
     """Fresh server/engine environment per the policy above.  Returns
     (env, report): the report names kept knobs with values and dropped
-    knobs by NAME only (a dropped COLI_API_KEY must not leak its value
+    knobs by NAME only (a dropped LMA_API_KEY must not leak its value
     into a run artifact)."""
     opt_in = os.environ.get(CUDA_ABSORB_OPT_IN) == "1"
     env, kept, dropped = {}, [], []
@@ -241,10 +241,10 @@ def _child_env():
         elif name in ENV_KNOBS_ALLOWED or value in ENV_KNOBS_VALUE_ALLOWED.get(name, ()):
             env[name] = value
             kept.append(f"{name}={value}")
-        elif name.startswith("COLI_") or name in ENV_KNOBS_STRIPPED:
+        elif name.startswith("LMA_") or name in ENV_KNOBS_STRIPPED:
             dropped.append(name)
         elif name == "TEMP" and _numeric_temp(value):
-            dropped.append(name)    # numeric TEMP = deprecated COLI_TEMP alias
+            dropped.append(name)    # numeric TEMP = deprecated LMA_TEMP alias
         else:
             env[name] = value       # non-knob system env (PATH, HOME, LD_LIBRARY_PATH, ...)
     if opt_in:
@@ -259,12 +259,12 @@ def _child_env():
 def _default_engine():
     """The built glm engine next to openai_server.py -- same candidates,
     same order, as the server's own default_engine()."""
-    for name in ("colibri", "glm"):
+    for name in ("lmatomic", "glm"):
         for suffix in ("", ".exe"):
             candidate = C_DIR / (name + suffix)
             if candidate.exists():
                 return candidate
-    return C_DIR / "colibri"
+    return C_DIR / "lmatomic"
 
 
 ENGINE = Path(ENGINE_OVERRIDE) if ENGINE_OVERRIDE else _default_engine()
@@ -299,7 +299,7 @@ def _shard_headers(container):
 
 def _kv_b_fmt8_check(headers):
     """Is the container's kv_b_proj in the fmt=8 class?  Mirrors the loader's
-    own byte arithmetic (qt_resolve_fmt, colibri.c): fmt=8 carries O*I raw
+    own byte arithmetic (qt_resolve_fmt, glm52.c): fmt=8 carries O*I raw
     e4m3 weight bytes plus ceil(O/128)*ceil(I/128) f32 block scales in the
     .qs sidecar, where fmt=1 (int8 spine) carries O per-row f32 scales.  Real
     GLM kv_b shapes keep the two counts far apart, so the answer here is
@@ -454,9 +454,9 @@ def _post(url, body, timeout):
 
 
 @unittest.skipUnless(CONTAINER,
-                     "COLI_FP8_CONTAINER is not set: no fmt=8 container on this host")
+                     "LMA_FP8_CONTAINER is not set: no fmt=8 container on this host")
 @unittest.skipUnless(ENGINE_OVERRIDE or ENGINE.exists(),
-                     "engine binary is not built (make -C c colibri, or set COLI_ENGINE)")
+                     "engine binary is not built (make -C c glm52, or set LMA_ENGINE)")
 class ServeBatchFmt8E2ETest(unittest.TestCase):
     maxDiff = None
 
@@ -470,7 +470,7 @@ class ServeBatchFmt8E2ETest(unittest.TestCase):
                   f"\n--- server stderr (tail) ---\n{tail}")
 
     def _assert_bite(self, server, results):
-        """COLI_FP8_EXPECT_BITE=1: the fleet's old-binary half.  PASS iff the
+        """LMA_FP8_EXPECT_BITE=1: the fleet's old-binary half.  PASS iff the
         invocation failed to serve AND the named refusal is machine-matched
         in the captured stderr.  An engine that dies for ANY other reason
         (OOM, protocol desync, bad path) FAILS -- a death without the named
@@ -482,7 +482,7 @@ class ServeBatchFmt8E2ETest(unittest.TestCase):
         if not failed:
             self._fail_with_server_evidence(
                 server, "expect-bite mode: both batched requests served 200 -- "
-                        "no bite. Is COLI_ENGINE really the pre-fix binary?")
+                        "no bite. Is LMA_ENGINE really the pre-fix binary?")
         if match is None:
             self._fail_with_server_evidence(
                 server, "expect-bite mode: the invocation failed WITHOUT the "
@@ -503,28 +503,28 @@ class ServeBatchFmt8E2ETest(unittest.TestCase):
         # lane whose whole purpose is running that exact binary.
         if ENGINE_OVERRIDE:
             self.assertTrue(ENGINE.is_file(),
-                            f"COLI_ENGINE={ENGINE_OVERRIDE} does not exist -- "
+                            f"LMA_ENGINE={ENGINE_OVERRIDE} does not exist -- "
                             f"fix the path or unset it to use the built engine")
             self.assertTrue(os.access(str(ENGINE), os.X_OK),
-                            f"COLI_ENGINE={ENGINE_OVERRIDE} is not executable")
+                            f"LMA_ENGINE={ENGINE_OVERRIDE} is not executable")
         # Precondition, checked loudly (never skipped): the pointed-to
         # container really is the fmt=8 kv_b class.  A wrong container would
         # pass every assertion below without the absorb path ever running.
         self.assertTrue(os.path.isdir(CONTAINER),
-                        f"COLI_FP8_CONTAINER={CONTAINER} is not a directory -- "
+                        f"LMA_FP8_CONTAINER={CONTAINER} is not a directory -- "
                         f"set it to a container root or unset it to skip")
         headers, n_shards, duplicates = _shard_headers(CONTAINER)
         self.assertTrue(n_shards > 0,
-                        f"COLI_FP8_CONTAINER={CONTAINER} holds no *.safetensors shards")
+                        f"LMA_FP8_CONTAINER={CONTAINER} holds no *.safetensors shards")
         self.assertFalse(
             duplicates,
-            f"COLI_FP8_CONTAINER={CONTAINER} carries duplicate tensor names "
+            f"LMA_FP8_CONTAINER={CONTAINER} carries duplicate tensor names "
             f"across shards (the engine's st_init refuses exactly this, and "
             f"this check could otherwise judge a shard the engine never "
             f"loads): {'; '.join(duplicates[:5])}")
         is_fmt8, detail = _kv_b_fmt8_check(headers)
         self.assertTrue(is_fmt8,
-                        f"COLI_FP8_CONTAINER={CONTAINER} is not an fmt=8 kv_b "
+                        f"LMA_FP8_CONTAINER={CONTAINER} is not an fmt=8 kv_b "
                         f"container; this test would be vacuous against it: {detail}")
 
         server = _Server(_free_port())
@@ -591,7 +591,7 @@ class ServeBatchFmt8E2ETest(unittest.TestCase):
             if kind == "timeout":
                 self._fail_with_server_evidence(
                     server, f"slot {slot}: generation request timed out after "
-                            f"{outcome[1]:.0f}s (COLI_FP8_GENERATE_TIMEOUT to raise; "
+                            f"{outcome[1]:.0f}s (LMA_FP8_GENERATE_TIMEOUT to raise; "
                             f"a timeout is not a hang and not a protocol failure)")
             if kind == "neterr":
                 self._fail_with_server_evidence(
@@ -622,9 +622,9 @@ class ServeBatchFmt8E2ETest(unittest.TestCase):
             # would park the second request for the first one's whole
             # generation -- minutes, not milliseconds -- while every other
             # assertion here stayed green.
-            queue_wait = resp_headers.get("x-colibri-queue-wait-ms")
+            queue_wait = resp_headers.get("x-lmatomic-queue-wait-ms")
             self.assertIsNotNone(queue_wait,
-                                 f"slot {slot}: no x-colibri-queue-wait-ms response "
+                                 f"slot {slot}: no x-lmatomic-queue-wait-ms response "
                                  f"header -- the admission witness is gone")
             self.assertLess(float(queue_wait), 1000.0,
                             f"slot {slot}: queued {queue_wait} ms behind the other "

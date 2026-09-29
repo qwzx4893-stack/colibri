@@ -1,6 +1,6 @@
-# Qwen3.6-35B-A3B in colibri — Phase 0 + Phase 1
+# Qwen3.6-35B-A3B in LM Atomic — Phase 0 + Phase 1
 
-把 Qwen3.6 加进 colibri 的分阶段实现。**Phase 0** = 权重转换 + 校验预言机;**Phase 1** = Gated Attention + 流式 MoE 的 C 引擎,DeltaNet 层先当 identity 跳过。
+把 Qwen3.6 加进 LM Atomic 的分阶段实现。**Phase 0** = 权重转换 + 校验预言机;**Phase 1** = Gated Attention + 流式 MoE 的 C 引擎,DeltaNet 层先当 identity 跳过。
 
 ## 为什么这样切
 
@@ -30,7 +30,7 @@ cd c
 python tools/make_qwen36_tiny.py --out ../qwen36_tiny
 #     -> ../qwen36_tiny/  (模型)  + ref_qwen36.json (attention_only 参考)
 
-# 2) 转成 colibri 容器 (专家 int8;Phase1 用 ebits=8 保真)
+# 2) 转成 LM Atomic 容器 (专家 int8;Phase1 用 ebits=8 保真)
 python tools/convert_qwen36.py --model ../qwen36_tiny --out ../qwen36_tiny_i8 --ebits 8
 
 # 3) 编译引擎 (MinGW / gcc)
@@ -61,11 +61,11 @@ SNAP=/data/qwen36_i4 ./qwen36.exe 16 4 ref_qwen36.json
 
 ## 云端转换(推荐:笔记本只下载成品容器)
 
-见 [`docs/qwen36-cloud-convert.md`](./qwen36-cloud-convert.md)。转换器已支持 `--repo` 拉权重 + `--upload-repo` 推回 Hub + `--low-disk` 流式省磁盘。笔记本端只 `snapshot_download` 那 18GB `.coli` 容器即可。
+见 [`docs/qwen36-cloud-convert.md`](./qwen36-cloud-convert.md)。转换器已支持 `--repo` 拉权重 + `--upload-repo` 推回 Hub + `--low-disk` 流式省磁盘。笔记本端只 `snapshot_download` 那 18GB `.lmatomic` 容器即可。
 
 ## 容器格式 / 张量约定
 
-`convert_qwen36.py` 输出一个 **safetensors 分片目录**(colibri 的"容器"就是目录):
+`convert_qwen36.py` 输出一个 **safetensors 分片目录**(LM Atomic 的"容器"就是目录):
 - 稠密权重(embed/attn qkv o/qk_norm/RMSNorm/router gate/shared expert/lm_head/final norm)保持原 dtype(F32 载入)。
 - 每个专家三矩阵合并为 `model.layers.{l}.mlp.experts.{e}.merged_weight`(int8,拼接顺序 **g|u|d**) + `...qs`(f32 scale,顺序 gs|us|ds)——**完全复用 olmoe.c 的 `load_expert_merged`/`Slot`,零改动**。
 - 附带 `qwen36_meta.json`:引擎所需的全部 Qwen3.6 专属维度(attn head_dim、rope_dim、MoE 分组、attn 层列表等)。缺失时引擎回退到 `i%4==3` + 默认值。

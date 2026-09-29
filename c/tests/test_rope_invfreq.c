@@ -5,12 +5,12 @@
  * once (keyed on theta/qk) and forms ang=pos*inv[j] per position. The rotation
  * is byte-sensitive: cs/sn feed q/k dot products, so any bit drift changes the
  * sampled token. This test drives the REAL rope_interleave (via the test_topp.c
- * include-colibri.c pattern) and compares its rotated output, BIT-FOR-BIT,
+ * include-glm52.c pattern) and compares its rotated output, BIT-FOR-BIT,
  * against an independent reference that reimplements the OLD powf-per-position
  * formula. Sweeps the qk_rope sizes and rope_theta values GLM/Kimi actually use.
  */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <math.h>

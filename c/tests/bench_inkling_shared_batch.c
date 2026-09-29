@@ -6,7 +6,7 @@
  *   make tests/bench_inkling_shared_batch ARCH=native
  *   OMP_NUM_THREADS=<physical cores> ./tests/bench_inkling_shared_batch
  */
-#define COLI_INKLING_SHARED_BATCH_TEST 1
+#define LMA_INKLING_SHARED_BATCH_TEST 1
 #define main inkling_main_unused
 #include "../inkling.c"
 #undef main

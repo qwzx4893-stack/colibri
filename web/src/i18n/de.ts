@@ -64,18 +64,18 @@ const de: Record<string, string> = {
   "topbar.clear": "Leeren",
 
   // Startansicht
-  "hero.title": "COLIBRÌ ENGINE",
+  "hero.title": "LM ATOMIC ENGINE",
   "hero.subtitle": "Frag den Riesen.",
   "hero.tagline": "Deine Hardware bleibt deine.",
-  "hero.description": "Mit einem lokalen Colibrì-Server verbinden und Antworten direkt von deiner Hardware streamen. Nichts verlässt den gewählten Endpunkt.",
+  "hero.description": "Mit einem lokalen LM Atomic-Server verbinden und Antworten direkt von deiner Hardware streamen. Nichts verlässt den gewählten Endpunkt.",
   "prompts.routing": "Erkläre, wie Experten-Routing funktioniert",
   "prompts.benchmark": "Schreibe einen kleinen C-Benchmark",
   "prompts.caching": "Vergleiche RAM- und VRAM-Caching",
 
   // Chat
   "chat.you": "Du",
-  "chat.colibri": "colibrì",
-  "chat.placeholder": "Nachricht an colibrì…",
+  "chat.lmatomic": "LM Atomic",
+  "chat.placeholder": "Nachricht an LM Atomic…",
   "chat.inputHint": "Eingabetaste zum Senden · Umschalt+Eingabetaste für Zeilenumbruch",
   "chat.attachImage": "Bild anhängen",
   "chat.removeImage": "Bild entfernen",
@@ -126,7 +126,7 @@ const de: Record<string, string> = {
   "profile.diskNote": "Datenträgerdienst ist die Zeit zum Lesen von Experten in I/O-Threads; sie überlappt mit der Berechnung. Nur die I/O-Wartezeit des Rechenthreads fließt in die Gesamtzeit ein. Bei mehreren KV-Sitzungen beschreiben die Anteile die ganze Engine im Zeitfenster des Zuges.",
 
   // Fehlergrenze
-  "error.title": "Die colibrì-Oberfläche hat einen Fehler festgestellt",
+  "error.title": "Die LM Atomic-Oberfläche hat einen Fehler festgestellt",
   "error.hint": "Die Engine ist nicht betroffen. Versuche, die Seite neu zu laden.",
   "error.retry": "Erneut versuchen",
 }

@@ -1,4 +1,4 @@
-# Qwen3.8-Flash-Next on colibri
+# Qwen3.8-Flash-Next on LM Atomic
 
 `c/qwen38.c` runs the language model in
 [`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8)
@@ -24,10 +24,10 @@ hf download Qwen/Qwen3.8-Flash-Next-FP8 \
   --local-dir ~/Models/Qwen3.8-Flash-Next-FP8
 
 make -C c qwen38
-COLI_MODEL=~/Models/Qwen3.8-Flash-Next-FP8 ./c/coli chat
+LMA_MODEL=~/Models/Qwen3.8-Flash-Next-FP8 ./c/lmatomic chat
 ```
 
-`coli serve` and `coli web` use the same gateway path. Qwen3.8 thinks
+`lmatomic serve` and `lmatomic web` use the same gateway path. Qwen3.8 thinks
 by default; `reasoning_effort` accepts `low`, `medium`, `high`, and `xhigh`, and
 `enable_thinking: false` emits the model's official empty thinking prefix.
 Audio and grammar constraints are rejected explicitly. Images are supported;
@@ -100,7 +100,7 @@ blocks are pooled and scored, the best 512 blocks are retained, and a causal
 tail of up to three tokens is appended. The main 24-head attention then operates
 only on those original tokens. The native model limit is 262,144 tokens;
 `Q38_MAXT` defaults to 8,192 and may raise the server limit up to that native
-ceiling when the required RAM is available. `coli serve --ctx N` (and `coli
+ceiling when the required RAM is available. `lmatomic serve --ctx N` (and `lmatomic
 chat --ctx N`) reach the engine as `Q38_MAXT=N`, not as `CTX`: that is the
 variable to look for in the engine process's environment. `max_tokens` is a
 ceiling: a budget the prompt leaves no room for is clamped to the room left
@@ -126,7 +126,7 @@ prompt:
 | PLE n-gram table (51B parameters) | 0; sixteen 160-byte row reads per token |
 | routed experts on disk | 120.8 GB, streamed |
 
-`coli plan --model <dir> --ram <GB> --ctx 8192 --gpu none` prints this
+`lmatomic plan --model <dir> --ram <GB> --ctx 8192 --gpu none` prints this
 accounting for a budget and chooses the expert cap from it.
 
 Measured on the official checkpoint on an Intel Core i9-14900K (24 physical
@@ -177,12 +177,12 @@ trunk goes to the GPU as well, see below.
 
 ```bash
 make -C c qwen38 CUDA=1 CUDA_ARCH=native      # NVCC=/usr/bin/nvcc on distro CUDA
-COLI_CUDA=1 COLI_GPUS=0,1 CUDA_EXPERT_GB=auto COLI_TIMERS=1 \
+LMA_CUDA=1 LMA_GPUS=0,1 CUDA_EXPERT_GB=auto LMA_TIMERS=1 \
 OMP_NUM_THREADS=<physical cores - 1> OMP_WAIT_POLICY=ACTIVE OMP_PROC_BIND=close \
 SNAP=<checkpoint> N_NEW=200 ./c/qwen38 128 8 prompt.txt
 ```
 
-`coli chat --gpu <n>` does the same through the planner (`supports_accelerator`
+`lmatomic chat --gpu <n>` does the same through the planner (`supports_accelerator`
 in the `qwen38` descriptor). The tier reports next to the cache hit rate:
 resident experts, uploads, VRAM hits and misses, LFRU swaps. Requirements:
 native FP8 routed experts (`Q38_NATIVE_FP8=1`, the default) with every layer's
@@ -212,7 +212,7 @@ is not done yet.
 
 **What it is worth on this machine -- measured, not projected.** Threadripper
 PRO 3945WX (12 cores, `OMP_PLACES=cores`), 94 GB, checkpoint in the page cache,
-prompt of 315 tokens plus 100 generated, cap 128, `COLI_TIMERS=1` decode bank
+prompt of 315 tokens plus 100 generated, cap 128, `LMA_TIMERS=1` decode bank
 (the `Speed` line the engine prints divides by the whole generation time
 including the prompt; the numbers below are decode only):
 
@@ -251,7 +251,7 @@ there, one round trip per matmul (`x` up, `y` down; activations stay on the
 CPU). Prefill rows (S > 1) and any backend failure take the CPU path, which
 holds the same int8 rows (see [the trunk on the CPU](#the-trunk-on-the-cpu-int8-rows)). The placer takes the trunk before the experts (it is
 read on every token), so on an 8 GB card about 2 GB remain for hot experts;
-`coli plan` prices it the same way (`4.0 GB int8 trunk + ... hot tier`).
+`lmatomic plan` prices it the same way (`4.0 GB int8 trunk + ... hot tier`).
 
 | variable | effect |
 |---|---|
@@ -278,7 +278,7 @@ Group scales (gs 64/128) for the trunk are the lever left; that needs a kernel
 format, not a placement change.
 
 **Measured** (same machine and prompt as above, cap 224 so the RAM LRU
-serves 84 % of expert reads, `COLI_TIMERS=1` decode bank, 100 tokens):
+serves 84 % of expert reads, `LMA_TIMERS=1` decode bank, 100 tokens):
 
 | | CPU only (BF16 trunk) | experts only, one card | trunk on one card, no experts | trunk + experts, one card | trunk + experts, two cards |
 |---|---:|---:|---:|---:|---:|
@@ -335,7 +335,7 @@ restores the table kernel.
 
 **Measured** on the released Qwen3.8-Flash-Next-FP8, a 16-core server shared
 with a training job, `OMP_NUM_THREADS=8`, RAM LRU cap 96 per layer, 100
-generated tokens, `COLI_TIMERS=1` decode bank:
+generated tokens, `LMA_TIMERS=1` decode bank:
 
 | | BF16 trunk, table FP8 (1.12.0) | BF16 trunk, vector FP8 | int8 trunk, vector FP8 (default) |
 |---|---:|---:|---:|
@@ -391,7 +391,7 @@ The request wall time, prompt/completion counts, expert read/wait/matmul time,
 sequence-mixer time, LM-head time and actual forward count are emitted through
 the shared `PROF` frame consumed by `tools/datapoint.py`.
 
-Set `COLI_TIMERS=1` for the finer Qwen-specific breakdown on stderr: expert
+Set `LMA_TIMERS=1` for the finer Qwen-specific breakdown on stderr: expert
 reads, FP8 expansion, routed and shared experts, resident matmuls, DeltaNet, QSA
 indexing, QSA attention, PLE and the LM head. Architecture-phase times overlap
 the resident-matmul counter by design; expert disk service also overlaps the
@@ -430,7 +430,7 @@ incompatible tensor shapes fail during load.
 A/B diagnosis. It does not change the single-token decode path.
 
 The weights remain covered by the Qwen Community License 1.0 in the downloaded
-checkpoint. They are not redistributed by Colibri.
+checkpoint. They are not redistributed by LM Atomic.
 
 ## Vision
 
@@ -500,8 +500,8 @@ arithmetic rather than a defect, and the threshold sits between it and the
 ### Wired up
 
 Images work end to end. Send an OpenAI `image_url` part with a base64 data URI
-(a local path is accepted only under `COLI_IMAGE_ROOT`, see
-`docs/ENVIRONMENT.md`; `coli chat` reads a pasted path itself and sends the
+(a local path is accepted only under `LMA_IMAGE_ROOT`, see
+`docs/ENVIRONMENT.md`; `lmatomic chat` reads a pasted path itself and sends the
 data URI); the gateway preprocesses it, replaces the part with
 `<|vision_start|>` + N x `<|image_pad|>` + `<|vision_end|>`, and hands the patches
 to the engine in an `IMAGE` frame ahead of the `SUBMIT` they belong to. The engine

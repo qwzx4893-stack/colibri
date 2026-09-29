@@ -10,10 +10,10 @@ export function stored(storage: Pick<StringStorage, "getItem">, key: string, fal
 
 export function persistPublicSettings(storage: StringStorage, baseUrl: string, model: string) {
   try {
-    storage.setItem("colibri.baseUrl", baseUrl)
-    storage.setItem("colibri.model", model)
+    storage.setItem("lmatomic.baseUrl", baseUrl)
+    storage.setItem("lmatomic.model", model)
     // API credentials intentionally remain memory-only. Remove values left by
     // older web releases whenever public settings are persisted.
-    storage.removeItem("colibri.apiKey")
+    storage.removeItem("lmatomic.apiKey")
   } catch { /* restricted storage mode */ }
 }

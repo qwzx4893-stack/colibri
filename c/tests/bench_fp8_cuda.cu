@@ -1,4 +1,4 @@
-/* fmt=8 kernel bench: the original per-(o,s) kernels vs the COLI_CUDA_F8_WARP
+/* fmt=8 kernel bench: the original per-(o,s) kernels vs the LMA_CUDA_F8_WARP
  * rework (shared-LUT decode and, where the toolchain compiles it, the
  * cuda_fp8.h cvt decode), on the census expert shapes grouped as 8 experts x
  * S rows, S in {1,4,8,32}. Kernel time only (events around the launches, no
@@ -77,7 +77,7 @@ static void warp_hidden(GroupDesc *d,float *g,float *u,float *x,float *y,int S){
 static void warp_down(GroupDesc *d,float *g,float *u,float *x,float *y,int S){
     (void)u;(void)x;(void)S; grouped_down_f8w<0><<<dim3((unsigned)((D+7)/8),(unsigned)E),256>>>(y,g,d,D,I);
 }
-#if COLI_F8_HWCVT
+#if LMA_F8_HWCVT
 static void cvt_hidden(GroupDesc *d,float *g,float *u,float *x,float *y,int S){
     (void)y;(void)S; grouped_hidden_f8w_dual<1><<<dim3((unsigned)((I+7)/8),(unsigned)E),256>>>(g,u,x,d,I,D);
 }
@@ -139,7 +139,7 @@ int main(void){
         {"old",     "down",        old_down,    1.0*D*I*E},
         {"warp-lut","hidden_dual", warp_hidden, 2.0*I*D*E},
         {"warp-lut","down",        warp_down,   1.0*D*I*E},
-#if COLI_F8_HWCVT
+#if LMA_F8_HWCVT
         {"warp-cvt","hidden_dual", cvt_hidden,  2.0*I*D*E},
         {"warp-cvt","down",        cvt_down,    1.0*D*I*E},
 #endif

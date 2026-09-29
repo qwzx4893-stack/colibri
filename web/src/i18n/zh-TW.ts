@@ -51,17 +51,17 @@ const zhTW: Record<string, string> = {
   "topbar.truncatedHelp": "回應達到最大輸出 token 上限而被截斷。請提高「最大輸出 token 數」以查看完整答案。",
   "topbar.clear": "清除",
 
-  "hero.title": "COLIBRÌ 引擎",
+  "hero.title": "LM ATOMIC 引擎",
   "hero.subtitle": "向巨人提問。",
   "hero.tagline": "讓機器屬於你。",
-  "hero.description": "連線到本地 colibrì 伺服器，直接從你的硬體串流取得回應。所有資料都留在你選擇的端點內。",
+  "hero.description": "連線到本地 LM Atomic 伺服器，直接從你的硬體串流取得回應。所有資料都留在你選擇的端點內。",
   "prompts.routing": "解釋專家路由如何運作",
   "prompts.benchmark": "撰寫一個簡單的 C 基準測試",
   "prompts.caching": "比較 RAM 與 VRAM 快取",
 
   "chat.you": "你",
-  "chat.colibri": "colibrì",
-  "chat.placeholder": "傳送訊息給 colibrì…",
+  "chat.lmatomic": "LM Atomic",
+  "chat.placeholder": "傳送訊息給 LM Atomic…",
   "chat.inputHint": "Enter 傳送 · Shift+Enter 換行",
   "chat.stop": "停止生成",
   "chat.send": "傳送訊息",
@@ -107,7 +107,7 @@ const zhTW: Record<string, string> = {
   "profile.oneTurn": "1 輪",
   "profile.diskNote": "磁碟服務是在 I/O 執行緒上讀取專家的時間；它與運算重疊，因此只有運算執行緒實際感受到的 I/O 等待 才計入總耗時分解。多 KV 工作階段時，份額描述的是整個引擎在該輪視窗內的表現。",
 
-  "error.title": "colibrì UI 遇到錯誤",
+  "error.title": "LM Atomic UI 遇到錯誤",
   "error.hint": "引擎不受影響。請嘗試重新整理頁面。",
   "error.retry": "重試",
 }

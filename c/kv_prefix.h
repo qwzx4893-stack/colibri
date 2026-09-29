@@ -1,6 +1,6 @@
 /* kv_prefix.h — reuse the attention state a previous turn already built.
  *
- * A chat client resends the whole transcript every turn. colibri.c has pinned
+ * A chat client resends the whole transcript every turn. glm52.c has pinned
  * each conversation to a KV slot since #639, so its turn N prefills only the
  * new text; inkling.c, kimi_k3.c and deepseek were written without it and
  * re-processed turns 1..N-1 from scratch. The cost of a message therefore grew

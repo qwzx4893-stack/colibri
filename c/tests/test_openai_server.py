@@ -268,7 +268,7 @@ class TemplateTest(unittest.TestCase):
         all -- the except branch sets {} -- and every sibling renderer (Kimi
         above, Qwen3.8, DeepSeek V4/V4.1) renders the call without arguments
         rather than failing. Only the "parsed, but not an object" case reached
-        .items(), raised AttributeError, and came back as HTTP 500 "The colibri
+        .items(), raised AttributeError, and came back as HTTP 500 "The lmatomic
         engine failed to process the request." on a request the engine never
         saw.
         """
@@ -486,13 +486,13 @@ class TemplateTest(unittest.TestCase):
         generation_options({"tools": well}, 8)
         self.assertIn('"name": "search"', render_chat(list(messages), tools=well))
 
-    def test_coli_temp_is_the_default_for_requests_that_omit_temperature(self):
-        with patch.dict("openai_server.os.environ", {"COLI_TEMP": "0.25"}):
+    def test_lma_temp_is_the_default_for_requests_that_omit_temperature(self):
+        with patch.dict("openai_server.os.environ", {"LMA_TEMP": "0.25"}):
             self.assertEqual(generation_options({}, 8)[1], 0.25)
             self.assertEqual(generation_options({"temperature": 0}, 8)[1], 0.0)
         for invalid in ("malformed", "5", "-1", "nan", "1e999"):
             with self.subTest(invalid=invalid):
-                with patch.dict("openai_server.os.environ", {"COLI_TEMP": invalid}):
+                with patch.dict("openai_server.os.environ", {"LMA_TEMP": invalid}):
                     self.assertEqual(generation_options({}, 8)[1], 0.7)
 
     def test_validates_stop_sequences(self):
@@ -509,13 +509,13 @@ class TemplateTest(unittest.TestCase):
             self.assertEqual(stop_policy({}, False), ((), False))
             self.assertEqual(stop_policy({"stop": "END"}, True), (("END",), False))
             self.assertEqual(stop_policy({
-                "stop": "END", "x_colibri_ignore_leading_stop": True,
+                "stop": "END", "x_lmatomic_ignore_leading_stop": True,
             }, True), (("END",), True))
         with patch("openai_server.ARCH", "inkling"):
             self.assertEqual(stop_policy({}, True), ((), False))
             self.assertEqual(stop_policy({"stop": "END"}, True), (("END",), False))
         with self.assertRaises(APIError):
-            stop_policy({"x_colibri_ignore_leading_stop": "yes"}, True)
+            stop_policy({"x_lmatomic_ignore_leading_stop": "yes"}, True)
 
 
 class StopFilterTest(unittest.TestCase):
@@ -613,10 +613,10 @@ class GenerationMetricsTest(unittest.TestCase):
         self.assertEqual(output, ["Hé", "llo"])
         self.assertEqual(stats["completion_tokens"], 2)
         metrics = self.server.scheduler.prometheus()
-        self.assertIn("colibri_scheduler_first_output_seconds_sum 0.5\n", metrics)
-        self.assertIn("colibri_scheduler_first_output_seconds_count 1\n", metrics)
-        self.assertIn("colibri_scheduler_engine_call_seconds_sum 3.0\n", metrics)
-        self.assertIn("colibri_scheduler_engine_call_seconds_count 1\n", metrics)
+        self.assertIn("lmatomic_scheduler_first_output_seconds_sum 0.5\n", metrics)
+        self.assertIn("lmatomic_scheduler_first_output_seconds_count 1\n", metrics)
+        self.assertIn("lmatomic_scheduler_engine_call_seconds_sum 3.0\n", metrics)
+        self.assertIn("lmatomic_scheduler_engine_call_seconds_count 1\n", metrics)
 
     def test_empty_output_does_not_count_but_tool_output_does(self):
         text, tools = [], []
@@ -632,8 +632,8 @@ class GenerationMetricsTest(unittest.TestCase):
         self.assertEqual(text, ["", "tail"])
         self.assertEqual(tools, ["", "tool payload"])
         metrics = self.server.scheduler.prometheus()
-        self.assertIn("colibri_scheduler_first_output_seconds_sum 2.0\n", metrics)
-        self.assertIn("colibri_scheduler_first_output_seconds_count 1\n", metrics)
+        self.assertIn("lmatomic_scheduler_first_output_seconds_sum 2.0\n", metrics)
+        self.assertIn("lmatomic_scheduler_first_output_seconds_count 1\n", metrics)
 
     def test_error_and_cancellation_before_output_do_not_invent_first_output(self):
         for error in (RuntimeError("failed"), ClientCancelled()):
@@ -642,9 +642,9 @@ class GenerationMetricsTest(unittest.TestCase):
                 with self.assertRaises(type(error)):
                     self.server.generate("prompt", 4, 0, 1, lambda text: None)
         metrics = self.server.scheduler.prometheus()
-        self.assertIn("colibri_scheduler_first_output_seconds_count 0\n", metrics)
-        self.assertIn("colibri_scheduler_engine_call_seconds_sum 8.0\n", metrics)
-        self.assertIn("colibri_scheduler_engine_call_seconds_count 2\n", metrics)
+        self.assertIn("lmatomic_scheduler_first_output_seconds_count 0\n", metrics)
+        self.assertIn("lmatomic_scheduler_engine_call_seconds_sum 8.0\n", metrics)
+        self.assertIn("lmatomic_scheduler_engine_call_seconds_count 2\n", metrics)
 
     def test_failure_after_output_keeps_both_observations(self):
         def generate(prompt, maximum, temperature, top_p, on_text):
@@ -655,8 +655,8 @@ class GenerationMetricsTest(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.server.generate("prompt", 4, 0, 1, lambda text: None)
         metrics = self.server.scheduler.prometheus()
-        self.assertIn("colibri_scheduler_first_output_seconds_count 1\n", metrics)
-        self.assertIn("colibri_scheduler_engine_call_seconds_count 1\n", metrics)
+        self.assertIn("lmatomic_scheduler_first_output_seconds_count 1\n", metrics)
+        self.assertIn("lmatomic_scheduler_engine_call_seconds_count 1\n", metrics)
 
 
 class SchedulerTest(unittest.TestCase):
@@ -678,17 +678,17 @@ class SchedulerTest(unittest.TestCase):
         with patch("openai_server.time.monotonic", side_effect=[10, 10.25, 10.25, 12.25]):
             with scheduler.admit():
                 active = scheduler.prometheus()
-                self.assertIn("colibri_scheduler_active 1\n", active)
-                self.assertIn("colibri_scheduler_slot_duration_seconds_count 0\n", active)
+                self.assertIn("lmatomic_scheduler_active 1\n", active)
+                self.assertIn("lmatomic_scheduler_slot_duration_seconds_count 0\n", active)
         metrics = scheduler.prometheus()
-        self.assertIn("# TYPE colibri_scheduler_completed_total counter\n", metrics)
-        self.assertIn("colibri_scheduler_completed_total 1\n", metrics)
-        self.assertIn("colibri_scheduler_queue_wait_seconds_sum 0.25\n", metrics)
-        self.assertIn('colibri_scheduler_queue_wait_seconds_bucket{le="0.1"} 0\n', metrics)
-        self.assertIn('colibri_scheduler_queue_wait_seconds_bucket{le="0.5"} 1\n', metrics)
-        self.assertIn('colibri_scheduler_queue_wait_seconds_bucket{le="+Inf"} 1\n', metrics)
-        self.assertIn("colibri_scheduler_slot_duration_seconds_sum 2.0\n", metrics)
-        self.assertIn("colibri_scheduler_slot_duration_seconds_count 1\n", metrics)
+        self.assertIn("# TYPE lmatomic_scheduler_completed_total counter\n", metrics)
+        self.assertIn("lmatomic_scheduler_completed_total 1\n", metrics)
+        self.assertIn("lmatomic_scheduler_queue_wait_seconds_sum 0.25\n", metrics)
+        self.assertIn('lmatomic_scheduler_queue_wait_seconds_bucket{le="0.1"} 0\n', metrics)
+        self.assertIn('lmatomic_scheduler_queue_wait_seconds_bucket{le="0.5"} 1\n', metrics)
+        self.assertIn('lmatomic_scheduler_queue_wait_seconds_bucket{le="+Inf"} 1\n', metrics)
+        self.assertIn("lmatomic_scheduler_slot_duration_seconds_sum 2.0\n", metrics)
+        self.assertIn("lmatomic_scheduler_slot_duration_seconds_count 1\n", metrics)
 
     def test_failed_and_cancelled_admissions_are_timed(self):
         scheduler = GenerationScheduler()
@@ -697,10 +697,10 @@ class SchedulerTest(unittest.TestCase):
                 with scheduler.admit():
                     raise error
         metrics = scheduler.prometheus()
-        self.assertIn("colibri_scheduler_failed_total 1\n", metrics)
-        self.assertIn("colibri_scheduler_cancelled_total 1\n", metrics)
-        self.assertIn("colibri_scheduler_completed_total 0\n", metrics)
-        self.assertIn("colibri_scheduler_slot_duration_seconds_count 2\n", metrics)
+        self.assertIn("lmatomic_scheduler_failed_total 1\n", metrics)
+        self.assertIn("lmatomic_scheduler_cancelled_total 1\n", metrics)
+        self.assertIn("lmatomic_scheduler_completed_total 0\n", metrics)
+        self.assertIn("lmatomic_scheduler_slot_duration_seconds_count 2\n", metrics)
 
     def test_admits_up_to_capacity_without_serializing(self):
         scheduler = GenerationScheduler(max_queue=0, queue_timeout=1, capacity=2)
@@ -786,7 +786,7 @@ class SchedulerTest(unittest.TestCase):
         stats = scheduler.snapshot()
         self.assertEqual((stats["rejected"], stats["timed_out"], stats["queued"]), (1, 0, 0))
         self.assertEqual((stats["admitted"], stats["completed"], stats["active"]), (2, 2, 0))
-        self.assertIn("colibri_scheduler_queue_wait_seconds_count 2\n", scheduler.prometheus())
+        self.assertIn("lmatomic_scheduler_queue_wait_seconds_count 2\n", scheduler.prometheus())
 
     def test_times_out_and_cancels_queued_requests(self):
         scheduler = GenerationScheduler(max_queue=2, queue_timeout=0.02)
@@ -827,7 +827,7 @@ class SchedulerTest(unittest.TestCase):
                     self.assertEqual((stats["admitted"], stats["completed"]), (expected, expected))
                     self.assertEqual((stats["active"], stats["queued"], stats["timed_out"]),
                                      (0, 0, int(released_at >= 1)))
-                    self.assertIn(f"colibri_scheduler_slot_duration_seconds_count {expected}\n",
+                    self.assertIn(f"lmatomic_scheduler_slot_duration_seconds_count {expected}\n",
                                   scheduler.prometheus())
                     with scheduler.admit():
                         pass
@@ -840,7 +840,7 @@ class SchedulerTest(unittest.TestCase):
         stats = scheduler.snapshot()
         self.assertEqual((stats["active"], stats["queued"], stats["admitted"], stats["cancelled"]),
                          (0, 0, 0, 1))
-        self.assertIn("colibri_scheduler_queue_wait_seconds_count 0\n", scheduler.prometheus())
+        self.assertIn("lmatomic_scheduler_queue_wait_seconds_count 0\n", scheduler.prometheus())
         with scheduler.admit():
             pass
 
@@ -875,7 +875,7 @@ class SchedulerTest(unittest.TestCase):
         stats = scheduler.snapshot()
         self.assertEqual((stats["admitted"], stats["completed"], stats["cancelled"]), (1, 1, 1))
         self.assertEqual((stats["active"], stats["queued"]), (0, 0))
-        self.assertIn("colibri_scheduler_slot_duration_seconds_count 1\n", scheduler.prometheus())
+        self.assertIn("lmatomic_scheduler_slot_duration_seconds_count 1\n", scheduler.prometheus())
 
     def test_counts_admitted_client_cancellation_without_completion(self):
         scheduler = GenerationScheduler(max_queue=0, queue_timeout=1)
@@ -1248,7 +1248,7 @@ class DispatcherTest(unittest.TestCase):
         engine.close()
         thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
-        self.assertEqual(errors, ["colibri engine is shutting down"])
+        self.assertEqual(errors, ["lmatomic engine is shutting down"])
         self.assertFalse(engine.dispatcher.is_alive())
         with engine.pending_lock:
             self.assertFalse(engine.pending)
@@ -1576,12 +1576,12 @@ class SeedWireFrameTest(unittest.TestCase):
 
 class CapSentinelShimTest(unittest.TestCase):
     # #379 cap-sentinel shim, arch-keyed (#386 r2, F3): an absent cap is
-    # "platform-auto" only for the glm engine (colibri.c coli_resolve_cap);
+    # "platform-auto" only for the glm engine (glm52.c lma_resolve_cap);
     # inkling reads cap <= 0 as "fit the expert LRU to all available RAM"
     # (inkling.c), so leaking the sentinel to a non-glm arch silently changes
     # its memory behavior. The key is the MODEL's config.json model_type, not
-    # the engine binary's file name -- COLI_ENGINE users package the glm
-    # engine as glm52/colibri-1.2/glm-metal, and basename keying disabled the
+    # the engine binary's file name -- LMA_ENGINE users package the glm
+    # engine as glm52/lmatomic-1.2/glm-metal, and basename keying disabled the
     # platform default for exactly them (and an inkling binary someone names
     # `glm` would get the leak back). Engine() is the one funnel every launch
     # passes through, so the translation is pinned at the argv it emits, over
@@ -1604,9 +1604,9 @@ class CapSentinelShimTest(unittest.TestCase):
         return popen.call_args[0][0]
 
     def test_matrix_arch_times_engine_name_times_cap(self):
-        # COLI_ENGINE axis: the executable name carries no information; only
+        # LMA_ENGINE axis: the executable name carries no information; only
         # the model arch and the explicitness of cap may matter.
-        executables = ("colibri", "glm", "glm52", "colibri-1.2", "glm-metal",
+        executables = ("lmatomic", "glm", "glm52", "lmatomic-1.2", "glm-metal",
                        "/opt/custom/inkling", "kimi_k3.exe")
         cases = (  # (model_type, cap kwargs, expected argv cap)
             ("glm_moe_dsa", {}, "0"),          # absent -> glm sentinel
@@ -1651,29 +1651,29 @@ class CapSentinelShimTest(unittest.TestCase):
         self.assertEqual(cap_for_arch("glm", 0), 0)
 
     def test_profile_cap_is_below_explicit_cap_and_above_implicit_default(self):
-        profiled = {"COLI_PROFILE_CAP": "24"}
+        profiled = {"LMA_PROFILE_CAP": "24"}
         self.assertEqual(cap_for_arch("inkling", None, profiled), 24)
         self.assertEqual(cap_for_arch("inkling", 7, profiled), 7)
         self.assertEqual(cap_for_arch("inkling", None,
-                                      {"COLI_PROFILE_CAP": "invalid"}), 8)
-        planned = {"COLI_PLAN_CAP": "11"}
+                                      {"LMA_PROFILE_CAP": "invalid"}), 8)
+        planned = {"LMA_PLAN_CAP": "11"}
         self.assertEqual(cap_for_arch("qwen38", None, planned), 11)
         self.assertEqual(cap_for_arch(
-            "qwen38", None, {"COLI_PLAN_CAP": "11", "COLI_PROFILE_CAP": "7"}), 7)
+            "qwen38", None, {"LMA_PLAN_CAP": "11", "LMA_PROFILE_CAP": "7"}), 7)
         self.assertEqual(cap_for_arch(
-            "qwen38", 5, {"COLI_PLAN_CAP": "11", "COLI_PROFILE_CAP": "7"}), 5)
+            "qwen38", 5, {"LMA_PLAN_CAP": "11", "LMA_PROFILE_CAP": "7"}), 5)
 
     def test_engine_consumes_profile_cap_without_leaking_private_env(self):
         process = FakeProcess(lambda _process, _frame: None)
         model = self._model("inkling")
         with patch("openai_server.subprocess.Popen", return_value=process) as popen:
             engine = Engine("custom-engine", model,
-                            env={"COLI_PROFILE_CAP": "24", "KEEP": "yes"})
+                            env={"LMA_PROFILE_CAP": "24", "KEEP": "yes"})
             engine.close()
         command = popen.call_args[0][0]
         child_env = popen.call_args[1]["env"]
         self.assertEqual(command, ["custom-engine", "24"])
-        self.assertNotIn("COLI_PROFILE_CAP", child_env)
+        self.assertNotIn("LMA_PROFILE_CAP", child_env)
         self.assertEqual(child_env["KEEP"], "yes")
 
     def test_engine_consumes_planned_cap_without_leaking_private_env(self):
@@ -1681,11 +1681,11 @@ class CapSentinelShimTest(unittest.TestCase):
         model = self._model("qwen4_exp_text")
         with patch("openai_server.subprocess.Popen", return_value=process) as popen:
             engine = Engine("qwen38", model,
-                            env={"COLI_PLAN_CAP": "13", "KEEP": "yes"})
+                            env={"LMA_PLAN_CAP": "13", "KEEP": "yes"})
             engine.close()
         self.assertEqual(popen.call_args[0][0], ["qwen38", "13"])
         child_env = popen.call_args[1]["env"]
-        self.assertNotIn("COLI_PLAN_CAP", child_env)
+        self.assertNotIn("LMA_PLAN_CAP", child_env)
         self.assertEqual(child_env["KEEP"], "yes")
 
     def test_v41_ram_plan_reaches_engine_argv(self):
@@ -1706,8 +1706,8 @@ class CapSentinelShimTest(unittest.TestCase):
 
     def test_v41_explicit_and_calibrated_caps_bypass_planning(self):
         for cap, env, expected in ((7, {}, 7), (0, {}, 0),
-                                   (None, {"COLI_PROFILE_CAP": "12"}, 12),
-                                   (None, {"COLI_PLAN_CAP": "24"}, 24)):
+                                   (None, {"LMA_PROFILE_CAP": "12"}, 12),
+                                   (None, {"LMA_PLAN_CAP": "24"}, 24)):
             with self.subTest(cap=cap, env=env), patch("resource_plan.build_plan") as planner:
                 self.assertEqual(cap_for_arch("deepseek_v41", cap, env, model="model"),
                                  expected)
@@ -1754,7 +1754,7 @@ class CapSentinelShimTest(unittest.TestCase):
         self.assertEqual(env["OMP_NUM_THREADS"], "3")
 
     def test_direct_v4_server_honours_omp_kill_switch(self):
-        env = {"COLI_NO_OMP_TUNE": "1"}
+        env = {"LMA_NO_OMP_TUNE": "1"}
         tune_child_env(env, "deepseek_v4")
         for key in ("OMP_NUM_THREADS", "OMP_WAIT_POLICY", "GOMP_SPINCOUNT",
                     "OMP_DYNAMIC", "OMP_PROC_BIND", "OMP_PLACES"):
@@ -1807,8 +1807,8 @@ class HTTPTest(unittest.TestCase):
         self.assertEqual(after["completed"], before["completed"])
         with self.request("/metrics") as response:
             text = response.read().decode()
-        self.assertIn(f'colibri_scheduler_failed_total {after["failed"]}\n', text)
-        self.assertIn("colibri_scheduler_active 0\n", text)
+        self.assertIn(f'lmatomic_scheduler_failed_total {after["failed"]}\n', text)
+        self.assertIn("lmatomic_scheduler_active 0\n", text)
 
     def test_metrics_exposes_prometheus_text_with_auth(self):
         with self.request("/metrics") as response:
@@ -1816,8 +1816,8 @@ class HTTPTest(unittest.TestCase):
                              "text/plain; version=0.0.4; charset=utf-8")
             self.assertEqual(response.headers["Cache-Control"], "no-store")
             text = response.read().decode()
-        self.assertIn("colibri_scheduler_capacity 2\n", text)
-        self.assertIn("# TYPE colibri_scheduler_queue_wait_seconds histogram\n", text)
+        self.assertIn("lmatomic_scheduler_capacity 2\n", text)
+        self.assertIn("# TYPE lmatomic_scheduler_queue_wait_seconds histogram\n", text)
         for key in ("wrong", ""):
             with self.assertRaises(HTTPError) as caught:
                 self.request("/metrics", key=key)
@@ -1841,7 +1841,7 @@ class HTTPTest(unittest.TestCase):
         trailing assistant turn is answered fresh, which a Continue button would
         present as a resumption. Unauthed probes keep the bare liveness shape."""
         for value, expected in (("1", True), ("0", False)):
-            with patch.dict(os.environ, {"COLI_CONTINUE_ASSISTANT": value}), \
+            with patch.dict(os.environ, {"LMA_CONTINUE_ASSISTANT": value}), \
                  self.request("/health") as response:
                 self.assertIs(json.load(response)["continue_assistant"], expected)
         with urlopen(self.base + "/health", timeout=2) as response:
@@ -1890,7 +1890,7 @@ class HTTPTest(unittest.TestCase):
             "max_tokens": 4, "cache_slot": 1,
         }) as response:
             body = json.load(response)
-            queue_wait = response.headers.get("x-colibri-queue-wait-ms")
+            queue_wait = response.headers.get("x-lmatomic-queue-wait-ms")
         self.assertEqual(body["object"], "chat.completion")
         self.assertEqual(body["choices"][0]["message"]["content"], "Héllo")
         self.assertEqual(body["usage"], {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9})
@@ -1935,7 +1935,7 @@ class HTTPTest(unittest.TestCase):
         before = self.engine.stop_requests
         with self.request("/v1/chat/completions", {
             "model": "test-model", "messages": [{"role": "user", "content": "Hi"}],
-            "stop": "H", "x_colibri_ignore_leading_stop": True,
+            "stop": "H", "x_lmatomic_ignore_leading_stop": True,
         }) as response:
             body = json.load(response)
         self.assertEqual(body["choices"][0]["message"]["content"], "éllo")
@@ -1945,7 +1945,7 @@ class HTTPTest(unittest.TestCase):
         with self.assertRaises(HTTPError) as caught:
             self.request("/v1/chat/completions", {
                 "model": "test-model", "messages": [{"role": "user", "content": "Hi"}],
-                "stop": "H", "x_colibri_ignore_leading_stop": "yes",
+                "stop": "H", "x_lmatomic_ignore_leading_stop": "yes",
             })
         self.addCleanup(caught.exception.close)
         self.assertEqual(caught.exception.code, 400)
@@ -2045,7 +2045,7 @@ class HTTPTest(unittest.TestCase):
         """JSON can spell a lone UTF-16 surrogate ("\\ud83d": a client that cut a
         string between the two halves of an emoji). json.loads accepts it, no
         UTF-8 can carry it, and Engine.generate's first step, prompt.encode(),
-        raised: HTTP 500 "The colibri engine failed". Invalid UTF-8 in the raw
+        raised: HTTP 500 "The lmatomic engine failed". Invalid UTF-8 in the raw
         body is already a 400; this is the same invalid text, escaped."""
         real_generate = self.engine.generate
 
@@ -2072,7 +2072,7 @@ class HTTPTest(unittest.TestCase):
         object with no name, but it -- and the five renderers that read the
         forced tool the same way -- did `(tool_choice.get("function") or {})
         .get("name")`, so a `function` that is not an object raised
-        AttributeError first and do_POST answered 500 "The colibri engine failed
+        AttributeError first and do_POST answered 500 "The lmatomic engine failed
         to process the request." for a request the engine never saw. Every arch
         and both OpenAI endpoints, because the crash was on the read.
         """
@@ -2124,7 +2124,7 @@ class HTTPTest(unittest.TestCase):
 
         generation_options already has the 400, but /v1/chat/completions renders
         first. GLM, GLM-5.3, DeepSeek V4 and V4.1 did fn.items() on a string
-        and the AttributeError became do_POST's 500 "The colibri engine failed
+        and the AttributeError became do_POST's 500 "The lmatomic engine failed
         to process the request." for a request the engine never saw.
         """
         for arch in ("glm", "glm53", "kimi", "deepseek_v4", "deepseek_v41",
@@ -2161,7 +2161,7 @@ class HTTPTest(unittest.TestCase):
         """A replayed tool call with `arguments: "[1, 2]"` answered HTTP 500.
 
         render_chat reached `(args or {}).items()` with a parsed list, and the
-        AttributeError became do_POST's catch-all 500 "The colibri engine failed
+        AttributeError became do_POST's catch-all 500 "The lmatomic engine failed
         to process the request." -- which OpenAI SDKs retry, against an engine
         that was never asked anything.
         """
@@ -2181,7 +2181,7 @@ class HTTPTest(unittest.TestCase):
 class ClientHangupTest(unittest.TestCase):
     """A client that disconnects mid-response must not print a traceback.
 
-    `coli chat` polls /health on a 2 s timeout while the model loads and drops
+    `lmatomic chat` polls /health on a 2 s timeout while the model loads and drops
     each connection the moment it has an answer; Ctrl-C during a stream closes
     the socket by design -- the banner tells the user to do exactly that. Both
     reach the handler as BrokenPipeError, and socketserver logs an unhandled
@@ -2613,7 +2613,7 @@ class TrailingAssistantTurnTest(unittest.TestCase):
     pin what replaced that: the switch that turns continuation on, what the prompt looks
     like when it is on, and what is refused rather than silently reshaped.
 
-    The switch is COLI_CONTINUE_ASSISTANT and not a request field on purpose -- a body
+    The switch is LMA_CONTINUE_ASSISTANT and not a request field on purpose -- a body
     extension would only be reachable by hand-written JSON, and the clients that want this
     send a message list and nothing else.
     """
@@ -2623,11 +2623,11 @@ class TrailingAssistantTurnTest(unittest.TestCase):
 
     @staticmethod
     def on():
-        return patch.dict(os.environ, {"COLI_CONTINUE_ASSISTANT": "1"})
+        return patch.dict(os.environ, {"LMA_CONTINUE_ASSISTANT": "1"})
 
     @staticmethod
     def off():
-        return patch.dict(os.environ, {"COLI_CONTINUE_ASSISTANT": "0"})
+        return patch.dict(os.environ, {"LMA_CONTINUE_ASSISTANT": "0"})
 
     def test_switch_on_leaves_the_turn_open(self):
         with self.on(), patch("openai_server.ARCH", "glm53"):
@@ -2641,13 +2641,13 @@ class TrailingAssistantTurnTest(unittest.TestCase):
 
     def test_default_is_on(self):
         """Continuation is the default now: unset (the ordinary deployment) continues a
-        trailing assistant turn. Only COLI_CONTINUE_ASSISTANT=0 turns it off."""
+        trailing assistant turn. Only LMA_CONTINUE_ASSISTANT=0 turns it off."""
         with patch.dict(os.environ, {}, clear=False), patch("openai_server.ARCH", "glm53"):
-            os.environ.pop("COLI_CONTINUE_ASSISTANT", None)
+            os.environ.pop("LMA_CONTINUE_ASSISTANT", None)
             self.assertFalse(resolve_generation_prompt(self.OPEN_TURN, {}))
 
     def test_switch_off_restores_old_behaviour(self):
-        """COLI_CONTINUE_ASSISTANT=0 is the off-switch: a deployment that sets it behaves
+        """LMA_CONTINUE_ASSISTANT=0 is the off-switch: a deployment that sets it behaves
         exactly as the gateway did before continuation existed -- append a fresh cue."""
         with self.off(), patch("openai_server.ARCH", "glm53"):
             self.assertTrue(resolve_generation_prompt(self.OPEN_TURN, {}))
@@ -2908,7 +2908,7 @@ class TrailingAssistantEndToEndTest(unittest.TestCase):
     def test_continuation_reaches_the_engine_and_returns_as_content(self):
         engine = FakeEngine()
         with patch("openai_server.ARCH", "glm53"), \
-             patch.dict(os.environ, {"COLI_CONTINUE_ASSISTANT": "1"}):
+             patch.dict(os.environ, {"LMA_CONTINUE_ASSISTANT": "1"}):
             server = self._server(engine)
             conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
             self.addCleanup(conn.close)
@@ -2981,7 +2981,7 @@ class AllowedHostsTest(unittest.TestCase):
         server = self._make_server(allowed_hosts=("*",))
         port = server.server_port
         self.assertEqual(self._get_models(port, "10.20.30.40:36873"), 200)
-        self.assertEqual(self._get_models(port, "colibri.example.com"), 200)
+        self.assertEqual(self._get_models(port, "lmatomic.example.com"), 200)
         self.assertEqual(self._get_models(port, "localhost"), 200)
 
     def test_rejection_message_names_the_host_and_the_fix(self):
@@ -3660,18 +3660,18 @@ class ReasoningEffortTest(unittest.TestCase):
 
 class ImageUrlPathGuard(unittest.TestCase):
     """image_url.url naming a local file is read with the server's rights, so
-    it is denied unless the operator sets COLI_IMAGE_ROOT, and then only
+    it is denied unless the operator sets LMA_IMAGE_ROOT, and then only
     inside it (GHSA follow-up to #1354, whose guards left every absolute path
     readable by default). data: URIs are the client's way in. Errors stay
     generic so a reply never confirms a path or its permissions."""
 
     def setUp(self):
-        self._saved = os.environ.pop("COLI_IMAGE_ROOT", None)
+        self._saved = os.environ.pop("LMA_IMAGE_ROOT", None)
 
     def tearDown(self):
-        os.environ.pop("COLI_IMAGE_ROOT", None)
+        os.environ.pop("LMA_IMAGE_ROOT", None)
         if self._saved is not None:
-            os.environ["COLI_IMAGE_ROOT"] = self._saved
+            os.environ["LMA_IMAGE_ROOT"] = self._saved
 
     def test_data_uri_is_the_default_way_in(self):
         import base64
@@ -3686,13 +3686,13 @@ class ImageUrlPathGuard(unittest.TestCase):
                 with self.assertRaises(APIError) as caught:
                     _image_bytes_from_url(url)
                 self.assertEqual(caught.exception.status, 400)
-                self.assertIn("COLI_IMAGE_ROOT", str(caught.exception))
+                self.assertIn("LMA_IMAGE_ROOT", str(caught.exception))
                 self.assertNotIn("passwd", str(caught.exception))
 
     def test_image_root_allows_inside_and_refuses_outside(self):
         with tempfile.TemporaryDirectory() as root, \
                 tempfile.NamedTemporaryFile(suffix=".png") as outside:
-            os.environ["COLI_IMAGE_ROOT"] = root
+            os.environ["LMA_IMAGE_ROOT"] = root
             inside = Path(root) / "ok.png"
             inside.write_bytes(b"ok")
             self.assertEqual(_image_bytes_from_url(str(inside)), b"ok")
@@ -3707,7 +3707,7 @@ class ImageUrlPathGuard(unittest.TestCase):
             self.skipTest("no symlinks here")
         with tempfile.TemporaryDirectory() as root, \
                 tempfile.NamedTemporaryFile(suffix=".png") as outside:
-            os.environ["COLI_IMAGE_ROOT"] = root
+            os.environ["LMA_IMAGE_ROOT"] = root
             link = Path(root) / "link.png"
             try:
                 os.symlink(outside.name, link)
@@ -3720,15 +3720,15 @@ class ImageUrlPathGuard(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             img = Path(root) / "pic.png"
             img.write_bytes(b"x")
-            os.environ["COLI_IMAGE_ROOT"] = str(Path(root) / "nowhere")
+            os.environ["LMA_IMAGE_ROOT"] = str(Path(root) / "nowhere")
             with self.assertRaises(APIError):
                 _image_bytes_from_url(str(img))
-            os.environ["COLI_IMAGE_ROOT"] = str(img)
+            os.environ["LMA_IMAGE_ROOT"] = str(img)
             with self.assertRaises(APIError):
                 _image_bytes_from_url(str(img))
 
     def test_error_does_not_leak_the_path(self):
-        os.environ["COLI_IMAGE_ROOT"] = tempfile.gettempdir()
+        os.environ["LMA_IMAGE_ROOT"] = tempfile.gettempdir()
         with self.assertRaises(APIError) as caught:
             _image_bytes_from_url("/no/such/secret-name.png")
         self.assertNotIn("secret-name", str(caught.exception))
@@ -3752,7 +3752,7 @@ class ContextExceededMessageTest(unittest.TestCase):
         self.assertNotIn("prompt_tokens=", text)
         self.assertNotIn("capacity=", text)
 
-    def test_the_positional_spelling_of_colibri_and_deepseek_still_reads(self):
+    def test_the_positional_spelling_of_lmatomic_and_deepseek_still_reads(self):
         from openai_server import _engine_error
         text = str(_engine_error(["CONTEXT_EXCEEDED", "8321", "4094"], "ignored"))
         self.assertIn("4094", text)

@@ -21,8 +21,8 @@
  * scales with N and never shows the physical RAM roof, so absolute GB/s there is
  * indicative only; the within-pass ratios are the signal. Physical AVX2-only silicon
  * is what decides whether the deinterleaved candidate is worth landing.) */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 #include <stdint.h>
 #include <string.h>

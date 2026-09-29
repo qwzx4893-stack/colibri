@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Authoritative model-family registry for Colibri's Python control plane."""
+"""Authoritative model-family registry for LM Atomic's Python control plane."""
 
 import os
 from dataclasses import dataclass
@@ -115,17 +115,17 @@ class FamilyDescriptor:
     # the trunk out of the VRAM budget before it counts hot experts. None: the
     # engine keeps its trunk on the CPU (or has none).
     trunk_inventory: object = None
-    # Lo script sotto tools/ che `coli convert` puo' guidare per questa famiglia,
-    # e le opzioni di `coli convert` che quello script accetta davvero.
+    # Lo script sotto tools/ che `lmatomic convert` puo' guidare per questa famiglia,
+    # e le opzioni di `lmatomic convert` che quello script accetta davvero.
     #
-    # #1368: `coli convert` lanciava convert_fp8_to_int4.py qualunque cosa gli si
+    # #1368: `lmatomic convert` lanciava convert_fp8_to_int4.py qualunque cosa gli si
     # desse. Quel convertitore e' di GLM-5.2 e classifica i tensori per nome
     # PIATTO, mentre GLM-5.3-Flash annida il testuale sotto il wrapper vision:
     # `model.language_model.embed_tokens.weight` non corrisponde a nessuna regola
     # e cade nel fallback finale, che lo quantizza. Poi glm53.c lo legge con
-    # load_f32, rifiuta l'U8, e il motore muore dentro `coli web`.
+    # load_f32, rifiuta l'U8, e il motore muore dentro `lmatomic web`.
     #
-    # Vuoto significa "coli non guida questa famiglia": non e' una lacuna, e'
+    # Vuoto significa "lmatomic non guida questa famiglia": non e' una lacuna, e'
     # che il suo convertitore ha un'altra riga di comando (convert_qwen36.py usa
     # --out e --gs, convert_inkling_int4.py non ha --repo) o non serve affatto
     # (Qwen3.8 gira sul checkpoint ufficiale). In quel caso si lascia parlare la
@@ -178,7 +178,7 @@ def _glm_geometry(config, context, _model_dir):
     value = _required_int(config, "v_head_dim", "glm")
     state = layers * context * (kv_lora + rope) * 4
     index_dim = _optional_int(config, "index_head_dim", 0)
-    if index_dim and config.get("_colibri_indexer_present", False):
+    if index_dim and config.get("_lmatomic_indexer_present", False):
         kinds = config.get("indexer_types")
         if isinstance(kinds, list):
             active = sum(kind == "full" for kind in kinds[:layers - 1])
@@ -874,7 +874,7 @@ def _dsv41_resident_inventory(name, size, _config, _dtype=None):
     behind a small LRU whose size is a runtime knob. Counted as dense they turn
     a 552B model that fits a workstation into one that needs 214 GB of RAM, and
     the plan then plans nothing: measured against the real checkpoint on a 61 GB
-    box, `coli plan` reported 214.3 GB of dense weights, 0% projected expert
+    box, `lmatomic plan` reported 214.3 GB of dense weights, 0% projected expert
     residency and a cap of zero, for a model whose resident trunk is 11 GB.
     """
     return 0 if _DSV41_ENGRAM.match(name) else size
@@ -1104,7 +1104,7 @@ FAMILIES = (
         internal_arch="glm53",
         build_target="glm53",
         process_names=("glm53",),
-        default_model_id="glm-5.3-flash-colibri",
+        default_model_id="glm-5.3-flash-lmatomic",
         cli_adapter="glm53",
         gateway_adapter="glm53",
         planner_id="glm53_hybrid",
@@ -1158,13 +1158,13 @@ FAMILIES = (
         converter_accepts=("ebits", "io_bits", "xbits", "group_size"),
         converter_mtp_pass=True,
         display_scale="744B",
-        engine_artifact="colibri",
+        engine_artifact="glm52",
         engine_aliases=("glm",),
-        engine_group="colibri-core",
+        engine_group="glm52-core",
         internal_arch="glm",
-        build_target="colibri",
-        process_names=("colibri", "glm"),
-        default_model_id="glm-5.2-colibri",
+        build_target="glm52",
+        process_names=("glm52", "glm"),
+        default_model_id="glm-5.2-lmatomic",
         cli_adapter="glm",
         gateway_adapter="glm",
         planner_id="glm_mla",
@@ -1189,7 +1189,7 @@ FAMILIES = (
         internal_arch="inkling",
         build_target="inkling",
         process_names=("inkling",),
-        default_model_id="inkling-colibri",
+        default_model_id="inkling-lmatomic",
         cli_adapter="inkling",
         gateway_adapter="inkling",
         planner_id="inkling_hybrid",
@@ -1223,7 +1223,7 @@ FAMILIES = (
         internal_arch="kimi_k3",
         build_target="kimi_k3",
         process_names=("kimi_k3",),
-        default_model_id="kimi-k3-colibri",
+        default_model_id="kimi-k3-lmatomic",
         cli_adapter="kimi",
         gateway_adapter="kimi",
         planner_id="kimi_hybrid",
@@ -1257,7 +1257,7 @@ FAMILIES = (
         internal_arch="olmoe",
         build_target="olmoe",
         process_names=("olmoe",),
-        default_model_id="olmoe-colibri",
+        default_model_id="olmoe-lmatomic",
         cli_adapter="olmoe",
         gateway_adapter="olmoe",
         planner_id="olmoe_gqa",
@@ -1268,7 +1268,7 @@ FAMILIES = (
         # links NOCUDA_LDFLAGS. Left at the default this advertised a VRAM tier.
         supports_accelerator=False,
         expert_inventory=_individual_expert_inventory(_GLM_EXPERT),
-        # coli convert routes to convert_olmoe_merged.py (d4d11ef dispatch);
+        # lmatomic convert routes to convert_olmoe_merged.py (d4d11ef dispatch);
         # the converter takes no precision flags (--ebits / --group-size etc.).
         converter="convert_olmoe_merged.py",
         converter_accepts=(),
@@ -1308,7 +1308,7 @@ FAMILIES = (
         internal_arch="qwen36",
         build_target="qwen36",
         process_names=("qwen36",),
-        default_model_id="qwen3.6-colibri",
+        default_model_id="qwen3.6-lmatomic",
         cli_adapter="qwen36",
         gateway_adapter="qwen36",
         planner_id="qwen36_hybrid",
@@ -1319,10 +1319,10 @@ FAMILIES = (
         limits=FamilyLimits(8192, 262144, 1024, 8192, 1, 8, "Q36_MAXT"),
         capabilities=FamilyCapabilities(False, False, False, True),
         has_gateway_adapter=True,
-        # coli run stays unwired on purpose: cmd_run dispatches per arch after
+        # lmatomic run stays unwired on purpose: cmd_run dispatches per arch after
         # this gate, and without a qwen36 branch the engine would inherit GLM's
         # prompt template -- a wrong template does not fail loudly, it degrades
-        # the answer. False gives the user "use coli chat or coli serve", which
+        # the answer. False gives the user "use lmatomic chat or lmatomic serve", which
         # is true and actionable; chat/serve/web all work through the gateway.
         has_cli_adapter=False,
         tune_prompt_template=(
@@ -1339,7 +1339,7 @@ FAMILIES = (
         internal_arch="qwen38",
         build_target="qwen38",
         process_names=("qwen38",),
-        default_model_id="qwen3.8-flash-next-colibri",
+        default_model_id="qwen3.8-flash-next-lmatomic",
         cli_adapter="qwen38",
         gateway_adapter="qwen38",
         planner_id="qwen38_hybrid",
@@ -1352,7 +1352,7 @@ FAMILIES = (
         limits=FamilyLimits(8192, 262144, 1024, 8192, 1, 1, "Q38_MAXT"),
         capabilities=FamilyCapabilities(True, False, False, True),
         has_gateway_adapter=True,
-        # Like Qwen3.6, direct `coli run` is intentionally not exposed until
+        # Like Qwen3.6, direct `lmatomic run` is intentionally not exposed until
         # an engine-specific CLI prompt path exists; chat/serve use the gateway.
         has_cli_adapter=False,
         tune_prompt_template=(
@@ -1382,7 +1382,7 @@ FAMILIES = (
         internal_arch="deepseek_v4",
         build_target="deepseek-v4",
         process_names=("deepseek_v4",),
-        default_model_id="deepseek-v4-colibri",
+        default_model_id="deepseek-v4-lmatomic",
         cli_adapter="deepseek_v4",
         gateway_adapter="deepseek_v4",
         planner_id="deepseek_v4",
@@ -1409,7 +1409,7 @@ FAMILIES = (
         internal_arch="deepseek_v41",
         build_target="deepseek_v41",
         process_names=("deepseek_v41",),
-        default_model_id="deepseek-v4.1-flash-colibri",
+        default_model_id="deepseek-v4.1-flash-lmatomic",
         cli_adapter="deepseek_v41",
         gateway_adapter="deepseek_v41",
         planner_id="deepseek_v41",
@@ -1418,7 +1418,7 @@ FAMILIES = (
         # CPU-only: the engine links no CUDA/Metal/Vulkan path and its build rule
         # carries no backend object, so the planner must not offer a VRAM tier it
         # cannot execute. Left at the default True it wrote "VRAM 296.0 GB hot
-        # tier ... 100% projected expert residency" into `coli plan` for this
+        # tier ... 100% projected expert residency" into `lmatomic plan` for this
         # model; resource_plan.py:945 is the gate and says the same thing in
         # words ("a CPU-only engine has no VRAM tier").
         supports_accelerator=False,
@@ -1431,12 +1431,12 @@ FAMILIES = (
         # at the gateway rather than desync the wire.
         capabilities=FamilyCapabilities(True, False, False, True),
         has_gateway_adapter=True,
-        # coli run stays unwired, for the reason qwen36 gives above and one more:
+        # lmatomic run stays unwired, for the reason qwen36 gives above and one more:
         # cmd_run dispatches per arch after this gate, and with no deepseek_v41
         # branch of its own the launcher would fall through to GLM's binary and
         # GLM's prompt template. The engine speaks the SERVE protocol and nothing
         # else, so a one-shot has nowhere to go but the gateway -- which is what
-        # coli chat, coli serve and coli web already use.
+        # lmatomic chat, lmatomic serve and lmatomic web already use.
         has_cli_adapter=False,
     ),
 )
@@ -1547,7 +1547,7 @@ def resolve_model(model_dir):
     except OSError as error:
         raise FamilyConfigError(
             f"cannot read config.json: {model}\n"
-            "  coli picks the engine from config.json, so nothing runs without it. Copy the\n"
+            "  lmatomic picks the engine from config.json, so nothing runs without it. Copy the\n"
             "  checkpoint's config.json (with tokenizer.json and model.safetensors.index.json)\n"
             "  from the model repo next to the shards.") from error
     except json.JSONDecodeError as error:

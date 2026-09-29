@@ -63,18 +63,18 @@ static int qwen36_max_ctx(void) {
 #include "omp_tune.h"
 #include "kv_prefix.h"
 #include "pin_pool.h"   /* riuso del prefisso tra turni (shared) */
-#include "decode_batch.h" /* ColiSubmit + coli_submit_ext: le chiavi key=value di SUBMIT */
+#include "decode_batch.h" /* LmaSubmit + lma_submit_ext: le chiavi key=value di SUBMIT */
 #include "json.h"   /* tokenizer.json parsing (reuse minimal parser) */
 #include "qwen36_tier.h"   /* optional CUDA VRAM expert tier */
 #include "expert_ffn.h"    /* routed experts: planar int4 kernel + layer runner */
 #include "moe_router.h"   /* shared top-K expert selection */
-#include "idot.h"          /* integer dot kernels for the dense trunk (COLI_DENSE_IDOT, COLI_DENSE_BITS) */
-#ifdef COLI_SEGMENT_ADAPTER
+#include "idot.h"          /* integer dot kernels for the dense trunk (LMA_DENSE_IDOT, LMA_DENSE_BITS) */
+#ifdef LMA_SEGMENT_ADAPTER
 #include "segment_runtime.h"
 #include "segment_adapters.h"
 #include "segment_adapter_internal.h"
 #endif
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 #include "edge_runtime.h"
 #include "edge_adapters.h"
 #include "edge_adapter_internal.h"
@@ -439,7 +439,7 @@ static double g_gen_t0 = 0;            /* generate() start (monotonic seconds) *
 static double g_ttft   = -1;           /* time to first token (s); -1 = unset */
 static long   g_oa_created = 0;        /* unix timestamp for OpenAI "created" */
 static char   g_oa_id[64];             /* OpenAI-style id, e.g. chatcmpl-... */
-static const char *g_model = "qwen3.6-35b-a3b-colibri";
+static const char *g_model = "qwen3.6-35b-a3b-lmatomic";
 static double now_s(void);   /* forward decl; defined later near model code */
 
 /* Output sink for server mode: when g_sock_out >= 0, SSE/JSON bytes are routed
@@ -696,13 +696,13 @@ typedef struct {
  * (load_tq, below matmul_d) instead of loaded as f32 and quantized in a
  * separate pass afterward -- so the f32 staging buffer for THIS matrix alone
  * is what's briefly resident, not every dense matrix in the model at once.
- * `w` is the f32 copy: kept (and `q`/`sc` left NULL) when COLI_DENSE_I8=0,
+ * `w` is the f32 copy: kept (and `q`/`sc` left NULL) when LMA_DENSE_I8=0,
  * the reference/parity path; freed once `q`/`sc` are populated otherwise
- * (COLI_KEEP_F32=1 keeps it alongside them, for debugging). matmul_d
+ * (LMA_KEEP_F32=1 keeps it alongside them, for debugging). matmul_d
  * dispatches on q!=NULL directly -- no pointer-keyed scan. */
 /* q/sc: int8 rows with one scale per row (the classic copy, what the VRAM
  * tier uploads). q4/sg: the same matrix as int4 planar blocks of 64 with one
- * scale per group (COLI_DENSE_BITS=4), the layout the K1b grouped kernel
+ * scale per group (LMA_DENSE_BITS=4), the layout the K1b grouped kernel
  * reads; ng = I/64 groups per row. */
 typedef struct { const float *w; int8_t *q; float *sc; int I, O; uint8_t *q4; float *sg; int ng; } QW;
 static void qw_free(QW *w) {
@@ -779,7 +779,7 @@ typedef struct {
     float pilot_smooth, pilot_conf_limit;
     uint8_t *is_pinned;
     uint8_t *is_queued;
-    uint8_t *seen;             /* prefill-collected experts (COLIBRI_RESIDENT) */
+    uint8_t *seen;             /* prefill-collected experts (LMA_RESIDENT) */
     int resident_mode;         /* 0 off; 1 pin this-prompt experts (CPU no-evict -> GPU resident) */
     int resident_collecting;   /* prefill in progress, collecting routed experts */
     int first_step;            /* the first step() call is the prefill */
@@ -804,7 +804,7 @@ static void *pilot_worker(void *arg);
 static void ensure_pilot_worker_started(Model *m);
 static void slot_ensure_allocated(Model *m, Slot *s);
 
-#ifdef COLI_CACHE_INDEX_TEST
+#ifdef LMA_CACHE_INDEX_TEST
 static uint64_t g_slot_index_probes;
 #endif
 
@@ -815,7 +815,7 @@ static Slot *slot_indexed(Model *m, int layer, int eid) {
         eid >= m->c.n_experts) return NULL;
     LCache *lc = &m->cache[layer];
     if (!lc->slot_by_expert) return NULL;
-#ifdef COLI_CACHE_INDEX_TEST
+#ifdef LMA_CACHE_INDEX_TEST
     g_slot_index_probes++;
 #endif
     int i = lc->slot_by_expert[eid];
@@ -864,12 +864,12 @@ static double rss_gb(void) { struct rusage r; getrusage(RUSAGE_SELF, &r); return
 static double rss_gb(void) { struct rusage r; getrusage(RUSAGE_SELF, &r); return r.ru_maxrss / (1024.0*1024.0); }
 #endif
 
-/* ---- M-PROF (R2): per-phase wall-clock accumulators, COLI_TIMERS=1 ---- */
+/* ---- M-PROF (R2): per-phase wall-clock accumulators, LMA_TIMERS=1 ---- */
 static int g_timers = -1;
 static double g_tm_dec[6], g_tm_pre[6];   /* 0=deltanet 1=attention 2=moe_total 3=shared 4=router 5=lm_head */
 static long g_tm_dec_tokens = 0, g_tm_pre_tokens = 0;
 static double tm_now(void){ struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts); return ts.tv_sec*1e3 + ts.tv_nsec/1e6; }
-static int tm_on(void){ if(g_timers<0){ const char *e=getenv("COLI_TIMERS"); g_timers = (e && *e=='1'); } return g_timers; }
+static int tm_on(void){ if(g_timers<0){ const char *e=getenv("LMA_TIMERS"); g_timers = (e && *e=='1'); } return g_timers; }
 double g_qt_iss=0, g_qt_cpu=0, g_qt_tak=0;   /* QTIER-Phasen (Decode) */
 double g_dn_sub[4];                           /* DN: proj, conv+split, l2n+rec, norm+out */
 double g_tm_step=0;                           /* step() total (decode) */
@@ -1053,8 +1053,8 @@ static int xf_mode(Model *m) {
     if (v >= 0) return v;
     const char *e = getenv("QWEN_EXPERT_KERNEL");
     int on = !(e && *e == '0');
-#ifdef COLI_CUDA
-    { const char *cu = getenv("COLI_CUDA"); if (cu && *cu == '1') on = 0; }
+#ifdef LMA_CUDA
+    { const char *cu = getenv("LMA_CUDA"); if (cu && *cu == '1') on = 0; }
 #endif
     Cfg *c = &m->c;
     if (c->expert_gs != XF_BLOCK || !xf_layout_ok(c->hidden) || !xf_layout_ok(c->inter)) on = 0;
@@ -1101,7 +1101,7 @@ static void matmul_qd(float *y, const float *x, const int8_t *q, const float *sc
 
 /* ---- Dense int8: per-row quantized copies of the large f32 matrices.
  * matmul_d dispatches directly off QW.q (no pointer-keyed scan -- see QW,
- * above Layer); COLI_DENSE_I8=0 falls back to f32 (QW.w, reference path for
+ * above Layer); LMA_DENSE_I8=0 falls back to f32 (QW.w, reference path for
  * parity tests). ~4x less memory traffic. */
 /* ---- Dense trunk, integer dot products ------------------------------------
  *
@@ -1120,14 +1120,14 @@ static void matmul_qd(float *y, const float *x, const int8_t *q, const float *sc
  * f32 path (the activation is rounded): measured on the 35B, +1.0%
  * perplexity on 4 x 512 tokens, lm_head 12.6 to 10.2 ms/token, decode
  * 6.71 to 7.35 tok/s alone and 8.23 with the experts' int8 activations.
- * COLI_DENSE_IDOT=0 restores the f32-activation kernel.
+ * LMA_DENSE_IDOT=0 restores the f32-activation kernel.
  *
- * COLI_DENSE_BITS=4 additionally stores the dense matrices as int4 in blocks
+ * LMA_DENSE_BITS=4 additionally stores the dense matrices as int4 in blocks
  * of 64 with one scale per block, the K1b planar layout, halving the bytes
  * the token reads; lm_head alone goes from 508 to 254 MB. It implies the
  * integer dot (that layout has no f32 kernel). Same gate: measured. */
-static int dense_idot_on(void){ static int v=-1; if(v<0){ const char *e=getenv("COLI_DENSE_IDOT"); v=!(e&&*e=='0'); } return v; }
-static int dense_bits(void){ static int v=-1; if(v<0){ const char *e=getenv("COLI_DENSE_BITS"); v=(e&&atoi(e)==4)?4:8; } return v; }
+static int dense_idot_on(void){ static int v=-1; if(v<0){ const char *e=getenv("LMA_DENSE_IDOT"); v=!(e&&*e=='0'); } return v; }
+static int dense_bits(void){ static int v=-1; if(v<0){ const char *e=getenv("LMA_DENSE_BITS"); v=(e&&atoi(e)==4)?4:8; } return v; }
 
 /* f32 rows -> int4 in blocks of 64 with one f32 scale per block, packed as the
  * K1b planar layout (unsigned nibbles v+8, block b: lo nibbles = elements
@@ -1173,17 +1173,17 @@ static void pack_int4_g64_planar(const float *w, uint8_t *q4, float *sg, int O, 
         }
     }
 }
-#ifdef COLI_QWEN_BATCH_TEST
+#ifdef LMA_QWEN_BATCH_TEST
 static uint64_t g_qwen_matmul_d_calls;
 #endif
-static int dense_i8_on(void){ static int v=-1; if(v<0){ const char *e=getenv("COLI_DENSE_I8"); v=!(e&&*e=='0'); } return v; }
-/* COLI_KV_PREFIX=0: never reuse a previous turn's state. Kept as an escape
+static int dense_i8_on(void){ static int v=-1; if(v<0){ const char *e=getenv("LMA_DENSE_I8"); v=!(e&&*e=='0'); } return v; }
+/* LMA_KV_PREFIX=0: never reuse a previous turn's state. Kept as an escape
  * hatch and as the B arm of the A/B that shows reuse changes nothing but
  * the time. */
-static int kv_prefix_off(void){ const char *e=getenv("COLI_KV_PREFIX"); return e && *e=='0'; }
+static int kv_prefix_off(void){ const char *e=getenv("LMA_KV_PREFIX"); return e && *e=='0'; }
 static int dense_batch_on(void){ const char *e=getenv("QWEN_DENSE_BATCH"); return !(e&&*e=='0'); }
-/* COLI_DENSE_INT4 names which components take the int4 copy when
- * COLI_DENSE_BITS=4: a comma list of lmhead, dnproj, dnout, attn, shexp,
+/* LMA_DENSE_INT4 names which components take the int4 copy when
+ * LMA_DENSE_BITS=4: a comma list of lmhead, dnproj, dnout, attn, shexp,
  * router; unset means all of them. The parts of the trunk pay 4 bits
  * differently (measured: the attention projections and the DeltaNet input
  * projections cost the most perplexity, lm_head the least per byte saved),
@@ -1191,7 +1191,7 @@ static int dense_batch_on(void){ const char *e=getenv("QWEN_DENSE_BATCH"); retur
  * whole trunk at once. */
 static int dense_int4_wanted(const char *tag){
     if (dense_bits() != 4 || !tag) return 0;
-    const char *e = getenv("COLI_DENSE_INT4");
+    const char *e = getenv("LMA_DENSE_INT4");
     if (!e || !*e) return 1;
     size_t n = strlen(tag);
     for (const char *p = e; *p; ) {
@@ -1208,7 +1208,7 @@ static int dense_int4_wanted(const char *tag){
  * synthesize weights in memory, without a shard file to load from). Does not
  * touch out->w -- the caller sets that (or leaves it, e.g. load_tq frees it
  * right after). `tag` selects the int4 planar copy per dense_int4_wanted
- * (NULL/COLI_DENSE_BITS!=4: skipped, out->q4 stays NULL). */
+ * (NULL/LMA_DENSE_BITS!=4: skipped, out->q4 stays NULL). */
 static void qw_quantize(const float *W, int I, int O, const char *tag, QW *out) {
     int8_t *q = malloc((size_t)O*I); float *sc = malloc((size_t)O*sizeof(float));
     if (!q || !sc) { fprintf(stderr, "OOM qw_quantize\n"); exit(1); }
@@ -1231,7 +1231,7 @@ static void qw_quantize(const float *W, int I, int O, const char *tag, QW *out) 
     }
 }
 static void matmul_d(float *y, const float *x, const QW *w, int S, int I, int O){
-#ifdef COLI_QWEN_BATCH_TEST
+#ifdef LMA_QWEN_BATCH_TEST
     g_qwen_matmul_d_calls++;
 #endif
     if (w->q) {
@@ -1270,7 +1270,7 @@ static inline int qtd(int hp1, float *y, const float *x, int I, int O){
     return hp1 > 0 && qt_dense_matmul(hp1 - 1, y, x, I, O);
 }
 /* Bytes of w's dense-i8 copy (int8 rows + per-row scales), 0 when there is
- * none (COLI_DENSE_I8=0): nothing to offer, the CPU path stands. */
+ * none (LMA_DENSE_I8=0): nothing to offer, the CPU path stands. */
 static size_t qdw_bytes(const QW *w){
     return w->q ? (size_t)w->I * w->O + (size_t)w->O * sizeof(float) : 0;
 }
@@ -1500,7 +1500,7 @@ static float *load_t_n(Model *m, const char *name, int64_t want) {
 /* Dense matrix load, quantized to int8 (+ int4 planar per `tag`, see
  * dense_int4_wanted) DURING loading rather than in a separate pass over the
  * whole model afterward (see QW, above Layer): reads `name` (I*O elements,
- * same size discipline as load_t_n), and when `quantize` && COLI_DENSE_I8 is
+ * same size discipline as load_t_n), and when `quantize` && LMA_DENSE_I8 is
  * on, quantizes it via qw_quantize and frees the f32 staging buffer right
  * away -- so at most one dense matrix's f32 copy is ever resident at a time,
  * not the whole model's. `quantize` is false for loaders that never ran
@@ -1515,7 +1515,7 @@ static void load_tq(Model *m, const char *name, int I, int O, int quantize, cons
     out->q4 = NULL; out->sg = NULL; out->ng = 0;
     if (!quantize || !dense_i8_on()) return;
     qw_quantize(p, I, O, tag, out);
-    if (getenv("COLI_KEEP_F32")) out->w = p; else { free(p); out->w = NULL; }
+    if (getenv("LMA_KEEP_F32")) out->w = p; else { free(p); out->w = NULL; }
 }
 
 static void model_init_range(Model *m, const char *snap, int cap, int bits,
@@ -1660,7 +1660,7 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
     m->pilot_smooth = sv;
     m->is_pinned = calloc((size_t)c->n_layers * c->n_experts, sizeof(uint8_t));
     m->seen = calloc((size_t)c->n_layers * c->n_experts, 1);
-    m->resident_mode = getenv("COLIBRI_RESIDENT") ? atoi(getenv("COLIBRI_RESIDENT")) : 0;
+    m->resident_mode = getenv("LMA_RESIDENT") ? atoi(getenv("LMA_RESIDENT")) : 0;
     m->resident_collecting = 0;
     m->first_step = 1;
     m->is_queued = calloc((size_t)c->n_layers * c->n_experts, sizeof(uint8_t));
@@ -2027,7 +2027,7 @@ static void pin_hot_experts(Model *m) {
     fprintf(stderr, "[HOT] Pinned %d experts (top-%d/layer) after %d warmup tokens\n", pinned_total, m->hot_n, m->freq_token_count);
 }
 
-/* COLIBRI_RESIDENT: after prefill (mode 1) and continuously through decode (mode 2),
+/* LMA_RESIDENT: after prefill (mode 1) and continuously through decode (mode 2),
  * pin every expert this prompt routed to, so the CPU LRU never evicts their RAM
  * slots. `quiet` suppresses the log line when nothing new was pinned
  * (used for the per-token mid-decode calls). A per-layer pin budget = cap prevents
@@ -2298,7 +2298,7 @@ static void route_select(const float *pr, const uint8_t *keep, int E, int K,
     if (cap > ROUTE_RANK_MAX) cap = ROUTE_RANK_MAX;
     int rank[ROUTE_RANK_MAX]; float rw[ROUTE_RANK_MAX]; int8_t rl[ROUTE_RANK_MAX];
     /* ranked candidates inside the keep mask; stops early when fewer than `cap` are eligible */
-    int n = coli_router_topk(pr, NULL, keep, E, cap, rank, rw, 0, 0);
+    int n = lma_router_topk(pr, NULL, keep, E, cap, rank, rw, 0, 0);
     int Kt = K < n ? K : n;             /* the true top-K is rank[0..Kt) */
     int win = n;
     if (P > 0.f && P < 1.f) {           /* cumulative-mass window: grow past K until P of the ranked mass */
@@ -2413,12 +2413,12 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
             RouteCtx rc = { m, layer };
             route_select(pr, keep, E, K, g_route_j, g_route_m, g_route_p, g_route_alpha,
                          route_level, &rc, idx, val, &m->route);
-            coli_router_fill(idx, val, K, E, layer);   /* route_select leaves -1 for unfilled slots */
+            lma_router_fill(idx, val, K, E, layer);   /* route_select leaves -1 for unfilled slots */
         } else {
             /* An unfilled slot (fewer eligible experts than K, or non-finite scores) is
              * filled with an in-range expert at weight 0. It used to be idx=-1, val=-1e30,
              * and expert_get(m, layer, -1) below indexed the cache at -1. */
-            coli_router_topk(pr, NULL, keep, E, K, idx, val, layer, 1);
+            lma_router_topk(pr, NULL, keep, E, K, idx, val, layer, 1);
             if (g_route_agree) {            /* plain routing: full agreement by construction */
                 m->route.agree_hit += (uint64_t)K; m->route.agree_tot += (uint64_t)K; m->route.kl_n++;
             }
@@ -2768,11 +2768,11 @@ static int trunk_place_dense(Model *m, double *vram_bytes){
  * one DeltaNet input projection (the most numerous placed matrix) is timed
  * both ways on the device that would host it, ten GEMVs each, best of three
  * rounds after a warm-up, and the trunk goes to VRAM only if the GPU wins.
- * Only the automatic placement is questioned: a hand-written COLI_PLACE
- * stands. COLI_TRUNK_PROBE=0 skips the probe and trusts the placer. The
+ * Only the automatic placement is questioned: a hand-written LMA_PLACE
+ * stands. LMA_TRUNK_PROBE=0 skips the probe and trusts the placer. The
  * probe's copy stays resident (one projection, ~25 MB on the 35B). */
 static int trunk_probe_gpu_wins(Model *m){
-    const char *e = getenv("COLI_TRUNK_PROBE");
+    const char *e = getenv("LMA_TRUNK_PROBE");
     if (e && *e == '0') return 1;
     if (!qt_place_is_auto()) return 1;
     Cfg *c = &m->c;
@@ -2867,13 +2867,13 @@ static void layers_forward_range(Model *m, float *x, int S, int pos_base,
  * ricorrente (DN_rec + DN_conv, ~63 MB su questo modello) e il vettore di
  * logit finale, cosi il predittore del primo token fresco esiste e la lettura
  * del prefill copre anche quello. */
-static ColiPinPool g_pins;              /* piu scatti annidati, vedi pin_pool.h */
+static LmaPinPool g_pins;              /* piu scatti annidati, vedi pin_pool.h */
 static const float *g_pin_logit = NULL; /* logit dello scatto rimesso */
 static int    g_pin_use_logit = 0;   /* 1 quando questa richiesta e ripartita dalla fotografia */
 
 /* Lo stato che questo motore deve fotografare oltre alle righe K/V: la
  * ricorrenza e la finestra di convoluzione di ogni strato DeltaNet. Sono
- * decine di MB per scatto, quindi COLI_PIN_SLOTS conta davvero qui. */
+ * decine di MB per scatto, quindi LMA_PIN_SLOTS conta davvero qui. */
 typedef struct { float **rec, **conv; int n_layers; } Q36PinState;
 
 /* Stato della lettura del prefill: dichiarato qui perche step() lo consulta e
@@ -3027,7 +3027,7 @@ static void pilot_prefetch(Model *m, int lnext, const float *x, int S) {
         if (max_cand < min_cand) max_cand = min_cand; if (max_cand > 128) max_cand = 128; if (max_cand > E) max_cand = E;
         for (int kk = 0; kk < max_cand; kk++) {
             float bv;
-            int best = coli_router_best(exps, NULL, NULL, E, idx, kk, &bv);
+            int best = lma_router_best(exps, NULL, NULL, E, idx, kk, &bv);
             if (best < 0) break;
             idx[kk] = best; cum_sum += bv; cand++;
             if (cum_sum >= m->pilot_conf_limit * sum_exps && cand >= min_cand) break;
@@ -3086,7 +3086,7 @@ static void q36_pin_state_free(void *v){
 }
 
 static void pin_drop(void){
-    coli_pin_pool_clear(&g_pins, q36_pin_state_free);
+    lma_pin_pool_clear(&g_pins, q36_pin_state_free);
     g_pin_logit = NULL; g_pin_use_logit = 0;
 }
 
@@ -3120,8 +3120,8 @@ static Q36PinState *q36_pin_state_save(Model *m, Q36PinState *reuse){
 
 static void pin_save(Model *m, const int *ids, int n, const float *logit){
     Cfg *c = &m->c;
-    coli_pin_pool_init(&g_pins, c->vocab);
-    ColiPin *k = coli_pin_store(&g_pins, ids, n, logit);
+    lma_pin_pool_init(&g_pins, c->vocab);
+    LmaPin *k = lma_pin_store(&g_pins, ids, n, logit);
     if (!k) return;                       /* ottimizzazione, mai un errore */
     Q36PinState *st = q36_pin_state_save(m, (Q36PinState *)k->state);
     if (!st) { k->len = 0; return; }      /* senza stato lo scatto sarebbe una bugia */
@@ -3142,9 +3142,9 @@ static int pin_restore(Model *m, const int *ids, int n){
      * righe non descrivono piu niente -- solo il registro del prefisso lo sa
      * (kv_prefix_holds). Uno scatto orfano si butta e si riprova col
      * precedente, invece di rinunciare e rifare tutto da zero. */
-    int s = coli_pin_best(&g_pins, ids, n);
+    int s = lma_pin_best(&g_pins, ids, n);
     while (s >= 0) {
-        ColiPin *k = &g_pins.slot[s];
+        LmaPin *k = &g_pins.slot[s];
         Q36PinState *st = (Q36PinState *)k->state;
         if (st && kv_prefix_holds(&m->kvp, k->ids, k->len)) {
             for (int i = 0; i < c->n_layers; i++){
@@ -3156,11 +3156,11 @@ static int pin_restore(Model *m, const int *ids, int n){
             kv_prefix_clear(&m->kvp);
             kv_prefix_record(&m->kvp, k->ids, 0, k->len);
             g_pin_logit = k->logit;
-            coli_pin_touch(&g_pins, s);
+            lma_pin_touch(&g_pins, s);
             return k->len;
         }
         k->len = 0;
-        s = coli_pin_best(&g_pins, ids, n);
+        s = lma_pin_best(&g_pins, ids, n);
     }
     return 0;
 }
@@ -3323,10 +3323,10 @@ static int *read_int_array(jval *o, const char *key, int *n_out) {
 
 #ifndef QWEN36_NO_MAIN
 
-/* ===================== coli serve mode (SERVE=1) ===================== *
- * Implements the colibri gateway wire protocol so `coli chat` / `coli web` /
- * `coli serve` can drive this engine. Without it the engine is unreachable:
- * users run `coli chat`, not the binary directly.
+/* ===================== lmatomic serve mode (SERVE=1) ===================== *
+ * Implements the lmatomic gateway wire protocol so `lmatomic chat` / `lmatomic web` /
+ * `lmatomic serve` can drive this engine. Without it the engine is unreachable:
+ * users run `lmatomic chat`, not the binary directly.
  * Protocol (matches kimi_k3.c / inkling.c, the other non-GLM engines):
  *   engine:  \x01\x01READY\x01\x01\n
  *            STAT 0 0.00 0.0 <rss>\n
@@ -3337,7 +3337,7 @@ static int *read_int_array(jval *o, const char *key, int *n_out) {
  *   gateway: CANCEL <id>  (abort current turn)
  * Windows: stdout/stdin must go binary BEFORE the READY sentinel or the CRT
  * rewrites the trailing \n as \r\n and the gateway never matches it -> the
- * session hangs forever (#748). compat.h's coli_serve_binary_mode (#749)
+ * session hangs forever (#748). compat.h's lma_serve_binary_mode (#749)
  * carries that fix for every engine; see its comment for the full story. */
 
 typedef struct { char id[64]; int max_tok; float temp, top_p; char *payload; int plen;
@@ -3359,12 +3359,12 @@ static int serve_read_req(ServeReq *q){
     (void)slot;
     /* Le chiavi key=value stanno dopo i campi fissi. Si riusa il parser
      * condiviso di decode_batch.h invece di scriverne un secondo: e lo stesso
-     * namespace che colibri.c gia accetta, quindi i due motori non divergono.
+     * namespace che glm52.c gia accetta, quindi i due motori non divergono.
      * Un client vecchio non manda nessuna chiave e finisce a logprobs=0. */
     q->logprobs = 0;
     q->pin = 0;
     {
-        /* Stessa tecnica di coli_submit_parse: %n da l'offset dopo i campi
+        /* Stessa tecnica di lma_submit_parse: %n da l'offset dopo i campi
          * numerici, e la chiave deve essere separata da spazio (altrimenti
          * "1logprobs=5" sarebbe un campo malformato, non un opt-in). Qui i
          * campi fissi sono 6 e non 7, perche questo header non ha gbytes. */
@@ -3372,7 +3372,7 @@ static int serve_read_req(ServeReq *q){
         int sd, sp_, smt; float st, stp;
         if (sscanf(line, "%*s %*s %d %d %d %f %f%n", &sd, &sp_, &smt, &st, &stp, &base) == 5 &&
             base > 0 && (line[base] == ' ' || line[base] == '\t')) {
-            /* coli_submit_ext rifiuta qualunque byte non-spazio dopo il valore,
+            /* lma_submit_ext rifiuta qualunque byte non-spazio dopo il valore,
              * e fgets lascia il '\n' in fondo: va tolto, o "logprobs=5\n" e
              * un valore con spazzatura attaccata. Si lavora su una copia per
              * non toccare la riga che il chiamante ha gia parsato. */
@@ -3382,8 +3382,8 @@ static int serve_read_req(ServeReq *q){
             const char *tail = ext_buf;
             while (*tail == ' ' || *tail == '\t') tail++;
             if (*tail) {
-                ColiSubmit ext; memset(&ext, 0, sizeof ext);
-                if (coli_submit_ext(ext_buf, &ext)) { q->logprobs = ext.logprobs; q->pin = ext.pin; }
+                LmaSubmit ext; memset(&ext, 0, sizeof ext);
+                if (lma_submit_ext(ext_buf, &ext)) { q->logprobs = ext.logprobs; q->pin = ext.pin; }
                 else { printf("ERROR %s bad submit extension\n", id); fflush(stdout); return 0; }
             }
         }
@@ -3403,7 +3403,7 @@ static int serve_read_req(ServeReq *q){
     return 2;
 }
 
-/* Coda numerica di un token, formato IDENTICO a logprob_tail di colibri.c:
+/* Coda numerica di un token, formato IDENTICO a logprob_tail di glm52.c:
  * " <lp> <k> [tid tlp]*k", normalizzata in log-softmax sul vocabolario intero.
  * Due motori che scrivono lo stesso canale devono scrivere lo stesso formato,
  * altrimenti il client ne ha due da conoscere. lo==NULL da " nan 0". */
@@ -3426,7 +3426,7 @@ static void serve_data_lp(const char *id, const char *p, int n, const char *tail
  * Vive in variabili globali e non nella firma di step() perche step() e la
  * matematica: il protocollo non deve entrarci. */
 static void serve_echo(const char *id, int pos, int token, const float *lo, int V, int k){
-    char tail[1024]; coli_logprob_tail(tail,sizeof tail,lo,V,token,k);
+    char tail[1024]; lma_logprob_tail(tail,sizeof tail,lo,V,token,k);
     unsigned char b[256]; int n=0; decode_id_to_bytes(token,b,&n);
     printf("ECHO %s %d %d%s\n",id,n,pos,tail);
     if(n>0) fwrite(b,1,(size_t)n,stdout);
@@ -3493,7 +3493,7 @@ static int serve_eos_ids(int *ids, int cap){
  * generazione in attesa di un comando che potrebbe non arrivare mai. */
 static int serve_cancel_pending(const char *id){
     int cancelled = 0;
-    while(coli_serve_stdin_ready()){
+    while(lma_serve_stdin_ready()){
         char line[512], cmd[16], who[64];
         if(!fgets(line,sizeof(line),stdin)) break;
         if(sscanf(line,"%15s %63s",cmd,who)<2) continue;
@@ -3503,12 +3503,12 @@ static int serve_cancel_pending(const char *id){
 }
 
 /* --- Dashboard: Brain e Profile ------------------------------------------
- * Stesse quattro righe di colibri.c/glm53.c, stessi byte: EMAP dopo READY,
+ * Stesse quattro righe di glm52.c/glm53.c, stessi byte: EMAP dopo READY,
  * HITS e PROF prima di DONE. Qui ogni layer e' MoE, quindi la griglia e'
  * n_layers x n_experts. Il tier VRAM non espone una query di residenza:
  * la griglia distingue solo disco (0) e cache RAM (1). Le fasi del Profile
  * vengono dai timer che il motore ha gia' (deltanet, attention, moe, head),
- * ora accumulati sempre e riportati a schermo solo con COLI_TIMERS=1; il
+ * ora accumulati sempre e riportati a schermo solo con LMA_TIMERS=1; il
  * disco e' misurato attorno a load_expert_merged su entrambi i percorsi.
  * L'attesa asincrona resta 0 per costruzione. */
 static void dash_hex(const uint8_t *bytes,int n,char *hex){
@@ -3543,7 +3543,7 @@ static double tm_sum(int idx){ return (g_tm_dec[idx]+g_tm_pre[idx])/1e3; }   /* 
  * Returns the budget, or -1 when the PROMPT does not fit. Refusing when
  * prompt + budget exceeded the context (#1641) turned the gateway's default
  * output budget -- 8192 here, the whole default context -- into a 400 on
- * every message of `coli chat` and on every request without max_tokens. */
+ * every message of `lmatomic chat` and on every request without max_tokens. */
 static int qwen36_serve_budget(int np, int max_tok, int max_ctx, int read_only){
     if (np < 1) return -1;
     int room = max_ctx - np;
@@ -3575,12 +3575,12 @@ static void serve_one(Model *m, ServeReq *q){
      * begins with the ids the current state was built from, that state already
      * IS the state at those positions: prefill only the tail. Either the reused
      * positions are token-identical or nothing is reused -- there is no partial
-     * case, because nothing here can rewind a state. COLI_KV_PREFIX=0 turns it
-     * off for an A/B; COLI_PREFIX_LOG=1 reports the decision and its reason,
+     * case, because nothing here can rewind a state. LMA_KV_PREFIX=0 turns it
+     * off for an A/B; LMA_PREFIX_LOG=1 reports the decision and its reason,
      * because "it did not get faster" is otherwise indistinguishable from
      * "reuse is not wired up". */
     int reuse = kv_prefix_off() ? 0 : kv_prefix_reuse(&m->kvp, ids, np);
-    if (getenv("COLI_PREFIX_LOG")) {
+    if (getenv("LMA_PREFIX_LOG")) {
         if (reuse)
             fprintf(stderr, "[PREFIX] reusing %d of %d prompt tokens (%.0f%%)\n",
                     reuse, np, 100.0 * reuse / np);
@@ -3608,7 +3608,7 @@ static void serve_one(Model *m, ServeReq *q){
     if (!reuse) { reset_recurrent(m); m->kv_len = 0; }
     /* Per-REQUEST state, not per-process: without this the server keeps the
      * first request's prefill flag and expert-collection set forever, so
-     * COLIBRI_RESIDENT=1 collects on request #1 and never again, and the
+     * LMA_RESIDENT=1 collects on request #1 and never again, and the
      * router EMA carries one conversation's history into the next. */
     m->first_step = 1;
     if (m->seen) memset(m->seen, 0, (size_t)m->c.n_layers * m->c.n_experts);
@@ -3629,7 +3629,7 @@ static void serve_one(Model *m, ServeReq *q){
         int tk = serve_sample(lo, m->c.vocab, q->temp, q->top_p);
         /* La coda si calcola PRIMA della free: dopo, lo non c'e piu. */
         char lptail[1024]; lptail[0]=0;
-        if(q->logprobs>0) coli_logprob_tail(lptail,sizeof lptail,lo,m->c.vocab,tk,q->logprobs);
+        if(q->logprobs>0) lma_logprob_tail(lptail,sizeof lptail,lo,m->c.vocab,tk,q->logprobs);
         free(lo); lo=NULL;
         int is_eos=0; for(int e=0;e<n_eos;e++) if(tk==eos_ids[e]) is_eos=1;
         if(is_eos){ limited=0; break; }
@@ -3677,7 +3677,7 @@ static void serve_one(Model *m, ServeReq *q){
 }
 
 static void serve_loop(Model *m){
-    coli_serve_binary_mode();
+    lma_serve_binary_mode();
     setvbuf(stdin,NULL,_IONBF,0);
     fputs("\x01\x01READY\x01\x01\n",stdout);
     printf("STAT 0 0.00 0.0 %.2f\n",rss_gb());
@@ -3693,7 +3693,7 @@ static void serve_loop(Model *m){
          * the only one the dashboard ever saw -- all grey, RAM 0, everything
          * on disk, forever. HITS was already per turn, which is why the white
          * "routed now" flash worked while the residency colour never moved.
-         * inkling.c, kimi_k3.c, qwen38.c, deepseek_v41.c and colibri.c
+         * inkling.c, kimi_k3.c, qwen38.c, deepseek_v41.c and glm52.c
          * already do this. */
         if(r==2){ serve_one(m,&q); free(q.payload); emap_emit(m); }
     }
@@ -3718,7 +3718,7 @@ static void tier_warmstart(Model *m, int expert_is_int4) {
      * ms/token on a single-GPU run). Planned ones also go to VRAM. */
     uint8_t *planned = calloc((size_t)cap_total, 1);
     for (int i = 0; i < wn; i++) planned[wpl[i]*m->c.n_experts + wpe[i]] = 1;
-    int keep8 = getenv("COLI_KEEP_INT8") != NULL;
+    int keep8 = getenv("LMA_KEEP_INT8") != NULL;
     #pragma omp parallel for schedule(dynamic, 16)
     for (int gi = 0; gi < cap_total; gi++) {
         int l = gi / m->c.n_experts, eidw = gi % m->c.n_experts;
@@ -3746,7 +3746,7 @@ static void tier_warmstart(Model *m, int expert_is_int4) {
              * just stored (any later stage() reads freed memory) and leaves
              * slot_ensure_int8() unable to bring the expert back: it returns
              * early without g4, and the CPU fallback in the decode loop then
-             * dereferences NULL. Keep it (#1341). COLI_KEEP_INT8 keeps its
+             * dereferences NULL. Keep it (#1341). LMA_KEEP_INT8 keeps its
              * meaning for int4.
              * The condition is ownership, not format: do not free what was
              * just handed over. int4 handed g4 (wg != e->g), so the int8
@@ -3772,14 +3772,14 @@ static void tier_warmstart(Model *m, int expert_is_int4) {
 }
 
 int main(int argc, char **argv) {
-    /* Physical-core team sizing, as colibri/inkling/kimi_k3/olmoe/deepseek-v41
+    /* Physical-core team sizing, as lmatomic/inkling/kimi_k3/olmoe/deepseek-v41
      * do. Without it this engine takes one thread per logical CPU, which on an
      * SMT host doubles the team for no arithmetic and pays a barrier per tiny
      * per-expert region (#718 measured +2.3x from the sizing alone on a
-     * 16C/32T part). OMP_NUM_THREADS wins, COLI_NO_OMP_TUNE=1 disables. */
-    coli_omp_tune_threads("qwen36");
+     * 16C/32T part). OMP_NUM_THREADS wins, LMA_NO_OMP_TUNE=1 disables. */
+    lma_omp_tune_threads("qwen36");
     const char *snap = getenv("SNAP");
-    if (!snap) { coli_print_launcher_help("Qwen3.6"); return 1; }
+    if (!snap) { lma_print_launcher_help("Qwen3.6"); return 1; }
     g_pilot = getenv("PILOT") ? atoi(getenv("PILOT")) : 0;
     g_wide  = getenv("WIDE")  ? atoi(getenv("WIDE"))  : 1;
     if (g_wide < 1) g_wide = 1; if (g_wide > 4) g_wide = 4;
@@ -3795,8 +3795,8 @@ int main(int argc, char **argv) {
     if (getenv("OPENAI")) g_openai = 1;                       /* OpenAI-compatible output */
     const char *mv = getenv("MODEL"); if (mv && *mv) g_model = mv;
     int hot_n = getenv("HOT") ? atoi(getenv("HOT")) : 0;
-    int cap   = argc > 1 ? coli_arg_int(argv[1], "cache/layer") : 16;
-    int bits  = argc > 2 ? coli_arg_int(argv[2], "expert bits") : 4;
+    int cap   = argc > 1 ? lma_arg_int(argv[1], "cache/layer") : 16;
+    int bits  = argc > 2 ? lma_arg_int(argv[2], "expert bits") : 4;
     /* cap < 1 leaves every layer cache empty, so expert_get finds no slot to
      * evict and waits for a publish that can never come. The old lru=0 fallback
      * turned that into a heap OOB instead; neither is a failure mode to ship. */
@@ -3823,7 +3823,7 @@ int main(int argc, char **argv) {
     char *buf=NULL, *arena=NULL;
     /* serve mode gets its prompts over the wire: skip the argv prompt file
      * entirely, or the default "ref.json" kills the engine before serve_loop
-     * is ever reached — which is exactly how `coli` launches it (SERVE=1, no
+     * is ever reached — which is exactly how `lmatomic` launches it (SERVE=1, no
      * prompt argument). */
     int serve_mode = getenv("SERVE") && getenv("SERVE")[0]=='1';
 
@@ -3869,12 +3869,12 @@ int main(int argc, char **argv) {
     g_expert_gs = m.c.expert_gs;
     if (g_expert_gs) fprintf(stderr, "[qwen36] group-scaled experts: gs=%d\n", g_expert_gs);
     fprintf(stderr, "resident weights loaded in %.1fs | RSS after load: %.2f GB\n", m.dense_load_s, rss_gb());
-    /* dense matrices are quantized to int8 (+ int4 planar per COLI_DENSE_BITS/
-     * COLI_DENSE_INT4, see dense_int4_wanted) during model_init above
-     * (COLI_DENSE_I8=0 disables it) -- see load_tq/QW; model_init_range
+    /* dense matrices are quantized to int8 (+ int4 planar per LMA_DENSE_BITS/
+     * LMA_DENSE_INT4, see dense_int4_wanted) during model_init above
+     * (LMA_DENSE_I8=0 disables it) -- see load_tq/QW; model_init_range
      * already logged the count and freed bytes. */
 
-    /* Optional CUDA VRAM expert tier (COLI_CUDA=1): hot experts live in
+    /* Optional CUDA VRAM expert tier (LMA_CUDA=1): hot experts live in
      * DEVICE_LOCAL memory across the configured GPUs, misses fall back to the
      * CPU int8 path. See qwen36_tier.h. */
     /* Formato degli esperti dalla TAGLIA SU DISCO del primo, non da meta.ebits:
@@ -3917,8 +3917,8 @@ int main(int argc, char **argv) {
         }
         trunk_offer_dense(&m);   /* dnout, attnproj, shexp: the rest of the per-token dense work */
     }
-    if (expert_mixed && getenv("COLI_CUDA") && getenv("COLI_CUDA")[0] == '1')
-        fprintf(stderr, "[qwen36] COLI_CUDA=1 ignored: the VRAM expert tier does not take the mixed layout yet (one format per expert)\n");
+    if (expert_mixed && getenv("LMA_CUDA") && getenv("LMA_CUDA")[0] == '1')
+        fprintf(stderr, "[qwen36] LMA_CUDA=1 ignored: the VRAM expert tier does not take the mixed layout yet (one format per expert)\n");
     if (!expert_mixed &&
         qt_init(m.c.n_layers, m.c.n_experts, m.c.hidden, m.c.inter, cap, m.c.topk,
                 m.c.expert_gs, expert_is_int4)) {
@@ -3926,13 +3926,13 @@ int main(int argc, char **argv) {
         atexit(qt_shutdown);
         /* The placer predicted; measure before uploading a byte of trunk. */
         if (!trunk_probe_gpu_wins(&m)) qt_trunk_withdraw("measured slower than the CPU");
-        /* R4 role split: park the dense-i8 lm_head on COLI_LMHEAD_GPU. The
+        /* R4 role split: park the dense-i8 lm_head on LMA_LMHEAD_GPU. The
          * QW struct on m.lm_head holds the int8 rows + per-row scales the
          * CPU path uses; the GPU applies the identical semantics. */
         if (m.lm_head.q)
             qt_lmhead_init(m.lm_head.q, m.lm_head.sc, m.lm_head.I, m.lm_head.O);
         /* R4 step 2: DeltaNet input projections, per layer, wherever
-         * COLI_PLACE puts them. qkv and z are both [O_x, hidden] int8 with
+         * LMA_PLACE puts them. qkv and z are both [O_x, hidden] int8 with
          * per-row scales, so fusing them is a concatenation along O -- two
          * memcpys, no requantization, and the GPU sees one GEMV per layer
          * instead of two. The host copy is freed right after the upload. */
@@ -3979,7 +3979,7 @@ int main(int argc, char **argv) {
         if (!(nws && *nws=='1')) tier_warmstart(&m, expert_is_int4);
     }
 
-    /* coli serve mode: speak the gateway wire protocol instead of argv
+    /* lmatomic serve mode: speak the gateway wire protocol instead of argv
      * generation. AFTER the tier init: serve sessions ride the VRAM experts
      * exactly like argv runs, and serve_loop never returns. */
     if (getenv("SERVE") && getenv("SERVE")[0] == '1') {
@@ -4074,7 +4074,7 @@ int main(int argc, char **argv) {
 }
 #endif /* QWEN36_NO_MAIN */
 
-#ifdef COLI_SEGMENT_ADAPTER
+#ifdef LMA_SEGMENT_ADAPTER
 /* ---------- engine-owned Segment adapter ------------------------------ */
 
 typedef struct {
@@ -4126,18 +4126,18 @@ static void qwen36_segment_model_destroy(Qwen36SegmentEngine *engine) {
 }
 
 static int qwen36_segment_engine_open(
-    void **engine_impl, ColiSegmentCapabilities *capabilities,
-    const ColiSegmentEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaSegmentCapabilities *capabilities,
+    const LmaSegmentEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "invalid Qwen3.6 Segment open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_SEGMENT_CAP_CPU))
-        return coli_segment_adapter_error(error, error_size,
+        (options->backend_mask & ~LMA_SEGMENT_CAP_CPU))
+        return lma_segment_adapter_error(error, error_size,
                                            "Qwen3.6 Segment currently supports CPU");
     if (options->context_tokens > QWEN36_ATTN_MAX_CTX)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Qwen3.6 Segment context exceeds model limit");
     Cfg config;
     memset(&config, 0, sizeof(config));
@@ -4147,7 +4147,7 @@ static int qwen36_segment_engine_open(
     validate_cfg(&config, configured_layers);
     if (options->layer_end > (uint32_t)config.n_layers) {
         free(config.is_attn);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Qwen3.6 Segment range exceeds model");
     }
     int range_layers = (int)(options->layer_end - options->layer_begin);
@@ -4165,7 +4165,7 @@ static int qwen36_segment_engine_open(
     Qwen36SegmentEngine *engine = calloc(1, sizeof(*engine));
     if (!engine) {
         free(config.is_attn);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory opening Qwen3.6 Segment");
     }
     engine->layer_begin = options->layer_begin;
@@ -4173,7 +4173,7 @@ static int qwen36_segment_engine_open(
     engine->context_tokens = options->context_tokens;
     if (pthread_mutex_init(&engine->run_lock, NULL)) {
         free(config.is_attn); free(engine);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "cannot initialize Qwen3.6 Segment lock");
     }
     free(config.is_attn);
@@ -4191,38 +4191,38 @@ static int qwen36_segment_engine_open(
     if (engine->model.attn_sc_thr < 1) engine->model.attn_sc_thr = 1;
 #endif
     size_t scratch_cells;
-    if (coli_segment_size_mul((size_t)engine->model.attn_sc_thr,
+    if (lma_segment_size_mul((size_t)engine->model.attn_sc_thr,
                               options->context_tokens, &scratch_cells)) {
         qwen36_segment_model_destroy(engine);
         pthread_mutex_destroy(&engine->run_lock); free(engine);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Qwen3.6 attention scratch overflows");
     }
     engine->model.attn_sc = calloc(scratch_cells, sizeof(float));
     if (!engine->model.attn_sc) {
         qwen36_segment_model_destroy(engine);
         pthread_mutex_destroy(&engine->run_lock); free(engine);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory for Qwen3.6 attention");
     }
     engine->model.resident_mode = 0;
 
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_SEGMENT_ABI_VERSION;
-    capabilities->flags = COLI_SEGMENT_CAP_SNAPSHOT |
-                          COLI_SEGMENT_CAP_RANGE_NATIVE |
-                          COLI_SEGMENT_CAP_MULTI_SESSION |
-                          COLI_SEGMENT_CAP_CPU;
-    coli_segment_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_SEGMENT_ABI_VERSION;
+    capabilities->flags = LMA_SEGMENT_CAP_SNAPSHOT |
+                          LMA_SEGMENT_CAP_RANGE_NATIVE |
+                          LMA_SEGMENT_CAP_MULTI_SESSION |
+                          LMA_SEGMENT_CAP_CPU;
+    lma_segment_capability_string(capabilities->engine_id,
                                    sizeof(capabilities->engine_id), "qwen36");
-    coli_segment_capability_string(capabilities->state_schema,
+    lma_segment_capability_string(capabilities->state_schema,
                                    sizeof(capabilities->state_schema),
                                    "qwen36/kv-deltanet-conv-f32-v1");
     snprintf(capabilities->numeric_class,
              sizeof(capabilities->numeric_class),
              "qwen36/f32-int%d/cpu-v1", engine->model.quant_bits);
-    capabilities->state_dtype = COLI_SEGMENT_DTYPE_F32;
+    capabilities->state_dtype = LMA_SEGMENT_DTYPE_F32;
     capabilities->state_width = (uint32_t)engine->model.c.hidden;
     capabilities->max_batch_rows = 128;
     capabilities->max_context_tokens = QWEN36_ATTN_MAX_CTX;
@@ -4241,15 +4241,15 @@ static void qwen36_segment_engine_destroy(void *engine_impl) {
 
 static int qwen36_segment_session_create(
     void *engine_impl, void **session_impl,
-    const ColiSegmentSessionOptions *options, char *error, size_t error_size) {
+    const LmaSegmentSessionOptions *options, char *error, size_t error_size) {
     Qwen36SegmentEngine *engine = (Qwen36SegmentEngine *)engine_impl;
     if (!engine || !session_impl || !options)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "invalid Qwen3.6 Segment session");
     *session_impl = NULL;
     Qwen36SegmentSession *session = calloc(1, sizeof(*session));
     if (!session)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory creating Qwen3.6 session");
     session->engine = engine;
     session->context_tokens = options->context_tokens;
@@ -4265,20 +4265,20 @@ static int qwen36_segment_session_create(
          layer++) {
         size_t cells;
         if (config->is_attn[layer]) {
-            if (coli_segment_size_mul((size_t)config->kv_heads,
+            if (lma_segment_size_mul((size_t)config->kv_heads,
                                       options->context_tokens, &cells) ||
-                coli_segment_size_mul(cells, (size_t)config->k_head_dim,
+                lma_segment_size_mul(cells, (size_t)config->k_head_dim,
                                       &cells)) goto oom;
             session->K[layer] = calloc(cells, sizeof(float));
             session->V[layer] = calloc(cells, sizeof(float));
             if (!session->K[layer] || !session->V[layer]) goto oom;
         } else {
-            if (coli_segment_size_mul((size_t)config->dn_vheads,
+            if (lma_segment_size_mul((size_t)config->dn_vheads,
                                       (size_t)config->dn_kdim, &cells) ||
-                coli_segment_size_mul(cells, (size_t)config->dn_vdim,
+                lma_segment_size_mul(cells, (size_t)config->dn_vdim,
                                       &cells)) goto oom;
             session->DN_rec[layer] = calloc(cells, sizeof(float));
-            if (coli_segment_size_mul((size_t)config->dn_conv_dim,
+            if (lma_segment_size_mul((size_t)config->dn_conv_dim,
                                       (size_t)(config->dn_convk - 1),
                                       &cells)) goto oom;
             session->DN_conv[layer] = calloc(cells, sizeof(float));
@@ -4298,7 +4298,7 @@ oom:
     }
     free(session->K); free(session->V);
     free(session->DN_rec); free(session->DN_conv); free(session);
-    return coli_segment_adapter_error(error, error_size,
+    return lma_segment_adapter_error(error, error_size,
                                        "out of memory allocating Qwen3.6 state");
 }
 
@@ -4315,15 +4315,15 @@ static void qwen36_segment_session_destroy(void *session_impl) {
 }
 
 static int qwen36_segment_session_run(void *session_impl,
-                                      const ColiSegmentRunRequest *request,
+                                      const LmaSegmentRunRequest *request,
                                       char *error, size_t error_size) {
     Qwen36SegmentSession *session = (Qwen36SegmentSession *)session_impl;
     if (!session || !request || request->position != session->position)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "Qwen3.6 Segment requires contiguous positions");
     if (request->should_cancel &&
         request->should_cancel(request->cancel_user_data))
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Qwen3.6 Segment run cancelled");
     Qwen36SegmentEngine *engine = session->engine;
     if (request->output != request->input)
@@ -4347,16 +4347,16 @@ static int qwen36_segment_session_run(void *session_impl,
 
 static int qwen36_segment_spans(
     Qwen36SegmentSession *session, uint32_t position,
-    ColiSegmentStateSpan **spans_output, size_t *count_output,
+    LmaSegmentStateSpan **spans_output, size_t *count_output,
     char *error, size_t error_size) {
     Cfg *config = &session->engine->model.c;
     size_t capacity = (size_t)(session->engine->layer_end -
                                session->engine->layer_begin) *
                       (size_t)(2 * config->kv_heads + 2);
-    ColiSegmentStateSpan *spans = capacity
+    LmaSegmentStateSpan *spans = capacity
         ? calloc(capacity, sizeof(*spans)) : NULL;
     if (capacity && !spans)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory describing Qwen3.6 state");
     size_t count = 0;
     for (uint32_t layer = session->engine->layer_begin;
@@ -4369,25 +4369,25 @@ static int qwen36_segment_spans(
             for (int kv = 0; kv < 2; kv++) {
                 float *state = kv ? session->V[layer] : session->K[layer];
                 for (int head = 0; head < config->kv_heads; head++)
-                    spans[count++] = (ColiSegmentStateSpan){
+                    spans[count++] = (LmaSegmentStateSpan){
                         state + head * stride, row_bytes};
             }
         } else {
             size_t rec_cells, conv_cells;
-            if (coli_segment_size_mul((size_t)config->dn_vheads,
+            if (lma_segment_size_mul((size_t)config->dn_vheads,
                                       (size_t)config->dn_kdim, &rec_cells) ||
-                coli_segment_size_mul(rec_cells, (size_t)config->dn_vdim,
+                lma_segment_size_mul(rec_cells, (size_t)config->dn_vdim,
                                       &rec_cells) ||
-                coli_segment_size_mul((size_t)config->dn_conv_dim,
+                lma_segment_size_mul((size_t)config->dn_conv_dim,
                                       (size_t)(config->dn_convk - 1),
                                       &conv_cells)) {
                 free(spans);
-                return coli_segment_adapter_error(error, error_size,
+                return lma_segment_adapter_error(error, error_size,
                                                    "Qwen3.6 state size overflow");
             }
-            spans[count++] = (ColiSegmentStateSpan){
+            spans[count++] = (LmaSegmentStateSpan){
                 session->DN_rec[layer], rec_cells * sizeof(float)};
-            spans[count++] = (ColiSegmentStateSpan){
+            spans[count++] = (LmaSegmentStateSpan){
                 session->DN_conv[layer], conv_cells * sizeof(float)};
         }
     }
@@ -4396,50 +4396,50 @@ static int qwen36_segment_spans(
 }
 
 static int qwen36_segment_session_snapshot(
-    void *session_impl, ColiSegmentWriteFn write_fn, void *write_user_data,
+    void *session_impl, LmaSegmentWriteFn write_fn, void *write_user_data,
     char *error, size_t error_size) {
     Qwen36SegmentSession *session = (Qwen36SegmentSession *)session_impl;
-    ColiSegmentStateSpan *spans = NULL; size_t count = 0, payload_bytes;
+    LmaSegmentStateSpan *spans = NULL; size_t count = 0, payload_bytes;
     if (!session || qwen36_segment_spans(session, session->position, &spans,
                                          &count, error, error_size) ||
-        coli_segment_spans_size(spans, count, &payload_bytes)) {
+        lma_segment_spans_size(spans, count, &payload_bytes)) {
         free(spans);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Qwen3.6 snapshot size overflow");
     }
-    ColiSegmentSnapshotHeader header;
-    coli_segment_snapshot_header_init(
+    LmaSegmentSnapshotHeader header;
+    lma_segment_snapshot_header_init(
         &header, "qwen36", session->engine->layer_begin,
         session->engine->layer_end, session->context_tokens, session->position,
-        payload_bytes, coli_segment_spans_hash(spans, count));
-    int result = coli_segment_stream_write(
+        payload_bytes, lma_segment_spans_hash(spans, count));
+    int result = lma_segment_stream_write(
         write_fn, write_user_data, &header, sizeof(header), error, error_size);
     if (!result)
-        result = coli_segment_spans_write(spans, count, write_fn,
+        result = lma_segment_spans_write(spans, count, write_fn,
                                           write_user_data, error, error_size);
     free(spans);
     return result;
 }
 
 static int qwen36_segment_session_restore(
-    void *session_impl, ColiSegmentReadFn read_fn, void *read_user_data,
+    void *session_impl, LmaSegmentReadFn read_fn, void *read_user_data,
     char *error, size_t error_size) {
     Qwen36SegmentSession *session = (Qwen36SegmentSession *)session_impl;
-    ColiSegmentSnapshotHeader header;
-    if (!session || coli_segment_stream_read(read_fn, read_user_data, &header,
+    LmaSegmentSnapshotHeader header;
+    if (!session || lma_segment_stream_read(read_fn, read_user_data, &header,
                                              sizeof(header), error, error_size))
         return -1;
-    ColiSegmentStateSpan *spans = NULL; size_t count = 0, payload_bytes;
+    LmaSegmentStateSpan *spans = NULL; size_t count = 0, payload_bytes;
     if (qwen36_segment_spans(session, header.position, &spans, &count,
                              error, error_size) ||
-        coli_segment_spans_size(spans, count, &payload_bytes) ||
-        coli_segment_snapshot_header_valid(
+        lma_segment_spans_size(spans, count, &payload_bytes) ||
+        lma_segment_snapshot_header_valid(
             &header, "qwen36", session->engine->layer_begin,
             session->engine->layer_end, session->context_tokens, payload_bytes,
             error, error_size)) {
         free(spans); return -1;
     }
-    int result = coli_segment_spans_restore(
+    int result = lma_segment_spans_restore(
         spans, count, header.payload_hash, read_fn, read_user_data,
         error, error_size);
     free(spans);
@@ -4447,20 +4447,20 @@ static int qwen36_segment_session_restore(
     return result;
 }
 
-static const ColiSegmentAdapter qwen36_segment_adapter = {
-    sizeof(ColiSegmentAdapter), COLI_SEGMENT_ABI_VERSION, "qwen36",
+static const LmaSegmentAdapter qwen36_segment_adapter = {
+    sizeof(LmaSegmentAdapter), LMA_SEGMENT_ABI_VERSION, "qwen36",
     qwen36_segment_engine_open, qwen36_segment_engine_destroy,
     qwen36_segment_session_create, qwen36_segment_session_destroy,
     qwen36_segment_session_run, qwen36_segment_session_snapshot,
     qwen36_segment_session_restore, {0}
 };
 
-int coli_qwen36_segment_adapter_register(void) {
-    return coli_segment_adapter_register(&qwen36_segment_adapter);
+int lma_qwen36_segment_adapter_register(void) {
+    return lma_segment_adapter_register(&qwen36_segment_adapter);
 }
-#endif /* COLI_SEGMENT_ADAPTER */
+#endif /* LMA_SEGMENT_ADAPTER */
 
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 /* ---------- engine-owned model Edge adapter --------------------------- */
 
 typedef struct {
@@ -4493,26 +4493,26 @@ static void qwen36_edge_engine_destroy(void *engine_impl) {
 }
 
 static int qwen36_edge_engine_open(
-    void **engine_impl, ColiEdgeCapabilities *capabilities,
-    const ColiEdgeEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaEdgeCapabilities *capabilities,
+    const LmaEdgeEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "invalid Qwen3.6 Edge open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_EDGE_CAP_CPU))
-        return coli_edge_adapter_error(error, error_size,
+        (options->backend_mask & ~LMA_EDGE_CAP_CPU))
+        return lma_edge_adapter_error(error, error_size,
                                        "Qwen3.6 Edge supports CPU only");
     /* qwen36.c's production tokenizer is process-global. The Edge runtime
      * makes that limitation explicit instead of silently cross-wiring two
      * model vocabularies in one process. Lumabri hosts one active model per
      * chatter process; a future tokenizer refactor can lift this restriction. */
     if (g_tok)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "a Qwen3.6 tokenizer is already active");
     Qwen36EdgeEngine *engine = calloc(1, sizeof(*engine));
     if (!engine)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "out of memory opening Qwen3.6 Edge");
     load_cfg(&engine->model.c, options->model_dir);
     int config_layers = engine->model.c.n_layers;
@@ -4536,36 +4536,36 @@ static int qwen36_edge_engine_open(
     load_tokenizer(tokenizer_path);
     if (!g_tok) {
         qwen36_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "cannot load Qwen3.6 tokenizer");
     }
     uint64_t cells = (uint64_t)config->vocab * config->hidden;
     uint64_t resident = (2u * cells + (uint64_t)config->hidden) * sizeof(float);
     if (options->memory_limit_bytes && resident > options->memory_limit_bytes) {
         qwen36_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "Qwen3.6 Edge exceeds memory limit");
     }
 
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_EDGE_ABI_VERSION;
-    capabilities->flags = COLI_EDGE_CAP_TOKENIZE |
-                          COLI_EDGE_CAP_DETOKENIZE |
-                          COLI_EDGE_CAP_GREEDY | COLI_EDGE_CAP_LOGITS |
-                          COLI_EDGE_CAP_CPU;
-    coli_edge_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_EDGE_ABI_VERSION;
+    capabilities->flags = LMA_EDGE_CAP_TOKENIZE |
+                          LMA_EDGE_CAP_DETOKENIZE |
+                          LMA_EDGE_CAP_GREEDY | LMA_EDGE_CAP_LOGITS |
+                          LMA_EDGE_CAP_CPU;
+    lma_edge_capability_string(capabilities->engine_id,
                                 sizeof(capabilities->engine_id), "qwen36");
-    coli_edge_capability_string(capabilities->state_schema,
+    lma_edge_capability_string(capabilities->state_schema,
                                 sizeof(capabilities->state_schema),
                                 "qwen36/kv-deltanet-conv-f32-v1");
     snprintf(capabilities->numeric_class,
              sizeof(capabilities->numeric_class),
              "qwen36/f32-int%d/cpu-v1", engine->model.quant_bits);
-    coli_edge_capability_string(capabilities->tokenizer_class,
+    lma_edge_capability_string(capabilities->tokenizer_class,
                                 sizeof(capabilities->tokenizer_class),
                                 "qwen36/hf-byte-bpe-v1");
-    capabilities->state_dtype = COLI_EDGE_DTYPE_F32;
+    capabilities->state_dtype = LMA_EDGE_DTYPE_F32;
     capabilities->state_width = (uint32_t)config->hidden;
     capabilities->vocab_size = (uint32_t)config->vocab;
     capabilities->max_batch_rows = 128;
@@ -4584,11 +4584,11 @@ static int qwen36_edge_tokenize(
     char *error, size_t error_size) {
     (void)engine_impl;
     if (!text || !token_count || text_bytes > INT_MAX)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "invalid Qwen3.6 tokenizer input");
     char *copy = malloc(text_bytes + 1u);
     if (!copy)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "out of memory tokenizing Qwen3.6 text");
     memcpy(copy, text, text_bytes); copy[text_bytes] = '\0';
     int *ids = NULL, count = 0;
@@ -4596,7 +4596,7 @@ static int qwen36_edge_tokenize(
     free(copy);
     if (count < 0 || (token_ids && token_capacity < (size_t)count)) {
         free(ids);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "Qwen3.6 token output buffer is too small");
     }
     *token_count = (size_t)count;
@@ -4614,14 +4614,14 @@ static int qwen36_edge_detokenize(
     if (!token_ids || !token_count || !text_bytes || token_count > INT_MAX ||
         token_count > (SIZE_MAX - 1u) / 255u ||
         token_count > ((size_t)INT_MAX - 1u) / 255u)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "invalid Qwen3.6 detokenizer input");
     int *ids = malloc(token_count * sizeof(*ids));
     size_t capacity = token_count * 255u + 1u;
     char *temporary = malloc(capacity);
     if (!ids || !temporary) {
         free(temporary); free(ids);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "out of memory detokenizing Qwen3.6 tokens");
     }
     for (size_t item = 0; item < token_count; item++) ids[item] = token_ids[item];
@@ -4631,7 +4631,7 @@ static int qwen36_edge_detokenize(
     *text_bytes = (size_t)count;
     if (text && text_capacity < (size_t)count + 1u) {
         free(temporary);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "Qwen3.6 text output buffer is too small");
     }
     if (text) memcpy(text, temporary, (size_t)count + 1u);
@@ -4640,7 +4640,7 @@ static int qwen36_edge_detokenize(
 }
 
 static int qwen36_edge_embed(void *engine_impl,
-                             const ColiEdgeEmbedRequest *request,
+                             const LmaEdgeEmbedRequest *request,
                              char *error, size_t error_size) {
     Qwen36EdgeEngine *engine = (Qwen36EdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -4648,7 +4648,7 @@ static int qwen36_edge_embed(void *engine_impl,
     for (uint32_t row = 0; row < request->rows; row++) {
         int token = request->token_ids[row];
         if (token < 0 || token >= config->vocab)
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Qwen3.6 token ID is out of range");
         memcpy(output + (size_t)row * config->hidden,
                engine->model.embed + (size_t)token * config->hidden,
@@ -4658,7 +4658,7 @@ static int qwen36_edge_embed(void *engine_impl,
 }
 
 static int qwen36_edge_select(void *engine_impl,
-                              const ColiEdgeSelectRequest *request,
+                              const LmaEdgeSelectRequest *request,
                               char *error, size_t error_size) {
     Qwen36EdgeEngine *engine = (Qwen36EdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -4669,18 +4669,18 @@ static int qwen36_edge_select(void *engine_impl,
         if (request->should_cancel &&
             request->should_cancel(request->cancel_user_data)) {
             free(logits); free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Qwen3.6 Edge selection cancelled");
         }
         rmsnorm_row(normalized, input + (size_t)row * config->hidden,
                     engine->model.final_norm, config->hidden, config->eps);
         matmul_d(logits, normalized, &engine->model.lm_head,
                  1, config->hidden, config->vocab);
-        if (coli_edge_argmax(logits, (uint32_t)config->vocab,
+        if (lma_edge_argmax(logits, (uint32_t)config->vocab,
                             &request->token_ids[row],
                             request->scores ? &request->scores[row] : NULL)) {
             free(logits); free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Qwen3.6 Edge head failed");
         }
     }
@@ -4689,7 +4689,7 @@ static int qwen36_edge_select(void *engine_impl,
 }
 
 static int qwen36_edge_logits(void *engine_impl,
-                              const ColiEdgeLogitsRequest *request,
+                              const LmaEdgeLogitsRequest *request,
                               char *error, size_t error_size) {
     Qwen36EdgeEngine *engine = (Qwen36EdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -4699,7 +4699,7 @@ static int qwen36_edge_logits(void *engine_impl,
         if (request->should_cancel &&
             request->should_cancel(request->cancel_user_data)) {
             free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Qwen3.6 Edge logits cancelled");
         }
         rmsnorm_row(normalized, input + (size_t)row * config->hidden,
@@ -4712,14 +4712,14 @@ static int qwen36_edge_logits(void *engine_impl,
     return 0;
 }
 
-static const ColiEdgeAdapter qwen36_edge_adapter = {
-    sizeof(ColiEdgeAdapter), COLI_EDGE_ABI_VERSION, "qwen36",
+static const LmaEdgeAdapter qwen36_edge_adapter = {
+    sizeof(LmaEdgeAdapter), LMA_EDGE_ABI_VERSION, "qwen36",
     qwen36_edge_engine_open, qwen36_edge_engine_destroy,
     qwen36_edge_tokenize, qwen36_edge_detokenize,
     qwen36_edge_embed, qwen36_edge_select, qwen36_edge_logits, {0}
 };
 
-int coli_qwen36_edge_adapter_register(void) {
-    return coli_edge_adapter_register(&qwen36_edge_adapter);
+int lma_qwen36_edge_adapter_register(void) {
+    return lma_edge_adapter_register(&qwen36_edge_adapter);
 }
-#endif /* COLI_EDGE_ADAPTER */
+#endif /* LMA_EDGE_ADAPTER */

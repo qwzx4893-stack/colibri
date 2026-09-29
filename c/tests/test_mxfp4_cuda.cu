@@ -109,7 +109,7 @@ static void one_case(const char *what, int S, int I, int O, int fixed_exp) {
 
     mxfp4_ref(y_cpu, x, q4, e8, S, I, O);
 
-    if (!coli_cuda_matmul_mxfp4(y_gpu, x, q4, e8, S, I, O)) {
+    if (!lma_cuda_matmul_mxfp4(y_gpu, x, q4, e8, S, I, O)) {
         printf("  FAIL %-28s CUDA path refused the call\n", what);
         fails++;
         goto done;
@@ -121,7 +121,7 @@ static void one_case(const char *what, int S, int I, int O, int fixed_exp) {
     memset(q4, 0x22, (size_t)O * rb);
     memset(e8, 127, (size_t)O * ng);
     mxfp4_ref(y_cpu, x, q4, e8, S, I, O);
-    if (!coli_cuda_matmul_mxfp4(y_gpu, x, q4, e8, S, I, O)) fails++;
+    if (!lma_cuda_matmul_mxfp4(y_gpu, x, q4, e8, S, I, O)) fails++;
     else compare_case("recycled host slot", y_cpu, y_gpu, S, I, O);
 done:
     free(q4); free(e8); free(x); free(y_cpu); free(y_gpu);
@@ -145,7 +145,7 @@ static void mixed_rows_255(void) {
     for (int i = 0; i < S * I; i++) x[i] = ((float)(rnd() % 2001) - 1000.0f) / 1000.0f;
 
     mxfp4_ref(y_cpu, x, q4, e8, S, I, O);
-    if (!coli_cuda_matmul_mxfp4(y_gpu, x, q4, e8, S, I, O)) {
+    if (!lma_cuda_matmul_mxfp4(y_gpu, x, q4, e8, S, I, O)) {
         printf("  FAIL exp-255 mixed rows          CUDA path refused the call\n");
         fails++;
         return;
@@ -175,7 +175,7 @@ static void mixed_254_255(void) {
     for (int i = 0; i < S * I; i++) x[i] = 0.05f;
 
     mxfp4_ref(y_cpu, x, q4, e8, S, I, O);
-    if (!coli_cuda_matmul_mxfp4(y_gpu, x, q4, e8, S, I, O)) {
+    if (!lma_cuda_matmul_mxfp4(y_gpu, x, q4, e8, S, I, O)) {
         printf("  FAIL exp-254+255 mixed groups    CUDA path refused the call\n");
         fails++;
         return;
@@ -196,7 +196,7 @@ static void all_codes(void) {
     for (int i = 0; i < I; i++) x[i] = (i == 0) ? 1.0f : 0.0f;
 
     mxfp4_ref(y_cpu, x, q4, e8, 1, I, O);
-    if (!coli_cuda_matmul_mxfp4(y_gpu, x, q4, e8, 1, I, O)) {
+    if (!lma_cuda_matmul_mxfp4(y_gpu, x, q4, e8, 1, I, O)) {
         printf("  FAIL all-16-e2m1-codes            CUDA refused\n");
         fails++;
         return;
@@ -223,25 +223,25 @@ static void resident_case(int I, int O) {
     memset(q, 0x22, (size_t)O * rb);
     for (int i = 0; i < S * I; i++) x[i] = 0.25f * (1 + i % 3);
     size_t count0, bytes0, count1, bytes1;
-    coli_cuda_stats(0, &count0, &bytes0);
-    ColiCudaTensor *t = nullptr;
+    lma_cuda_stats(0, &count0, &bytes0);
+    LmaCudaTensor *t = nullptr;
     for (int pass = 0; pass < 2; pass++) {
         for (int i = 0; i < O * ng; i++) sc[i] = (uint8_t)(125 + (i + pass) % 5);
         const float *scales = reinterpret_cast<const float *>(sc);
-        int ok = pass ? coli_cuda_tensor_update(t, q, scales)
-                      : coli_cuda_tensor_upload(&t, q, scales, 7, I, O, 0);
+        int ok = pass ? lma_cuda_tensor_update(t, q, scales)
+                      : lma_cuda_tensor_upload(&t, q, scales, 7, I, O, 0);
         if (!ok) { printf("  FAIL resident upload/update\n"); fails++; break; }
         size_t expected = (size_t)O * (rb + ng);
-        coli_cuda_stats(0, &count1, &bytes1);
-        if (coli_cuda_tensor_bytes(t) != expected || count1 != count0 + 1 || bytes1 != bytes0 + expected) {
+        lma_cuda_stats(0, &count1, &bytes1);
+        if (lma_cuda_tensor_bytes(t) != expected || count1 != count0 + 1 || bytes1 != bytes0 + expected) {
             printf("  FAIL resident byte accounting I=%d O=%d\n", I, O); fails++;
         }
         mxfp4_ref(want, x, q, sc, S, I, O);
-        if (!coli_cuda_matmul(&t, got, x, nullptr, nullptr, 7, S, I, O, 0, 0)) fails++;
+        if (!lma_cuda_matmul(&t, got, x, nullptr, nullptr, 7, S, I, O, 0, 0)) fails++;
         else compare_case(pass ? "resident refresh" : "resident upload", want, got, S, I, O);
     }
-    coli_cuda_tensor_free(t);
-    coli_cuda_stats(0, &count1, &bytes1);
+    lma_cuda_tensor_free(t);
+    lma_cuda_stats(0, &count1, &bytes1);
     if (count0 != count1 || bytes0 != bytes1) { printf("  FAIL resident free accounting\n"); fails++; }
     free(q); free(sc); free(x); free(want); free(got);
 }
@@ -253,8 +253,8 @@ int main(void) {
         return 0;
     }
     int dev0 = 0;
-    if (!coli_cuda_init(&dev0, 1)) {
-        printf("test_mxfp4_cuda: coli_cuda_init failed, skipping\n");
+    if (!lma_cuda_init(&dev0, 1)) {
+        printf("test_mxfp4_cuda: lma_cuda_init failed, skipping\n");
         return 0;
     }
 
@@ -275,11 +275,11 @@ int main(void) {
     mixed_254_255();
     one_case("exponent 127 -> unit scale", 1,   64,   16, 127);
 
-    coli_cuda_shutdown();
-    if (!coli_cuda_init(&dev0, 1)) fails++;
+    lma_cuda_shutdown();
+    if (!lma_cuda_init(&dev0, 1)) fails++;
     else {
         one_case("after shutdown/reinit", 2, 128, 32, 127);
-        coli_cuda_shutdown();
+        lma_cuda_shutdown();
     }
 
     printf(fails ? "test_mxfp4_cuda: %d failure(s)\n" : "test_mxfp4_cuda: ok\n", fails);

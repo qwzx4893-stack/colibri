@@ -1,6 +1,6 @@
 @echo off
 rem ---------------------------------------------------------------------------
-rem build_cuda.bat - one-shot build of coli_cuda.dll (Windows, nvcc + MSVC).
+rem build_cuda.bat - one-shot build of lma_cuda.dll (Windows, nvcc + MSVC).
 rem
 rem Mirrors the Makefile's `cuda-dll` recipe so it can be double-clicked or run
 rem from a plain shell: it locates vcvars64.bat and the CUDA toolkit itself
@@ -84,23 +84,23 @@ if not "%CUDA_PATH%"=="" set "CUDA_LIB=-L"%CUDA_PATH%\lib\x64""
 
 rem --- Build ----------------------------------------------------------------
 rem Build in the script's own directory so backend_cuda.cu resolves and the DLL
-rem lands next to colibri.exe.
+rem lands next to glm52.exe.
 pushd "%~dp0"
 
-echo Building coli_cuda.dll for %CUDA_ARCH% ...
+echo Building lma_cuda.dll for %CUDA_ARCH% ...
 rem -Xcompiler=-W3 sets the MSVC host-compiler warning level.
 "%NVCC%" -O3 -std=c++17 -arch=%CUDA_ARCH% -Xcompiler=-W3 -shared ^
     %CCBIN_FLAG% %UNSUPPORTED_FLAG% ^
-    -DCOLI_CUDA_BUILDING_DLL %CUDA_LIB% -lcudart ^
-    backend_cuda.cu -o coli_cuda.dll
+    -DLMA_CUDA_BUILDING_DLL %CUDA_LIB% -lcudart ^
+    backend_cuda.cu -o lma_cuda.dll
 set "RC=%ERRORLEVEL%"
 
 popd
 if not "%RC%"=="0" goto failed
 echo.
-echo OK: %~dp0coli_cuda.dll
+echo OK: %~dp0lma_cuda.dll
 echo Now build the host with the runtime loader:
-echo     make colibri.exe CUDA_DLL=1 ARCH=native
+echo     make glm52.exe CUDA_DLL=1 ARCH=native
 exit /b 0
 
 :no_msvc

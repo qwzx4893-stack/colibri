@@ -133,7 +133,7 @@ def patch_kda_cpu(module):
     kernels and need a GPU.  Reroute both to fla's OWN naive torch
     implementation (fla/ops/kda/naive.py) plus fla's OWN naive gate
     (fla/ops/kda/gate.py) -- the reference implementations fla tests its
-    kernels against.  No colibri-authored math enters the oracle: the
+    kernels against.  No lmatomic-authored math enters the oracle: the
     preprocessing below mirrors exactly the use_*_in_kernel flags the vendor
     passes, using fla's published formulas."""
     import torch
@@ -361,7 +361,7 @@ def main():
             # to int8 per group of 32, a deliberate ~0.4%/group speed
             # approximation that is NOT an oracle target)
             "K3_BITS": "32", "K3_MLA_BITS": "32", "K3_HEAD_BITS": "32",
-            "K3_IDOT": "0", "COLI_TEMP": "0"},
+            "K3_IDOT": "0", "LMA_TEMP": "0"},
         "cases": reference,
     }, indent=1) + "\n")
     print(f"[ref] wrote {output}", file=sys.stderr)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan, collect and summarize a Colibri/SGLang/vLLM HTTP baseline."""
+"""Plan, collect and summarize a LM Atomic/SGLang/vLLM HTTP baseline."""
 import argparse
 import datetime
 import hashlib
@@ -14,8 +14,8 @@ try:
 except ImportError:
     import benchmark_http_serving as http
 
-ENGINES = ("colibri", "sglang", "vllm")
-SCHEMA = "colibri.serving-baseline/v1"
+ENGINES = ("lmatomic", "sglang", "vllm")
+SCHEMA = "lmatomic.serving-baseline/v1"
 
 
 def digest(path):
@@ -67,7 +67,7 @@ def load_manifest(path):
         require(type(value) in (int, float) and math.isfinite(value)
                 and (value >= 0 if key == "temperature" else value > 0), f"invalid {key}")
     engines = spec.get("engines", {})
-    require(set(engines) == set(ENGINES), "provide exactly colibri, sglang and vllm")
+    require(set(engines) == set(ENGINES), "provide exactly lmatomic, sglang and vllm")
     for engine in engines.values():
         text_fields(engine, ("base_url", "served_model", "revision", "launch_command",
                              "artifact_sha256", "weight_format", "quantization", "api_key_env"))

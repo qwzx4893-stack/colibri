@@ -21,7 +21,7 @@ jobs:
             name: macos-arm64
             ext: ""
             make_args: ""
-            # arm64 macOS joined COLI_V4_SUPPORTED; the archive verify step
+            # arm64 macOS joined LMA_V4_SUPPORTED; the archive verify step
             # asserts the engine is present and dispatchable like the others.
             v4: "1"
 
@@ -60,19 +60,19 @@ jobs:
       - name: Build engines
         run: |
           cd c
-          for t in colibri glm53 inkling kimi_k3 olmoe qwen36 qwen38 deepseek_v41; do
+          for t in glm52 glm53 inkling kimi_k3 olmoe qwen36 qwen38 deepseek_v41; do
             make $t ${{ matrix.make_args }}
           done
-          ls -lh colibri${{ matrix.ext }} glm53${{ matrix.ext }} inkling${{ matrix.ext }} kimi_k3${{ matrix.ext }} olmoe${{ matrix.ext }} qwen36${{ matrix.ext }} qwen38${{ matrix.ext }} deepseek_v41${{ matrix.ext }}
+          ls -lh glm52${{ matrix.ext }} glm53${{ matrix.ext }} inkling${{ matrix.ext }} kimi_k3${{ matrix.ext }} olmoe${{ matrix.ext }} qwen36${{ matrix.ext }} qwen38${{ matrix.ext }} deepseek_v41${{ matrix.ext }}
 
       # DeepSeek V4 has its own Makefile and its own target name (`deepseek-v4`,
       # producing `deepseek_v4`), so it never joined the loop above -- and #858 is
       # the result: v1.5.0 was titled "DeepSeek V4 Flash" and shipped no
-      # deepseek_v4.exe, so `coli web --model .../DeepSeek-V4-Flash` answered
+      # deepseek_v4.exe, so `lmatomic web --model .../DeepSeek-V4-Flash` answered
       # "deepseek-v4 engine is not built" with the release freshly unzipped.
       #
       # Separate step rather than another entry in that loop because the engine
-      # builds on x86-64 Linux/Windows and aarch64 Linux only (COLI_V4_SUPPORTED);
+      # builds on x86-64 Linux/Windows and aarch64 Linux only (LMA_V4_SUPPORTED);
       # on macos-arm64 the target deliberately exits 1, and folding it in would
       # turn that into a red release build.
       - name: Build DeepSeek V4 engine
@@ -89,7 +89,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       # The dashboard is what README shows and what serves the Expert Atlas, but it
-      # was never packaged: a release user has no web/ to build from, so `coli web`
+      # was never packaged: a release user has no web/ to build from, so `lmatomic web`
       # pointed them at a directory the archive does not contain. Built here rather
       # than committed, so dist/ stays a build artifact.
       # shell: bash — on Windows the job default is msys2, but setup-node installs
@@ -106,63 +106,63 @@ jobs:
         run: |
           TAG=${GITHUB_REF#refs/tags/}
           mkdir -p dist
-          # The engine goes in under its PLAIN name. `coli` locates the engine by looking for
-          # "colibri"/"colibri.exe" (then "glm") next to itself, so shipping it as
-          # colibri-<tag>-<platform>.exe made every downloaded archive fail with
-          # "engine is not built. Run: coli build" -- with the engine sitting right there.
+          # The engine goes in under its PLAIN name. `lmatomic` locates the engine by looking for
+          # "glm52"/"glm52.exe" (then "glm") next to itself, so shipping it as
+          # lmatomic-<tag>-<platform>.exe made every downloaded archive fail with
+          # "engine is not built. Run: lmatomic build" -- with the engine sitting right there.
           # The version lives in the ARCHIVE name, which is where a downloader looks for it.
-          cp c/colibri${{ matrix.ext }} dist/colibri${{ matrix.ext }}
+          cp c/glm52${{ matrix.ext }} dist/glm52${{ matrix.ext }}
           cp c/glm53${{ matrix.ext }} dist/glm53${{ matrix.ext }}
-          # The sibling engines go in under their plain names too: `coli` resolves the
+          # The sibling engines go in under their plain names too: `lmatomic` resolves the
           # engine from the model's config.json and looks for kimi_k3/inkling next to
-          # itself (c/coli, engine_for()). ~830 KB for all four.
+          # itself (c/lmatomic, engine_for()). ~830 KB for all four.
           cp c/inkling${{ matrix.ext }} dist/inkling${{ matrix.ext }}
           cp c/kimi_k3${{ matrix.ext }} dist/kimi_k3${{ matrix.ext }}
           cp c/olmoe${{ matrix.ext }} dist/olmoe${{ matrix.ext }}
           # qwen36 -- plain name, like the others: engine_for() resolves "qwen" to
-          # a "qwen36" binary next to coli. Unconditional: the engine is portable C
+          # a "qwen36" binary next to lmatomic. Unconditional: the engine is portable C
           # with no platform gate, so every archive can carry it.
           cp c/qwen36${{ matrix.ext }} dist/qwen36${{ matrix.ext }}
           cp c/qwen38${{ matrix.ext }} dist/qwen38${{ matrix.ext }}
           cp c/deepseek_v41${{ matrix.ext }} dist/deepseek_v41${{ matrix.ext }}
           # deepseek_v4 -- underscore, not the hyphen of the make target: engine_for()
-          # looks for "deepseek_v4" next to coli. Guarded, not unconditional, because
+          # looks for "deepseek_v4" next to lmatomic. Guarded, not unconditional, because
           # the macos-arm64 archive has no such engine to ship (#858).
           if [ "${{ matrix.v4 }}" = "1" ]; then
             cp c/deepseek_v4${{ matrix.ext }} dist/deepseek_v4${{ matrix.ext }}
           fi
           # Kimi K3 ships tiktoken.model, not tokenizer.json; k3_tokenizer.py synthesizes
-          # it. Without this the engine is in the archive but `coli chat` still cannot
+          # it. Without this the engine is in the archive but `lmatomic chat` still cannot
           # run it -- the second half of #720.
           mkdir -p dist/tools
           cp c/tools/k3_tokenizer.py dist/tools/
-          cp c/coli dist/
-          # Windows has nothing to click otherwise: `coli` is an extensionless
+          cp c/lmatomic dist/
+          # Windows has nothing to click otherwise: `lmatomic` is an extensionless
           # Python script, and the .exe files are engines that exit at once
-          # without a model (#1241). coli.cmd is both the double-click entry
-          # point and what `coli chat ...` resolves to in cmd/PowerShell.
-          if [ "${{ matrix.ext }}" = ".exe" ]; then cp c/coli.cmd dist/; fi
+          # without a model (#1241). lmatomic.cmd is both the double-click entry
+          # point and what `lmatomic chat ...` resolves to in cmd/PowerShell.
+          if [ "${{ matrix.ext }}" = ".exe" ]; then cp c/lmatomic.cmd dist/; fi
           # I file Python non sono piu' elencati qui. Erano sette, scelti a mano,
           # con i commenti che spiegavano quale importava quale: un inseguimento
           # del codice fatto a occhio, e il codice era avanti. #1296: mancavano
-          # quattro script invocati da coli e tre moduli importati, fra cui
+          # quattro script invocati da lmatomic e tre moduli importati, fra cui
           # qwen38_image, per cui mandare un'immagine al pacchetto pubblicato
           # rispondeva "image support needs Pillow and numpy" mentre il file
           # semplicemente non era stato spedito.
           python3 c/tools/pack_python.py c dist
           cp LICENSE dist/
-          # web/dist sits NEXT TO coli in the archive; both coli and openai_server.py
+          # web/dist sits NEXT TO lmatomic in the archive; both lmatomic and openai_server.py
           # probe that layout as well as the source checkout's one-level-up form.
           mkdir -p dist/web
           cp -r web/dist dist/web/dist
           cd dist
           if [ "${{ matrix.ext }}" = ".exe" ]; then
-            7z a colibri-${TAG}-${{ matrix.name }}.zip *
+            7z a lmatomic-${TAG}-${{ matrix.name }}.zip *
           else
-            tar czf colibri-${TAG}-${{ matrix.name }}.tar.gz *
+            tar czf lmatomic-${TAG}-${{ matrix.name }}.tar.gz *
           fi
 
-      # Unpack what we are about to publish, in a clean directory, and prove `coli` finds the
+      # Unpack what we are about to publish, in a clean directory, and prove `lmatomic` finds the
       # engine. A packaging mistake is invisible to every other job in this repo: the build is
       # green, the tests are green, and the artifact is still unusable. Assert on behaviour.
       - name: Verify the packaged archive actually runs
@@ -170,17 +170,17 @@ jobs:
           TAG=${GITHUB_REF#refs/tags/}
           mkdir -p verify && cd verify
           if [ "${{ matrix.ext }}" = ".exe" ]; then
-            7z x ../dist/colibri-${TAG}-${{ matrix.name }}.zip > /dev/null
+            7z x ../dist/lmatomic-${TAG}-${{ matrix.name }}.zip > /dev/null
           else
-            tar xzf ../dist/colibri-${TAG}-${{ matrix.name }}.tar.gz
+            tar xzf ../dist/lmatomic-${TAG}-${{ matrix.name }}.tar.gz
           fi
-          test -x colibri${{ matrix.ext }} || { echo "engine missing from archive"; ls -la; exit 1; }
+          test -x glm52${{ matrix.ext }} || { echo "engine missing from archive"; ls -la; exit 1; }
           # The sibling engines, asserted the same way. #720 was exactly this failure:
           # a green build, green tests, and an archive with no engine for the model the
           # user actually had. Presence is not enough -- assert they are executable, and
-          # that the launcher's own resolver finds them where it looks (next to coli).
+          # that the launcher's own resolver finds them where it looks (next to lmatomic).
           SIBLINGS="inkling kimi_k3 olmoe qwen36 qwen38"
-          # deepseek_v4 only where the engine builds (COLI_V4_SUPPORTED); asserting it
+          # deepseek_v4 only where the engine builds (LMA_V4_SUPPORTED); asserting it
           # unconditionally would fail the macos-arm64 archive for shipping an engine
           # that platform cannot have.
           if [ "${{ matrix.v4 }}" = "1" ]; then SIBLINGS="$SIBLINGS deepseek_v4"; fi
@@ -188,42 +188,42 @@ jobs:
             test -x $e${{ matrix.ext }} || { echo "FAIL: $e missing from archive"; ls -la; exit 1; }
           done
           # Kimi K3 needs tokenizer.json synthesized from tiktoken.model; without this
-          # script in the archive the engine ships but cannot be driven by coli chat.
+          # script in the archive the engine ships but cannot be driven by lmatomic chat.
           test -f tools/k3_tokenizer.py || { echo "FAIL: k3_tokenizer.py missing from archive"; exit 1; }
-          # E tutto cio' che coli raggiunge, import e sottoprocessi. Il controllo
+          # E tutto cio' che lmatomic raggiunge, import e sottoprocessi. Il controllo
           # qui sopra guarda l'unico file che il passo di copia aveva appena
           # scritto: conferma se stesso, ed e' il motivo per cui la v1.10.0 e'
           # uscita verde con quattro comandi rotti dentro.
           python3 ../c/tools/pack_python.py ../c . --check \
-            || { echo "FAIL: the archive is missing Python that coli needs"; exit 1; }
+            || { echo "FAIL: the archive is missing Python that lmatomic needs"; exit 1; }
           # encoding='utf-8' explicitly: on Windows open() defaults to the ANSI code
           # page (cp1252), which cannot decode this UTF-8 file, so the v1.4.0 tag build
           # failed here with a UnicodeDecodeError while the file itself was perfectly
           # fine. The check was wrong, not the artifact.
           python3 -c "import ast; ast.parse(open('tools/k3_tokenizer.py', encoding='utf-8').read())" \
             || { echo "FAIL: packaged k3_tokenizer.py does not parse"; exit 1; }
-          COLI_EXPECT="$SIBLINGS" python3 - <<'PYCHK'
+          LMA_EXPECT="$SIBLINGS" python3 - <<'PYCHK'
           import importlib.machinery, importlib.util, json, os, sys, tempfile
           from family_registry import all_families
           exe = ".exe" if os.name == "nt" else ""
-          expect = os.environ["COLI_EXPECT"].split()
+          expect = os.environ["LMA_EXPECT"].split()
 
           # 1. the files are here
           missing = [n for n in expect if not os.path.exists(os.path.join(".", n + exe))]
           if missing:
               sys.exit("FAIL: engines missing from the archive: " + ", ".join(missing))
 
-          # 2. and coli can actually SELECT them.
+          # 2. and lmatomic can actually SELECT them.
           #
-          # This check used to stop at step 1 and was named "coli would not resolve
+          # This check used to stop at step 1 and was named "lmatomic would not resolve
           # these next to itself", which reads as a dispatch check and is not one.
-          # It passed for the whole of v1.5.0 while `coli run --model <olmoe>` sent
+          # It passed for the whole of v1.5.0 while `lmatomic run --model <olmoe>` sent
           # the request to the GLM engine, because model_arch() had no olmoe branch
           # (#879). The binary was in the archive and unusable.
           #
           # Presence is not dispatch. Load the packaged launcher, hand it a
           # config.json per family, and assert where the request would go.
-          loader = importlib.machinery.SourceFileLoader("coli_pkg", "coli")
+          loader = importlib.machinery.SourceFileLoader("lma_pkg", "lmatomic")
           spec = importlib.util.spec_from_loader(loader.name, loader)
           cli = importlib.util.module_from_spec(spec)
           loader.exec_module(cli)
@@ -250,17 +250,17 @@ jobs:
                           family.id, expected_file))
           if bad:
               sys.exit("FAIL: packaged launcher misroutes:\n  " + "\n  ".join(bad))
-          print("OK: every engine is packaged AND coli dispatches to it:", " ".join(expect))
+          print("OK: every engine is packaged AND lmatomic dispatches to it:", " ".join(expect))
           PYCHK
-          out=$(python3 coli info 2>&1 || true)
+          out=$(python3 lmatomic info 2>&1 || true)
           echo "$out"
           case "$out" in
-            *"engine is not built"*) echo "FAIL: coli cannot find the packaged engine"; exit 1 ;;
+            *"engine is not built"*) echo "FAIL: lmatomic cannot find the packaged engine"; exit 1 ;;
           esac
-          # The program name is plain ASCII "colibri" -- exactly what the banner prints.
-          # (The v1.1.0 tag build failed here when the banner still said "colibrì".)
-          echo "$out" | grep -q "colibri" || { echo "FAIL: coli did not run"; exit 1; }
-          echo "OK: coli locates the engine in the published archive"
+          # The program name is plain ASCII "lmatomic" -- exactly what the banner prints.
+          # (The v1.1.0 tag build failed here when the banner still said "LM Atomic".)
+          echo "$out" | grep -q "lmatomic" || { echo "FAIL: lmatomic did not run"; exit 1; }
+          echo "OK: lmatomic locates the engine in the published archive"
           # Same reasoning for the dashboard: assert the files are there AND that the
           # server resolves them, since a right-looking archive with an unresolvable
           # path is exactly the failure this whole step exists to catch.
@@ -268,15 +268,15 @@ jobs:
           test -f web/dist/experts.json || { echo "FAIL: expert atlas missing from archive"; exit 1; }
           python3 -c "import sys; sys.path.insert(0, '.'); from openai_server import APIHandler as A; d = A.WEB_DIST; assert (d / 'index.html').is_file(), 'server resolved WEB_DIST to %s, which has no index.html' % d; assert (d / 'experts.json').is_file(), 'no expert atlas under %s' % d; print('OK: the packaged server resolves the dashboard at', d)"
 
-      # Only the archives -- never the loose files. `dist/colibri-*.*` used to work by accident
+      # Only the archives -- never the loose files. `dist/lmatomic-*.*` used to work by accident
       # (the engine was versioned, so it did not match); now that the engine is plainly named,
       # be explicit about what gets published.
       - uses: actions/upload-artifact@v4
         with:
-          name: colibri-${{ matrix.name }}
+          name: lmatomic-${{ matrix.name }}
           path: |
-            dist/colibri-*.zip
-            dist/colibri-*.tar.gz
+            dist/lmatomic-*.zip
+            dist/lmatomic-*.tar.gz
 
   release:
     needs: build
@@ -297,7 +297,7 @@ jobs:
           # SHA256SUMS: lets anyone verify a download against what CI built. Named in
           # the response to #527 (Defender ML false positive) — the checksums are the
           # public, permanent form of the release-vs-artifact comparison done there.
-          (cd artifacts && sha256sum colibri-*) > artifacts/SHA256SUMS.txt
+          (cd artifacts && sha256sum lmatomic-*) > artifacts/SHA256SUMS.txt
           cat artifacts/SHA256SUMS.txt
           # Extract the latest version section from CHANGELOG
           NOTES=$(awk "/^## \\[${TAG#v}\\]/{found=1;next} /^## \\[/{if(found)exit} found{print}" CHANGELOG.md)
@@ -323,6 +323,6 @@ jobs:
             gh release upload "$TAG" artifacts/* --clobber
           else
             gh release create "$TAG" artifacts/* \
-              --title "colibri ${TAG}" \
+              --title "lmatomic ${TAG}" \
               --notes "$NOTES"
           fi

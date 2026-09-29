@@ -16,7 +16,7 @@ class Glm53RoutingTelemetryTest(unittest.TestCase):
     def test_rows_and_usage_lifecycle(self):
         self.assertIn('for (int i = 0; i < c->first_dense; i++) rt_drop_row(i);', GLM)
         self.assertIn('rt_drop_row(c->n_layers);', GLM)
-        self.assertIn('getenv("COLI_USAGE")', GLM)
+        self.assertIn('getenv("LMA_USAGE")', GLM)
         self.assertIn('rt_load(g_glm53_usage)', GLM)
         self.assertIn('rt_save(g_glm53_usage, 0)', GLM)
 

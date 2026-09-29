@@ -2,7 +2,7 @@
 
 A sibling engine for [Kimi K3](https://huggingface.co/moonshotai/Kimi-K3)
 (2.8T parameters, 104B active, 93 layers), following the one-engine-per-family
-pattern (`colibri.c` = GLM-5.2, `olmoe.c`, `inkling.c`). It shares `st.h`,
+pattern (`glm52.c` = GLM-5.2, `olmoe.c`, `inkling.c`). It shares `st.h`,
 `json.h`, `tok.h`, `quant.h` and touches nothing in the GLM engine.
 
 ```
@@ -186,7 +186,7 @@ Judge quantization choices on real-text logits, not synthetic-vector norms.
 | `K3_LAYERS` | all | truncate the stack (validation) |
 | `K3_TRACE` | — | dump f32 hidden state after every layer (validation) |
 | `K3_X0` | — | inject input rows, bypass embedding (validation) |
-| `COLI_TEMP` | 0 | 0 = greedy, else softmax temperature |
+| `LMA_TEMP` | 0 | 0 = greedy, else softmax temperature |
 
 ## Chunked prefill
 
@@ -210,9 +210,9 @@ teacher-forced logit streams at C=32 vs C=1 match exactly). Measured prefill:
 ./kimi_k3 <model_dir> --chat "your question" [--system "..."] --ngen 300
 
 # first-class multi-turn interfaces (config.json auto-detects Kimi K3)
-COLI_MODEL=<model_dir> ./coli chat
-COLI_MODEL=<model_dir> ./coli serve
-COLI_MODEL=<model_dir> ./coli web
+LMA_MODEL=<model_dir> ./lmatomic chat
+LMA_MODEL=<model_dir> ./lmatomic serve
+LMA_MODEL=<model_dir> ./lmatomic web
 ```
 
 K3's chat format ("XTML", from the checkpoint's own `encoding_k3.py`) uses
@@ -235,9 +235,9 @@ produced **identical numbers on all 77 test conversations** — multi-turn
 histories with system, user and assistant messages, including non-ASCII text.
 So the engine is not subtly mangling anything before the model sees it.
 
-`coli chat` starts a private local server for Kimi and keeps the 2.8T model
-loaded for the whole terminal session. `coli serve` exposes streaming and
-non-streaming `/v1/chat/completions`; `coli web` uses that same API. Reasoning
+`lmatomic chat` starts a private local server for Kimi and keeps the 2.8T model
+loaded for the whole terminal session. `lmatomic serve` exposes streaming and
+non-streaming `/v1/chat/completions`; `lmatomic web` uses that same API. Reasoning
 is returned as `reasoning_content`, response text as `content`, and
 `<|end_of_msg|>` remains the model-owned stop token. `STOP` and `CANCEL` are
 honoured between generated tokens. Long prefill also polls `CANCEL` between

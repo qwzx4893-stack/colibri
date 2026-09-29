@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# colibrì — installazione su una macchina nuova (Linux x86-64, macOS, Windows/MinGW).
+# LM Atomic — installazione su una macchina nuova (Linux x86-64, macOS, Windows/MinGW).
 # Compila il motore e fa un self-test. Il MODELLO (~372 GB int4) va copiato a parte
-# o rigenerato con: coli convert --model <dir-su-ext4/NVMe>
+# o rigenerato con: lmatomic convert --model <dir-su-ext4/NVMe>
 set -e
 cd "$(dirname "$0")"
-echo "🐦 colibrì — setup"
+echo "🐦 LM Atomic — setup"
 
 UNAME_S=$(uname -s)
-OMP_PROBE=".colibri-omp-probe-$$"
+OMP_PROBE=".lmatomic-omp-probe-$$"
 cleanup_omp_probe() { rm -f "$OMP_PROBE" "$OMP_PROBE.exe"; }
 trap cleanup_omp_probe EXIT
 
@@ -37,11 +37,11 @@ trap - EXIT
 
 # 2) build: nativa (veloce, per QUESTA macchina). Per un binario da distribuire: make portable
 echo "  building (ARCH=${ARCH:-native})…"
-make -s colibri ARCH="${ARCH:-native}"
+make -s lmatomic ARCH="${ARCH:-native}"
 
 # 3) self-test sull'oracolo tiny, se presente
 if [ -d glm_tiny ] && [ -f ref_glm.json ]; then
-    r=$(SNAP=./glm_tiny TF=1 ./colibri 64 16 16 2>/dev/null | grep -oE "[0-9]+/[0-9]+ positions" || true)
+    r=$(SNAP=./glm_tiny TF=1 ./glm52 64 16 16 2>/dev/null | grep -oE "[0-9]+/[0-9]+ positions" || true)
     echo "  engine self-test: ${r:-?}  (expected ~30-32/32; FP near-ties are toolchain-dependent)"
 fi
 
@@ -61,9 +61,9 @@ esac
 echo "  RAM: ${ram} GB   (more RAM = more cached experts = faster inference)"
 echo
 echo "ready. Next steps:"
-echo "  ./coli build           # already done"
-echo "  ./coli convert --model /path/on/NVMe/glm52_i4     # generate the int4 model (hours)"
-echo "  ./coli info  --model /path/on/NVMe/glm52_i4"
-echo "  ./coli chat  --model /path/on/NVMe/glm52_i4 --ram <GB>"
+echo "  ./lmatomic build           # already done"
+echo "  ./lmatomic convert --model /path/on/NVMe/glm52_i4     # generate the int4 model (hours)"
+echo "  ./lmatomic info  --model /path/on/NVMe/glm52_i4"
+echo "  ./lmatomic chat  --model /path/on/NVMe/glm52_i4 --ram <GB>"
 echo
 echo "IMPORTANT: keep the model on fast storage (NVMe/ext4), never on /mnt/c or a network mount."

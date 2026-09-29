@@ -56,13 +56,13 @@ export default function App() {
   const servedByEngine = typeof window !== "undefined" && window.location.port !== "5173" && window.location.protocol.startsWith("http")
   const defaultBase = servedByEngine ? `${window.location.origin}/v1` : "http://127.0.0.1:8000/v1"
   const [baseUrl, setBaseUrl] = useState(() => {
-    const saved = stored(localStorage, "colibri.baseUrl", defaultBase)
+    const saved = stored(localStorage, "lmatomic.baseUrl", defaultBase)
     if (servedByEngine && saved === "http://127.0.0.1:8000/v1" && defaultBase !== saved) return defaultBase
     return saved
   })
   const [apiKey, setApiKey] = useState("")
   const [models, setModels] = useState<string[]>([])
-  const [model, setModel] = useState(() => stored(localStorage, "colibri.model", "glm-5.2-colibri"))
+  const [model, setModel] = useState(() => stored(localStorage, "lmatomic.model", "glm-5.2-lmatomic"))
   const [temperature, setTemperature] = useState(0.7)
   const [maxTokens, setMaxTokens] = useState(4096)
   const [thinking, setThinking] = useState(false)
@@ -85,14 +85,14 @@ export default function App() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [archives, setArchives] = useState<Array<{ id: string; slot: number; messages: ChatMessage[] }>>([])
-  const [theme, setTheme] = useState(() => stored(localStorage, "colibri.theme", "dark"))
+  const [theme, setTheme] = useState(() => stored(localStorage, "lmatomic.theme", "dark"))
   const [copied, setCopied] = useState<string | null>(null)
   const draftRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   /* Pictures wait here until the turn is sent, then travel on the message. */
   const [pending, setPending] = useState<string[]>([])
   const historyDialog = useRef<HTMLDialogElement>(null)
-  useEffect(() => { document.documentElement.dataset.theme = theme; try { localStorage.setItem("colibri.theme", theme) } catch {} }, [theme])
+  useEffect(() => { document.documentElement.dataset.theme = theme; try { localStorage.setItem("lmatomic.theme", theme) } catch {} }, [theme])
   useEffect(() => { if (historyOpen) historyDialog.current?.showModal(); else historyDialog.current?.close() }, [historyOpen])
   const [error, setError] = useState("")
   const autoConnected = useRef(false)
@@ -307,7 +307,7 @@ export default function App() {
   }
 
   /* Continue the trailing assistant turn instead of opening a new one. Offered
-     only when /health reports continue_assistant: with COLI_CONTINUE_ASSISTANT=0,
+     only when /health reports continue_assistant: with LMA_CONTINUE_ASSISTANT=0,
      or on a server that predates the field, the turn would be answered fresh. */
   const continueTurn = async () => {
     if (loading) return
@@ -326,7 +326,7 @@ export default function App() {
   }
   const exportChat = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify({ model, messages }, null, 2)], { type: "application/json" }))
-    const anchor = document.createElement("a"); anchor.href = url; anchor.download = "colibri-chat.json"; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = "lmatomic-chat.json"; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
   const copyMessage = async (item: ChatMessage) => {
     try { await navigator.clipboard.writeText(item.content); setCopied(item.id) } catch { setError(t("ui.copyError")) }
@@ -409,7 +409,7 @@ export default function App() {
 
   return <div className="app-shell redesigned">
     <aside className="rail" aria-label={t("ui.sidebar")}>
-      <button className="rail-brand" title="colibrì" onClick={() => setView("chat")}><Brand /></button>
+      <button className="rail-brand" title="LM Atomic" onClick={() => setView("chat")}><Brand /></button>
       <button className="rail-button" aria-label={t("ui.newChat")} title={t("ui.newChat")} onClick={newChat} disabled={loading}><SquarePen /></button>
       <button className="rail-button" aria-label={t("ui.search")} title={t("ui.search")} onClick={() => { setQuery(""); setHistoryOpen(true) }}><Search /></button>
       <button className="rail-button" aria-label={t("ui.history")} title={t("ui.history")} onClick={() => { setQuery(""); setHistoryOpen(true) }}><History /></button>
@@ -427,7 +427,7 @@ export default function App() {
         </div>
       </header>}
       {view === "settings" ? <section className="settings-page">
-        <header className="page-heading"><span>COLIBRI</span><h1>{t("ui.settings")}</h1><p>{t("ui.settingsIntro")}</p></header>
+        <header className="page-heading"><span>LMATOMIC</span><h1>{t("ui.settings")}</h1><p>{t("ui.settingsIntro")}</p></header>
         <nav className="settings-tabs" aria-label={t("ui.settings")}>
           {["general", "model", "connection", "system"].map(id => <button key={id} aria-current={settingsPage === id ? "page" : undefined} onClick={() => setSettingsPage(id)}>{t(`ui.${id}`)}</button>)}
         </nav>
@@ -439,11 +439,11 @@ export default function App() {
           {settingsPage === "system" && <section className="settings-card">{runtimeControls}{metrics}</section>}
         </div>
       </section> : view === "brain" ? <BrainWorkspace baseUrl={baseUrl} apiKey={apiKey} connected={connected} />
-      : view === "profiling" ? <section className="profiling-workspace"><header className="page-heading"><span>COLIBRI / ENGINE</span><h1>Profiling</h1></header>{metrics}<Profiling baseUrl={baseUrl} apiKey={apiKey} connected={connected} /></section>
+      : view === "profiling" ? <section className="profiling-workspace"><header className="page-heading"><span>LMATOMIC / ENGINE</span><h1>Profiling</h1></header>{metrics}<Profiling baseUrl={baseUrl} apiKey={apiKey} connected={connected} /></section>
       : <section className={cn("chat-view", empty && "empty")} hidden={view === "brio"}>
         {empty ? <div className="welcome-brand"><Brand word /></div> : <div className="conversation" role="log" aria-label={t("nav.chat")}>
           <div className="message-list">{messages.map((item, index) => <article key={item.id} className={cn("message", item.role)}>
-            {item.role !== "user" && <div className="assistant-brand"><Brand /><span>colibrì</span></div>}
+            {item.role !== "user" && <div className="assistant-brand"><Brand /><span>LM Atomic</span></div>}
             {item.images?.length ? <div className="message-images">{item.images.map((url, at) =>
               <img key={at} src={url} alt={t("ui.attachedImage", { n: at + 1 })} />)}</div> : null}
             <div className="message-body">{item.reasoning
@@ -483,7 +483,7 @@ export default function App() {
         </div>
       </section>}
       <section className="brio-workspace" hidden={view !== "brio"}>
-        <header className="page-heading"><span>COLIBRI / BRIO</span><h1>{t("nav.brio")}</h1></header>
+        <header className="page-heading"><span>LMATOMIC / BRIO</span><h1>{t("nav.brio")}</h1></header>
         <Brio baseUrl={baseUrl} apiKey={apiKey} model={model} connected={connected} />
       </section>
     </main>

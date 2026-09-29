@@ -2,7 +2,7 @@
 #define _GNU_SOURCE
 #define QWEN38_NO_MAIN
 #define QWEN38_TEST_TOKENIZER
-#define COLI_EDGE_ADAPTER
+#define LMA_EDGE_ADAPTER
 #include "../qwen38.c"
 
 #define CHECK(x) do { if(!(x)){ \

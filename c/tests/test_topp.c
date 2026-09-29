@@ -23,8 +23,8 @@
  *
  * No scratch files: the test runs entirely in memory (no mkdtemp), so it builds clean on
  * the Windows MinGW CI job without the unmerged compat shim (#352). */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <math.h>

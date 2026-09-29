@@ -1,13 +1,13 @@
 """The dashboard's Brain and Profile tabs read four lines from the engine's
 stdout: EMAP, HITS, PROF, TIERS. On GLM-5.3-Flash they were empty, not because
 anything needed activating but because glm53.c emitted none of them. This
-test drives the engine the way the dashboard does -- through `coli serve`
+test drives the engine the way the dashboard does -- through `lmatomic serve`
 and the /experts and /profile endpoints -- and asserts the data arrives in
 the shape the server parses, so a family that stops emitting a line fails
 here rather than as a blank tab on a user's screen.
 
 It needs a GLM-5.3-Flash container and a built `glm53`. Set
-COLI_GLM53_FIXTURE to the container directory; without it the test is
+LMA_GLM53_FIXTURE to the container directory; without it the test is
 skipped, with the reason on the record.
 """
 import json
@@ -21,7 +21,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-FIXTURE = os.environ.get("COLI_GLM53_FIXTURE")
+FIXTURE = os.environ.get("LMA_GLM53_FIXTURE")
 
 
 def free_port():
@@ -36,7 +36,7 @@ def get_json(url, timeout=10):
 
 
 @unittest.skipUnless(FIXTURE and Path(FIXTURE, "config.json").is_file(),
-                     "COLI_GLM53_FIXTURE not set to a GLM-5.3-Flash container")
+                     "LMA_GLM53_FIXTURE not set to a GLM-5.3-Flash container")
 @unittest.skipUnless((HERE / "glm53").exists() or (HERE / "glm53.exe").exists(),
                      "glm53 engine is not built")
 class Glm53DashboardTest(unittest.TestCase):
@@ -44,7 +44,7 @@ class Glm53DashboardTest(unittest.TestCase):
     def setUpClass(cls):
         cls.port = free_port()
         cls.proc = subprocess.Popen(
-            [sys.executable, str(HERE / "coli"), "serve", "--model", FIXTURE,
+            [sys.executable, str(HERE / "lmatomic"), "serve", "--model", FIXTURE,
              "--port", str(cls.port), "--cap", "2"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         deadline = time.time() + 180
@@ -54,10 +54,10 @@ class Glm53DashboardTest(unittest.TestCase):
                 break
             except Exception:
                 if cls.proc.poll() is not None:
-                    raise RuntimeError("coli serve exited: " + cls.proc.stdout.read()[-2000:])
+                    raise RuntimeError("lmatomic serve exited: " + cls.proc.stdout.read()[-2000:])
                 time.sleep(1)
         else:
-            raise RuntimeError("coli serve did not come up in 180 s")
+            raise RuntimeError("lmatomic serve did not come up in 180 s")
         model = get_json(f"http://127.0.0.1:{cls.port}/v1/models")["data"][0]["id"]
         body = json.dumps({"model": model, "prompt": "abcabcabc", "max_tokens": 3}).encode()
         req = urllib.request.Request(f"http://127.0.0.1:{cls.port}/v1/completions", data=body,

@@ -1,4 +1,4 @@
-// Vulkan compute backend for colibri's quantized matmul, targeting the
+// Vulkan compute backend for lmatomic's quantized matmul, targeting the
 // Strix Halo iGPU (RADV gfx1151). Mirrors backend_cuda.c's contract but
 // exploits unified memory: weight "uploads" write into HOST_VISIBLE|
 // DEVICE_LOCAL memory — the same physical RAM the iGPU reads — so there is
@@ -18,12 +18,12 @@ static double vk_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &
 #define VKCHECK(x, what) do { VkResult _r = (x); if (_r != VK_SUCCESS) { \
     fprintf(stderr, "[VK] %s failed: %d\n", what, _r); return 0; } } while (0)
 
-struct ColiVkTensor {
+struct LmaVkTensor {
     VkBuffer wbuf, sbuf;
     VkDeviceMemory wmem, smem;
     size_t wbytes;
     int fmt, I, O, rowWords, gs;
-    int dev;               /* 0 = primary device, 1 = the COLI_VK_DEV2 expert-tier device */
+    int dev;               /* 0 = primary device, 1 = the LMA_VK_DEV2 expert-tier device */
 };
 
 typedef struct {
@@ -92,7 +92,7 @@ static struct {
      * expert-called-repeatedly pattern). The synchronous fence wait each call means no
      * submission is ever in flight, so rebinding/re-recording only when something
      * actually changed is safe. */
-    ColiVkTensor *bound_tensor; int bound_S, bound_I, bound_O, cmd_ready;
+    LmaVkTensor *bound_tensor; int bound_S, bound_I, bound_O, cmd_ready;
     VkBuffer bound_xbuf, bound_ybuf;
     size_t used_bytes, tensor_count;
     /* VRAM pressure-proofing: with VK_EXT_memory_priority the attention working set
@@ -106,11 +106,11 @@ static struct {
 
 struct PC { int fmt, S, I, O, rowWords, gs; };
 /* gate_up shader only: extra SwiGLU clamp. limit<=0 keeps the unclamped path
- * (GLM-5.2 / colibri.c). Must ride per dispatch: the same pipeline serves
+ * (GLM-5.2 / glm52.c). Must ride per dispatch: the same pipeline serves
  * callers whose correct value is "no clamp". */
 struct PCGU { int fmt, S, I, O, rowWords, gs; float limit; int pad; };
 static float g_swiglu_limit = 0.f;
-void coli_vk_set_swiglu_limit(float limit) { g_swiglu_limit = limit > 0.f ? limit : 0.f; }
+void lma_vk_set_swiglu_limit(float limit) { g_swiglu_limit = limit > 0.f ? limit : 0.f; }
 static struct PCGU pcgu(int fmt, int S, int I, int O, int rowWords, int gs) {
     return (struct PCGU){fmt, S, I, O, rowWords, gs, g_swiglu_limit, 0};
 }
@@ -169,11 +169,11 @@ static int alloc_hostvis_mt(size_t bytes, VkBuffer *buf, VkDeviceMemory *mem, vo
 /* Priority class of subsequent allocations (VK_EXT_memory_priority; no-op without it).
  * Scratches/KV force 1.0 internally; weight uploads take whatever is current — the
  * engine sets 0.4 around the bulk expert-tier fill, dense stays at the 0.75 default. */
-void coli_vk_alloc_priority(float p) { G.prio = p < 0 ? 0 : p > 1 ? 1 : p; }
+void lma_vk_alloc_priority(float p) { G.prio = p < 0 ? 0 : p > 1 ? 1 : p; }
 
 /* Device-local heap usage/budget in GB (VK_EXT_memory_budget). Returns 0 when the
  * extension is absent — callers then keep their count-based caps unchanged. */
-int coli_vk_mem_budget(double *used_gb, double *budget_gb) {
+int lma_vk_mem_budget(double *used_gb, double *budget_gb) {
 #ifdef VK_EXT_memory_budget
     if (!G.has_budget || !G.phys) return 0;
     VkPhysicalDeviceMemoryBudgetPropertiesEXT bud = {
@@ -291,7 +291,7 @@ static void derive_dir_file(const char *spv, const char *fname, char *out, size_
     else snprintf(out, n, "%s", fname);
 }
 
-int coli_vk_init(const char *spv_path) {
+int lma_vk_init(const char *spv_path) {
     if (G.ready) return 1;
     VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .apiVersion = VK_API_VERSION_1_2};
@@ -414,7 +414,7 @@ int coli_vk_init(const char *spv_path) {
 
     /* Optional MLA absorb attention pipeline (same directory as the main shader). */
     /* Optional rmsnorm pipeline: enables the pair->norm->q_b single-submit chain
-     * (coli_vk_attn_qprep); absent -> callers keep the 3-submit path. */
+     * (lma_vk_attn_qprep); absent -> callers keep the 3-submit path. */
     char nrm_path[512]; derive_dir_file(spv_path, "rmsnorm.spv", nrm_path, sizeof(nrm_path));
     G.shader_nrm = load_spv(G.dev, nrm_path);
     if (G.shader_nrm) {
@@ -454,9 +454,9 @@ int coli_vk_init(const char *spv_path) {
     return 1;
 }
 
-int coli_vk_available(void) { return G.ready; }
+int lma_vk_available(void) { return G.ready; }
 
-void coli_vk_mem_info(size_t *used, size_t *count) {
+void lma_vk_mem_info(size_t *used, size_t *count) {
     if (used) *used = G.used_bytes;
     if (count) *count = G.tensor_count;
 }
@@ -469,7 +469,7 @@ void coli_vk_mem_info(size_t *used, size_t *count) {
  * probe). Packing tier+dense uploads into 256 MB arenas keeps the referenced-BO count
  * in the dozens. Arena slices are never reclaimed per-tensor (registry/dense uploads
  * live for the process; the rare fill-failure free leaks its slice, bounded) — a
- * tensor's mem handle stays VK_NULL_HANDLE, which coli_vk_tensor_free's vkFreeMemory
+ * tensor's mem handle stays VK_NULL_HANDLE, which lma_vk_tensor_free's vkFreeMemory
  * treats as the documented no-op. */
 typedef struct VkWArena { VkDeviceMemory mem; uint8_t *base; size_t cap, off; struct VkWArena *next; } VkWArena;
 static VkWArena *g_warena;
@@ -513,12 +513,12 @@ static int arena_suballoc(size_t bytes, VkBuffer *buf, void **ptr) {
     return 1;
 }
 
-static int upload_tensor(ColiVkTensor **out, const void *weights, const float *scales,
+static int upload_tensor(LmaVkTensor **out, const void *weights, const float *scales,
                          int fmt, int I, int O, int gs) {
     if (*out) return (*out)->fmt == fmt && (*out)->I == I && (*out)->O == O;
     if (fmt != 1 && fmt != 2 && fmt != 5 &&              /* fmt=4/7: word-aligned groups only */
         !((fmt == 4 || fmt == 7) && gs >= 8 && gs % 8 == 0)) return 0;
-    ColiVkTensor *t = calloc(1, sizeof(*t));
+    LmaVkTensor *t = calloc(1, sizeof(*t));
     if (!t) return 0;
     t->fmt = fmt; t->I = I; t->O = O; t->rowWords = rowwords(fmt, I); t->gs = (fmt == 4 || fmt == 7) ? gs : 0;
     size_t stride = (size_t)t->rowWords * 4;         // padded row bytes
@@ -546,8 +546,8 @@ static int upload_tensor(ColiVkTensor **out, const void *weights, const float *s
 }
 
 /* Upload a resident tensor without computing (for the expert tier: gate/up/down are
- * uploaded once, then driven by coli_vk_expert_group). Returns 0 on failure. */
-int coli_vk_tensor_ensure(ColiVkTensor **tensor, const void *weights, const float *scales, int fmt, int I, int O, int grp) {
+ * uploaded once, then driven by lma_vk_expert_group). Returns 0 on failure. */
+int lma_vk_tensor_ensure(LmaVkTensor **tensor, const void *weights, const float *scales, int fmt, int I, int O, int grp) {
     if (!G.ready) return 0;
     return upload_tensor(tensor, weights, scales, fmt, I, O, grp);
 }
@@ -557,11 +557,11 @@ int coli_vk_tensor_ensure(ColiVkTensor **tensor, const void *weights, const floa
  * token, so the wakes alone cost seconds per run. Spin on vkGetFenceStatus for
  * a short budget first (the common decode dispatch completes in 0.5-2 ms),
  * then fall back to the blocking wait. The spinning thread is stalled on the
- * GPU result anyway. COLI_VK_SPIN_US=0 restores the pure blocking wait. */
+ * GPU result anyway. LMA_VK_SPIN_US=0 restores the pure blocking wait. */
 static long g_vk_spin_us = -1;
 static VkResult vk_fence_wait(VkDevice dev, VkFence f) {
     if (g_vk_spin_us < 0) {
-        const char *e = getenv("COLI_VK_SPIN_US");
+        const char *e = getenv("LMA_VK_SPIN_US");
         g_vk_spin_us = e ? atol(e) : 300;
         if (g_vk_spin_us < 0) g_vk_spin_us = 0;
     }
@@ -584,11 +584,11 @@ static void vkprof_tick(void) {
         fprintf(stderr, "[VK_PROF sub] n=%ld | submit %.0f | wait %.0f ms\n", g_vsub_n, g_vsub_ms, g_vwait_ms);
 }
 
-int coli_vk_matmul(ColiVkTensor **tensor, float *y, const float *x,
+int lma_vk_matmul(LmaVkTensor **tensor, float *y, const float *x,
                    const void *weights, const float *scales,
                    int fmt, int S, int I, int O, int gs) {
     if (!G.ready || S < 1 || !upload_tensor(tensor, weights, scales, fmt, I, O, gs)) return 0;
-    ColiVkTensor *t = *tensor;
+    LmaVkTensor *t = *tensor;
     /* VK_PROF=1: phase split of the dense per-call cost, printed every 8192 calls —
      * separates our code (memcpy/desc/record) from the driver (submit) and the GPU
      * (fence wait) to localize the tier-size-linear tax. */
@@ -667,12 +667,12 @@ int coli_vk_matmul(ColiVkTensor **tensor, float *y, const float *x,
 /* Fused first half of the expert MLP: hidden = silu(gate(x)) * up(x), computed in ONE
  * dispatch that reads x once for both projections. gate/up are resident (uploaded on
  * first call). D = input (hidden) dim, I = moe_inter. Returns 0 -> caller falls back. */
-int coli_vk_gate_up(ColiVkTensor **gate, ColiVkTensor **up, float *hidden, const float *x,
+int lma_vk_gate_up(LmaVkTensor **gate, LmaVkTensor **up, float *hidden, const float *x,
                     const void *gw, const float *gs, const void *uw, const float *us,
                     int fmt, int S, int D, int I, int grp) {
     if (!G.ready || !G.shader_gu || S < 1 || D > 6144) return 0;   /* shader stages x in xsh[6144] */
     if (!upload_tensor(gate, gw, gs, fmt, D, I, grp) || !upload_tensor(up, uw, us, fmt, D, I, grp)) return 0;
-    ColiVkTensor *tg = *gate, *tu = *up;
+    LmaVkTensor *tg = *gate, *tu = *up;
     size_t xb = (size_t)S * D * sizeof(float), hb = (size_t)S * I * sizeof(float);
     if (!scratch_reserve(&G.x, xb) || !scratch_reserve_mt(&G.h, hb, G.memtype_cached)) return 0;  /* hidden read back */
     memcpy(G.x.ptr, x, xb);
@@ -724,15 +724,15 @@ static void wr_desc(VkDescriptorSet set, int n, const VkDescriptorBufferInfo *bi
 /* Full batched expert MLP for `count` experts, hidden staying on-device:
  * for each c, hidden_c = silu(gate_c(x_c))*up_c(x_c) (fused), then y_c = down_c(hidden_c).
  * x/y are packed [sum(rows)*D]; experts are resident VkTensors (gate/up: D->I, down: I->D).
- * Mirrors coli_cuda_expert_group. Split into prepare+submit / take so the caller can
+ * Mirrors lma_cuda_expert_group. Split into prepare+submit / take so the caller can
  * overlap the GPU batch with its own CPU share (issue -> CPU rows -> take); the group
  * runs on its OWN command buffer + fence, so in-flight work never collides with the
  * main pipeline (dense matmuls, absorb attention). Returns 0 -> caller falls back. */
-static int eg_prepare_submit(ColiVkTensor *const *gates, ColiVkTensor *const *ups,
-                             ColiVkTensor *const *downs, const int *rows, int count,
+static int eg_prepare_submit(LmaVkTensor *const *gates, LmaVkTensor *const *ups,
+                             LmaVkTensor *const *downs, const int *rows, int count,
                              const float *x) {
     if (!G.ready || !G.shader_gu || count < 1 || count > 64) return 0;
-    ColiVkTensor *g0 = gates[0]; if (!g0) return 0;
+    LmaVkTensor *g0 = gates[0]; if (!g0) return 0;
     int D = g0->I, I = g0->O, fmt = g0->fmt, total = 0, off[64];
     if (D > 6144) return 0;   /* gate_up shader stages x in xsh[6144] */
     int dfmt = downs[0]->fmt;   /* down may be a different quant than gate/up (per-projection
@@ -813,15 +813,15 @@ static int eg_prepare_submit(ColiVkTensor *const *gates, ColiVkTensor *const *up
 
 /* Issue a group asynchronously: submit and return WITHOUT waiting, so the caller
  * computes its CPU share concurrently. Exactly one group may be in flight. */
-int coli_vk_expert_group_issue(ColiVkTensor *const *gates, ColiVkTensor *const *ups,
-                               ColiVkTensor *const *downs, const int *rows, int count,
+int lma_vk_expert_group_issue(LmaVkTensor *const *gates, LmaVkTensor *const *ups,
+                               LmaVkTensor *const *downs, const int *rows, int count,
                                const float *x) {
     if (G.eg_inflight) return 0;
     return eg_prepare_submit(gates, ups, downs, rows, count, x);
 }
 
 /* Join the in-flight group and read back the packed outputs. */
-int coli_vk_expert_group_take(float *y) {
+int lma_vk_expert_group_take(float *y) {
     if (!G.eg_inflight) return 0;
     G.eg_inflight = 0;
     if (vk_fence_wait(G.dev, G.eg_fence) != VK_SUCCESS) {
@@ -839,15 +839,15 @@ int coli_vk_expert_group_take(float *y) {
 }
 
 /* Synchronous form (shared expert, harness): issue + take in one call. */
-int coli_vk_expert_group(ColiVkTensor *const *gates, ColiVkTensor *const *ups,
-                         ColiVkTensor *const *downs, const int *rows, int count,
+int lma_vk_expert_group(LmaVkTensor *const *gates, LmaVkTensor *const *ups,
+                         LmaVkTensor *const *downs, const int *rows, int count,
                          float *y, const float *x) {
     if (G.eg_inflight) return 0;
     if (!eg_prepare_submit(gates, ups, downs, rows, count, x)) return 0;
-    return coli_vk_expert_group_take(y);
+    return lma_vk_expert_group_take(y);
 }
 
-/* ==================== SECOND DEVICE: expert tier only (COLI_VK_DEV2) ============
+/* ==================== SECOND DEVICE: expert tier only (LMA_VK_DEV2) ============
  * A self-contained context for a second Vulkan GPU (e.g. an RX 580 beside the
  * RX 9070) that hosts ONLY resident tier experts and runs ONLY the async
  * expert-group path (fused gate_up -> down). Attention, dense, q-prep and the
@@ -926,12 +926,12 @@ static int arena_suballoc_d2(size_t bytes, VkBuffer *buf, void **ptr) {
     a->off = off + req.size;
     return 1;
 }
-static int upload_tensor_d2(ColiVkTensor **out, const void *weights, const float *scales,
+static int upload_tensor_d2(LmaVkTensor **out, const void *weights, const float *scales,
                             int fmt, int I, int O, int gs) {
     if (*out) return (*out)->fmt == fmt && (*out)->I == I && (*out)->O == O;
     if (fmt != 1 && fmt != 2 && fmt != 5 &&
         !(fmt == 4 && gs >= 8 && gs % 8 == 0)) return 0;
-    ColiVkTensor *t = calloc(1, sizeof(*t));
+    LmaVkTensor *t = calloc(1, sizeof(*t));
     if (!t) return 0;
     t->fmt = fmt; t->I = I; t->O = O; t->rowWords = rowwords(fmt, I); t->gs = (fmt == 4 || fmt == 7) ? gs : 0;
     t->dev = 1;
@@ -959,8 +959,8 @@ static int upload_tensor_d2(ColiVkTensor **out, const void *weights, const float
 
 /* Bring up the second device. devidx: -1 = auto (best-ranked real GPU that is NOT
  * device 0; fails if none), >=0 = that enumeration index (same-physical-device
- * allowed with a warning — the pre-hardware test mode). Requires coli_vk_init. */
-int coli_vk_init_dev2(const char *spv_path, int devidx) {
+ * allowed with a warning — the pre-hardware test mode). Requires lma_vk_init. */
+int lma_vk_init_dev2(const char *spv_path, int devidx) {
     if (G2.ready) return 1;
     if (!G.ready) return 0;
     uint32_t nd = 0;
@@ -1042,10 +1042,10 @@ int coli_vk_init_dev2(const char *spv_path, int devidx) {
     return 1;
 }
 
-int coli_vk_dev2_available(void) { return G2.ready; }
-int coli_vk_tensor_dev(const ColiVkTensor *t) { return t ? t->dev : 0; }
+int lma_vk_dev2_available(void) { return G2.ready; }
+int lma_vk_tensor_dev(const LmaVkTensor *t) { return t ? t->dev : 0; }
 
-int coli_vk_mem_budget2(double *used_gb, double *budget_gb) {
+int lma_vk_mem_budget2(double *used_gb, double *budget_gb) {
 #ifdef VK_EXT_memory_budget
     if (!G2.has_budget || !G2.phys) return 0;
     VkPhysicalDeviceMemoryBudgetPropertiesEXT bud = {
@@ -1066,17 +1066,17 @@ int coli_vk_mem_budget2(double *used_gb, double *budget_gb) {
 #endif
 }
 
-int coli_vk_tensor_ensure2(ColiVkTensor **tensor, const void *weights, const float *scales, int fmt, int I, int O, int grp) {
+int lma_vk_tensor_ensure2(LmaVkTensor **tensor, const void *weights, const float *scales, int fmt, int I, int O, int grp) {
     if (!G2.ready) return 0;
     return upload_tensor_d2(tensor, weights, scales, fmt, I, O, grp);
 }
 
 /* dev2 mirror of eg_prepare_submit: identical structure on G2's pipelines/scratches. */
-static int eg2_prepare_submit(ColiVkTensor *const *gates, ColiVkTensor *const *ups,
-                              ColiVkTensor *const *downs, const int *rows, int count,
+static int eg2_prepare_submit(LmaVkTensor *const *gates, LmaVkTensor *const *ups,
+                              LmaVkTensor *const *downs, const int *rows, int count,
                               const float *x) {
     if (!G2.ready || count < 1 || count > 64) return 0;
-    ColiVkTensor *g0 = gates[0]; if (!g0) return 0;
+    LmaVkTensor *g0 = gates[0]; if (!g0) return 0;
     int D = g0->I, I = g0->O, fmt = g0->fmt, total = 0, off[64];
     if (D > 6144) return 0;
     int dfmt = downs[0]->fmt;
@@ -1154,13 +1154,13 @@ static int eg2_prepare_submit(ColiVkTensor *const *gates, ColiVkTensor *const *u
     return 1;
 }
 
-int coli_vk_expert_group_issue2(ColiVkTensor *const *gates, ColiVkTensor *const *ups,
-                                ColiVkTensor *const *downs, const int *rows, int count,
+int lma_vk_expert_group_issue2(LmaVkTensor *const *gates, LmaVkTensor *const *ups,
+                                LmaVkTensor *const *downs, const int *rows, int count,
                                 const float *x) {
     if (G2.inflight) return 0;
     return eg2_prepare_submit(gates, ups, downs, rows, count, x);
 }
-int coli_vk_expert_group_take2(float *y) {
+int lma_vk_expert_group_take2(float *y) {
     if (!G2.inflight) return 0;
     G2.inflight = 0;
     if (vk_fence_wait(G2.dev, G2.fence) != VK_SUCCESS) {
@@ -1170,12 +1170,12 @@ int coli_vk_expert_group_take2(float *y) {
     memcpy(y, G2.y.ptr, G2.pending_yb);
     return 1;
 }
-int coli_vk_expert_group2(ColiVkTensor *const *gates, ColiVkTensor *const *ups,
-                          ColiVkTensor *const *downs, const int *rows, int count,
+int lma_vk_expert_group2(LmaVkTensor *const *gates, LmaVkTensor *const *ups,
+                          LmaVkTensor *const *downs, const int *rows, int count,
                           float *y, const float *x) {
     if (G2.inflight) return 0;
     if (!eg2_prepare_submit(gates, ups, downs, rows, count, x)) return 0;
-    return coli_vk_expert_group_take2(y);
+    return lma_vk_expert_group_take2(y);
 }
 
 /* ---- MLA absorb attention core -------------------------------------------------
@@ -1184,10 +1184,10 @@ int coli_vk_expert_group2(ColiVkTensor *const *gates, ColiVkTensor *const *ups,
  * canonical; glm.c tracks a valid-watermark and re-appends after invalidation).
  * Rows are indexed by ABSOLUTE position, so kv_start windows just skip rows. */
 
-int coli_vk_kv_ensure(int layer, int max_rows, int K, int Rd) {
+int lma_vk_kv_ensure(int layer, int max_rows, int K, int Rd) {
     if (!G.ready || layer < 0 || layer >= VK_KV_LAYERS || max_rows < 1 || K < 1 || Rd < 1) return 0;
     VkKvLayer *v = &G.kv[layer];
-    if (v->bl) return v->rows >= max_rows && v->K == K && v->R == Rd;  /* resize goes through coli_vk_kv_reset */
+    if (v->bl) return v->rows >= max_rows && v->K == K && v->R == Rd;  /* resize goes through lma_vk_kv_reset */
     float p0 = G.prio; G.prio = 1.0f;            /* KV mirror rides every attention submit */
     int ok1 = alloc_hostvis((size_t)max_rows * K * 4, &v->bl, &v->ml, &v->pl);
     int ok = ok1 && alloc_hostvis((size_t)max_rows * Rd * 4, &v->br, &v->mr, &v->pr);
@@ -1202,7 +1202,7 @@ int coli_vk_kv_ensure(int layer, int max_rows, int K, int Rd) {
 
 /* Mirror one host cache row into the device copy (write-combined memory: the CPU
  * only ever WRITES these buffers, the GPU reads them). */
-int coli_vk_kv_row(int layer, int pos, const float *L, const float *R) {
+int lma_vk_kv_row(int layer, int pos, const float *L, const float *R) {
     if (layer < 0 || layer >= VK_KV_LAYERS) return 0;
     VkKvLayer *v = &G.kv[layer];
     if (!v->pl || pos < 0 || pos >= v->rows) return 0;
@@ -1212,11 +1212,11 @@ int coli_vk_kv_row(int layer, int pos, const float *L, const float *R) {
 }
 
 /* Drop all per-layer KV device caches (cache resize in kv_alloc). */
-void coli_vk_kv_reset(void) {
+void lma_vk_kv_reset(void) {
     for (int i = 0; i < VK_KV_LAYERS; i++) {
         VkKvLayer *v = &G.kv[i];
         if (!v->bl) continue;
-        if (G.ready) {   /* dead device: leak GPU handles like coli_vk_tensor_free */
+        if (G.ready) {   /* dead device: leak GPU handles like lma_vk_tensor_free */
             vkDestroyBuffer(G.dev, v->bl, NULL); vkFreeMemory(G.dev, v->ml, NULL);
             vkDestroyBuffer(G.dev, v->br, NULL); vkFreeMemory(G.dev, v->mr, NULL);
         }
@@ -1228,8 +1228,8 @@ void coli_vk_kv_reset(void) {
  * ctx[s,h,:] = softmax((Wnope_h^T q_nope).L_t + q_rope.R_t) weighted latent context
  * projected through the value rows of kv_b. kv_b ([H*(Q+V), K]) uploads on first
  * call and stays resident; L/R rows [st0, T) must already be mirrored via
- * coli_vk_kv_row. Returns 0 -> caller falls back to CPU. */
-int coli_vk_attention_absorb(ColiVkTensor **kvb, const void *w, const float *sc, int fmt, int grp,
+ * lma_vk_kv_row. Returns 0 -> caller falls back to CPU. */
+int lma_vk_attention_absorb(LmaVkTensor **kvb, const void *w, const float *sc, int fmt, int grp,
                              float *ctx, const float *q, int layer, int S, int H,
                              int Q, int R, int V, int K, int st0, int T, float scale) {
     if (!G.ready || !G.pipe_att || S < 1 || H < 1 || layer < 0 || layer >= VK_KV_LAYERS) return 0;
@@ -1237,7 +1237,7 @@ int coli_vk_attention_absorb(ColiVkTensor **kvb, const void *w, const float *sc,
     VkKvLayer *kv = &G.kv[layer];
     if (!kv->bl || kv->rows < T || kv->K != K || kv->R != R) return 0;
     if (!upload_tensor(kvb, w, sc, fmt, K, H * (Q + V), grp)) return 0;
-    ColiVkTensor *t = *kvb;
+    LmaVkTensor *t = *kvb;
     int cap = T - st0;
     size_t qb = (size_t)S * H * (Q + R) * 4, cb = (size_t)S * H * V * 4;
     size_t sb = (size_t)S * H * cap * 4;
@@ -1283,12 +1283,12 @@ int coli_vk_attention_absorb(ColiVkTensor **kvb, const void *w, const float *sc,
  * attention prologue): one x staging, two dispatches, one fence — replaces two
  * full submit+wait roundtrips. Outputs y1 [S,O1] and y2 [S,O2] read back from
  * cached memory. Returns 0 -> caller falls back to the single-matmul path. */
-int coli_vk_matmul_pair(ColiVkTensor **t1p, float *y1, const void *w1, const float *s1, int O1,
-                        ColiVkTensor **t2p, float *y2, const void *w2, const float *s2, int O2,
+int lma_vk_matmul_pair(LmaVkTensor **t1p, float *y1, const void *w1, const float *s1, int O1,
+                        LmaVkTensor **t2p, float *y2, const void *w2, const float *s2, int O2,
                         int fmt, const float *x, int S, int I, int grp) {
     if (!G.ready || S < 1) return 0;
     if (!upload_tensor(t1p, w1, s1, fmt, I, O1, grp) || !upload_tensor(t2p, w2, s2, fmt, I, O2, grp)) return 0;
-    ColiVkTensor *t1 = *t1p, *t2 = *t2p;
+    LmaVkTensor *t1 = *t1p, *t2 = *t2p;
     size_t xb = (size_t)S * I * 4, yb1 = (size_t)S * O1 * 4, yb2 = (size_t)S * O2 * 4;
     if (!scratch_reserve(&G.x, xb) || !scratch_reserve_mt(&G.y, yb1, G.memtype_cached) ||
         !scratch_reserve_mt(&G.y2, yb2, G.memtype_cached)) return 0;
@@ -1347,16 +1347,16 @@ int coli_vk_matmul_pair(ColiVkTensor **t1p, float *y1, const void *w1, const flo
  * The per-layer norm weights upload once into a tiny resident buffer (KV-mirror
  * pattern). All three tensors must share fmt (dense io is int8 in practice).
  * Returns 0 -> caller runs the 3-submit path (also when rmsnorm.spv is absent). */
-int coli_vk_attn_qprep(int layer,
-                       ColiVkTensor **qa,  const void *wqa,  const float *sqa,  int Oqa,
-                       ColiVkTensor **kva, const void *wkva, const float *skva, int Okva,
-                       ColiVkTensor **qb,  const void *wqb,  const float *sqb,  int Oqb,
+int lma_vk_attn_qprep(int layer,
+                       LmaVkTensor **qa,  const void *wqa,  const float *sqa,  int Oqa,
+                       LmaVkTensor **kva, const void *wkva, const float *skva, int Okva,
+                       LmaVkTensor **qb,  const void *wqb,  const float *sqb,  int Oqb,
                        int fmt, int grp, const float *lnw, float eps,
                        const float *x, int S, int I, float *q_out, float *kv_out, float *lat_out) {
     if (!G.ready || !G.shader_nrm || S < 1 || layer < 0 || layer >= VK_KV_LAYERS) return 0;
     if (!upload_tensor(qa, wqa, sqa, fmt, I, Oqa, grp) || !upload_tensor(kva, wkva, skva, fmt, I, Okva, grp) ||
         !upload_tensor(qb, wqb, sqb, fmt, Oqa, Oqb, grp)) return 0;
-    ColiVkTensor *tqa = *qa, *tkv = *kva, *tqb = *qb;
+    LmaVkTensor *tqa = *qa, *tkv = *kva, *tqb = *qb;
     if (!G.lnbuf[layer]) {                       /* resident norm weights, uploaded once */
         void *lp; float p0 = G.prio; G.prio = 1.0f;
         int ok = alloc_hostvis((size_t)Oqa * 4, &G.lnbuf[layer], &G.lnmem[layer], &lp);
@@ -1446,8 +1446,8 @@ int coli_vk_attn_qprep(int layer,
  * runs on it via the plain matmul pipeline — only out [S,Dout] returns to the host.
  * Kills the per-layer ctx readback + re-upload + second submit of the unfused path.
  * Returns 0 -> caller falls back (plain absorb or CPU). */
-int coli_vk_attention_absorb_project(ColiVkTensor **kvb, const void *w, const float *sc, int fmt, int grp,
-                                     ColiVkTensor **ot, const void *ow, const float *osc, int ofmt, int ogrp,
+int lma_vk_attention_absorb_project(LmaVkTensor **kvb, const void *w, const float *sc, int fmt, int grp,
+                                     LmaVkTensor **ot, const void *ow, const float *osc, int ofmt, int ogrp,
                                      float *out, const float *q, int layer, int S, int H,
                                      int Q, int R, int V, int K, int st0, int T, float scale,
                                      int Dout) {
@@ -1457,7 +1457,7 @@ int coli_vk_attention_absorb_project(ColiVkTensor **kvb, const void *w, const fl
     if (!kv->bl || kv->rows < T || kv->K != K || kv->R != R) return 0;
     if (!upload_tensor(kvb, w, sc, fmt, K, H * (Q + V), grp)) return 0;
     if (!upload_tensor(ot, ow, osc, ofmt, H * V, Dout, ogrp)) return 0;
-    ColiVkTensor *t = *kvb, *to = *ot;
+    LmaVkTensor *t = *kvb, *to = *ot;
     int cap = T - st0;
     size_t qb = (size_t)S * H * (Q + R) * 4, cb = (size_t)S * H * V * 4;
     size_t sb = (size_t)S * H * cap * 4, ob = (size_t)S * Dout * 4;
@@ -1512,7 +1512,7 @@ int coli_vk_attention_absorb_project(ColiVkTensor **kvb, const void *w, const fl
     return 1;
 }
 
-void coli_vk_tensor_free(ColiVkTensor *t) {
+void lma_vk_tensor_free(LmaVkTensor *t) {
     if (!t) return;
     if (t->dev == 1) {   /* dev2 tensor: destroy on ITS device, count in ITS counters */
         if (G2.ready) {
@@ -1540,22 +1540,22 @@ void coli_vk_tensor_free(ColiVkTensor *t) {
     free(t);
 }
 
-size_t coli_vk_tensor_bytes(const ColiVkTensor *t) { return t ? t->wbytes : 0; }
+size_t lma_vk_tensor_bytes(const LmaVkTensor *t) { return t ? t->wbytes : 0; }
 
 /* Is the device we picked an integrated GPU? The backend already computes this
  * at device selection (see the deviceType ranking above) but only uses it to
  * rank candidates. The RAM planner needs it too: on an integrated GPU our
  * HOST_VISIBLE|DEVICE_LOCAL allocations are the same physical memory the host
  * expert cache draws from, so whoever sizes that cache has to know. Mirrors
- * coli_cuda_device_integrated() (#653) for the Vulkan path. */
-int coli_vk_device_integrated(void) {
+ * lma_cuda_device_integrated() (#653) for the Vulkan path. */
+int lma_vk_device_integrated(void) {
     if (!G.phys) return 0;
     VkPhysicalDeviceProperties p;
     vkGetPhysicalDeviceProperties(G.phys, &p);
     return p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 1 : 0;
 }
 
-void coli_vk_shutdown(void) {
+void lma_vk_shutdown(void) {
     if (!G.ready) return;
     vkDeviceWaitIdle(G.dev);
     if (G.x.buf) { vkDestroyBuffer(G.dev, G.x.buf, NULL); vkFreeMemory(G.dev, G.x.mem, NULL); }
@@ -1572,7 +1572,7 @@ void coli_vk_shutdown(void) {
     for (int l = 0; l < VK_KV_LAYERS; l++)   /* per-layer resident norm weights (attn_qprep) */
         if (G.lnbuf[l]) { vkDestroyBuffer(G.dev, G.lnbuf[l], NULL); vkFreeMemory(G.dev, G.lnmem[l], NULL); }
     if (G.pair_pool) vkDestroyDescriptorPool(G.dev, G.pair_pool, NULL);
-    coli_vk_kv_reset();
+    lma_vk_kv_reset();
     if (G.eg_pool) vkDestroyDescriptorPool(G.dev, G.eg_pool, NULL);
     vkDestroyFence(G.dev, G.fence, NULL);
     vkDestroyFence(G.dev, G.eg_fence, NULL);
@@ -1682,8 +1682,8 @@ static int run_case(int fmt, int S, int I, int O, int iters) {
     for (size_t i = 0; i < rb * O; i++) w[i] = rand() & 0xff;
     for (size_t o = 0; o < nsc; o++) sc[o] = 0.01f + (rand() % 100) / 10000.0f;
 
-    ColiVkTensor *t = NULL;
-    if (!coli_vk_matmul(&t, yg, x, w, sc, fmt, S, I, O, g_ref_gs)) { printf("matmul failed\n"); return 1; }
+    LmaVkTensor *t = NULL;
+    if (!lma_vk_matmul(&t, yg, x, w, sc, fmt, S, I, O, g_ref_gs)) { printf("matmul failed\n"); return 1; }
     cpu_ref(yc, x, w, sc, fmt, S, I, O);
     double maxerr = 0, maxrel = 0;
     for (int i = 0; i < S * O; i++) {
@@ -1692,13 +1692,13 @@ static int run_case(int fmt, int S, int I, int O, int iters) {
     }
     // microbench (GPU)
     double t0 = now();
-    for (int k = 0; k < iters; k++) coli_vk_matmul(&t, yg, x, w, sc, fmt, S, I, O, g_ref_gs);
+    for (int k = 0; k < iters; k++) lma_vk_matmul(&t, yg, x, w, sc, fmt, S, I, O, g_ref_gs);
     double gpu_ms = (now() - t0) * 1000 / iters;
     // microbench (CPU ref, 1 iter — it's slow)
     double c0 = now(); cpu_ref(yc, x, w, sc, fmt, S, I, O); double cpu_ms = (now() - c0) * 1000;
     printf("fmt=%d S=%d I=%d O=%d | maxerr=%.4g maxrel=%.4g | gpu=%.3f ms  cpu_ref=%.3f ms\n",
            fmt, S, I, O, maxerr, maxrel, gpu_ms, cpu_ms);
-    coli_vk_tensor_free(t);
+    lma_vk_tensor_free(t);
     free(x); free(w); free(sc); free(yg); free(yc);
     return maxrel > 1e-3 ? 1 : 0;
 }
@@ -1706,8 +1706,8 @@ static int run_case(int fmt, int S, int I, int O, int iters) {
 /* Batched throughput: record N dispatches in ONE command buffer, one submit + one
  * fence wait — the amortized per-matmul cost with the submit roundtrip spread across
  * the batch (how the real expert tier would drive it). Reuses the descriptor binding
- * left by a prior coli_vk_matmul call for this tensor/shape. */
-static double bench_batched(ColiVkTensor *t, const float *x, int fmt, int S, int I, int O, int N) {
+ * left by a prior lma_vk_matmul call for this tensor/shape. */
+static double bench_batched(LmaVkTensor *t, const float *x, int fmt, int S, int I, int O, int N) {
     size_t xb = (size_t)S * I * sizeof(float);
     memcpy(G.x.ptr, x, xb);
     vkResetCommandBuffer(G.cmd, 0);
@@ -1751,8 +1751,8 @@ static int run_gate_up(int fmt, int S, int D, int I) {
     for (int i = 0; i < S*D; i++) x[i] = (rand()%200-100)/100.0f;
     for (size_t i = 0; i < rb*I; i++) { gw[i] = rand()&0xff; uw[i] = rand()&0xff; }
     for (size_t o = 0; o < nsc; o++) { gs[o] = 0.01f+(rand()%100)/10000.0f; us[o] = 0.01f+(rand()%100)/10000.0f; }
-    ColiVkTensor *tg = NULL, *tu = NULL;
-    if (!coli_vk_gate_up(&tg, &tu, hg, x, gw, gs, uw, us, fmt, S, D, I, g_ref_gs)) { printf("gate_up failed\n"); return 1; }
+    LmaVkTensor *tg = NULL, *tu = NULL;
+    if (!lma_vk_gate_up(&tg, &tu, hg, x, gw, gs, uw, us, fmt, S, D, I, g_ref_gs)) { printf("gate_up failed\n"); return 1; }
     for (int s = 0; s < S; s++) for (int o = 0; o < I; o++) {
         float gt = (float)ref_dot(x+(size_t)s*D, gw+(size_t)o*rb, gs, o, fmt, D);
         float ut = (float)ref_dot(x+(size_t)s*D, uw+(size_t)o*rb, us, o, fmt, D);
@@ -1761,13 +1761,13 @@ static int run_gate_up(int fmt, int S, int D, int I) {
     double maxrel = 0;
     for (int i = 0; i < S*I; i++) { double e = fabs(hg[i]-hc[i]); if (fabs(hc[i])>1e-2) { double r = e/fabs(hc[i]); if (r>maxrel) maxrel = r; } }
     printf("gate_up(fused) fmt=%d S=%d D=%d I=%d | maxrel=%.4g\n", fmt, S, D, I, maxrel);
-    coli_vk_tensor_free(tg); coli_vk_tensor_free(tu);
+    lma_vk_tensor_free(tg); lma_vk_tensor_free(tu);
     free(x); free(gw); free(uw); free(gs); free(us); free(hg); free(hc);
     return maxrel > 1e-3 ? 1 : 0;
 }
 
 /* Batched throughput of the fused gate_up (N dispatches / one submit). */
-static double bench_gu_batched(ColiVkTensor *tg, const float *x, int fmt, int S, int D, int I, int N) {
+static double bench_gu_batched(LmaVkTensor *tg, const float *x, int fmt, int S, int D, int I, int N) {
     if (!G.pipe_gu) return -1;   /* gate_up shader not loaded: run_gate_up already reported it */
     memcpy(G.x.ptr, x, (size_t)S*D*sizeof(float));
     vkResetCommandBuffer(G.cmd, 0);
@@ -1801,14 +1801,14 @@ static double bench_experts_fair(int fmt, int D, int I, int K, int Npass) {
     if (!G.pipe_gu) return -1;   /* gate_up shader not loaded: run_gate_up already reported it */
     if (K > 32) K = 32;
     size_t rb = ref_rowbytes(fmt, D), nsc = ref_scales(fmt, D, I);
-    ColiVkTensor *tg[32] = {0}, *tu[32] = {0};
+    LmaVkTensor *tg[32] = {0}, *tu[32] = {0};
     float *h = malloc((size_t)I*4), *x = malloc((size_t)D*4);
     for (int i = 0; i < D; i++) x[i] = (rand()%200-100)/100.0f;
     for (int c = 0; c < K; c++) {
         uint8_t *gw = malloc(rb*I), *uw = malloc(rb*I); float *gs = malloc(nsc*4), *us = malloc(nsc*4);
         for (size_t i = 0; i < rb*I; i++) { gw[i] = rand()&0xff; uw[i] = rand()&0xff; }
         for (size_t o = 0; o < nsc; o++) { gs[o] = 0.01f; us[o] = 0.01f; }
-        coli_vk_gate_up(&tg[c], &tu[c], h, x, gw, gs, uw, us, fmt, 1, D, I, g_ref_gs);   /* uploads distinct experts */
+        lma_vk_gate_up(&tg[c], &tu[c], h, x, gw, gs, uw, us, fmt, 1, D, I, g_ref_gs);   /* uploads distinct experts */
         free(gw); free(uw); free(gs); free(us);
     }
     VkDescriptorPoolSize ps = {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = (uint32_t)(6*K)};
@@ -1845,18 +1845,18 @@ static double bench_experts_fair(int fmt, int D, int I, int K, int Npass) {
     for (int k = 0; k < iters; k++) { vkResetFences(G.dev,1,&G.fence); vkQueueSubmit(G.queue,1,&si,G.fence); vkWaitForFences(G.dev,1,&G.fence,VK_TRUE,10000000000ULL); }
     double ms = (now()-t0)*1000.0/iters/((double)Npass*K);
     vkDestroyDescriptorPool(G.dev, pool, NULL);
-    for (int c = 0; c < K; c++) { coli_vk_tensor_free(tg[c]); coli_vk_tensor_free(tu[c]); }
+    for (int c = 0; c < K; c++) { lma_vk_tensor_free(tg[c]); lma_vk_tensor_free(tu[c]); }
     free(h); free(x); G.cmd_ready = 0; G.bound_tensor = NULL;
     return ms;
 }
 
 /* Full expert-group correctness (vs CPU ref) + fair throughput: K distinct experts,
- * one submit, hidden on-device. The real comparison to ROCm's coli_cuda_expert_group. */
+ * one submit, hidden on-device. The real comparison to ROCm's lma_cuda_expert_group. */
 static int run_expert_group(int fmt, int D, int I, int K) {
     if (K > 64) K = 64;
     size_t gu_rb = ref_rowbytes(fmt, D), gu_sc = ref_scales(fmt, D, I);
     size_t d_rb  = ref_rowbytes(fmt, I), d_sc  = ref_scales(fmt, I, D);
-    ColiVkTensor *tg[64] = {0}, *tu[64] = {0}, *td[64] = {0};
+    LmaVkTensor *tg[64] = {0}, *tu[64] = {0}, *td[64] = {0};
     uint8_t *hgw[64], *huw[64], *hdw[64]; float *hgs[64], *hus[64], *hds[64];
     float *x = malloc((size_t)K*D*4), *yg = malloc((size_t)K*D*4), *yc = malloc((size_t)K*D*4);
     float *tmp = malloc((size_t)(D > I ? D : I) * 4);
@@ -1868,12 +1868,12 @@ static int run_expert_group(int fmt, int D, int I, int K) {
         hgs[c] = malloc(gu_sc*4); hus[c] = malloc(gu_sc*4); hds[c] = malloc(d_sc*4);
         for (size_t o = 0; o < gu_sc; o++) { hgs[c][o] = 0.01f+(rand()%100)/10000.0f; hus[c][o] = 0.01f+(rand()%100)/10000.0f; }
         for (size_t o = 0; o < d_sc; o++) hds[c][o] = 0.01f+(rand()%100)/10000.0f;
-        coli_vk_matmul(&tg[c], tmp, x, hgw[c], hgs[c], fmt, 1, D, I, g_ref_gs);   /* upload gate  (D->I) */
-        coli_vk_matmul(&tu[c], tmp, x, huw[c], hus[c], fmt, 1, D, I, g_ref_gs);   /* upload up    (D->I) */
-        coli_vk_matmul(&td[c], tmp, x, hdw[c], hds[c], fmt, 1, I, D, g_ref_gs);   /* upload down  (I->D) */
+        lma_vk_matmul(&tg[c], tmp, x, hgw[c], hgs[c], fmt, 1, D, I, g_ref_gs);   /* upload gate  (D->I) */
+        lma_vk_matmul(&tu[c], tmp, x, huw[c], hus[c], fmt, 1, D, I, g_ref_gs);   /* upload up    (D->I) */
+        lma_vk_matmul(&td[c], tmp, x, hdw[c], hds[c], fmt, 1, I, D, g_ref_gs);   /* upload down  (I->D) */
     }
     int rows[64]; for (int c = 0; c < K; c++) rows[c] = 1;
-    if (!coli_vk_expert_group(tg, tu, td, rows, K, yg, x)) { printf("expert_group failed\n"); return 1; }
+    if (!lma_vk_expert_group(tg, tu, td, rows, K, yg, x)) { printf("expert_group failed\n"); return 1; }
     float *hid = malloc((size_t)I*4);
     for (int c = 0; c < K; c++) {
         float *xc = x + (size_t)c*D;
@@ -1887,11 +1887,11 @@ static int run_expert_group(int fmt, int D, int I, int K) {
     }
     double maxrel = 0;
     for (int i = 0; i < K*D; i++) { double e = fabs(yg[i]-yc[i]); if (fabs(yc[i])>1e-2) { double r = e/fabs(yc[i]); if (r>maxrel) maxrel = r; } }
-    coli_vk_expert_group(tg, tu, td, rows, K, yg, x);   /* warm + leaves G.eg_cmd recorded */
+    lma_vk_expert_group(tg, tu, td, rows, K, yg, x);   /* warm + leaves G.eg_cmd recorded */
     /* async issue/take must reproduce the sync result exactly (same buffers/records) */
     {
         float *ya = malloc((size_t)K*D*4);
-        if (!coli_vk_expert_group_issue(tg, tu, td, rows, K, x) || !coli_vk_expert_group_take(ya)) {
+        if (!lma_vk_expert_group_issue(tg, tu, td, rows, K, x) || !lma_vk_expert_group_take(ya)) {
             printf("expert_group issue/take failed\n"); maxrel = 1;
         } else {
             double amr = 0;
@@ -1901,7 +1901,7 @@ static int run_expert_group(int fmt, int D, int I, int K) {
         free(ya);
     }
     int iters = 20; double t0 = now();
-    for (int k = 0; k < iters; k++) coli_vk_expert_group(tg, tu, td, rows, K, yg, x);
+    for (int k = 0; k < iters; k++) lma_vk_expert_group(tg, tu, td, rows, K, yg, x);
     double ms = (now()-t0)*1000.0/iters/K;
     /* GPU-only: re-submit the already-recorded command buffer (skips per-call host setup:
      * descriptor updates + recording), isolating raw GPU throughput. */
@@ -1914,7 +1914,7 @@ static int run_expert_group(int fmt, int D, int I, int K) {
            fmt, K, maxrel, ms, gpums);
     free(hid); free(x); free(yg); free(yc); free(tmp);
     for (int c = 0; c < K; c++) {
-        coli_vk_tensor_free(tg[c]); coli_vk_tensor_free(tu[c]); coli_vk_tensor_free(td[c]);
+        lma_vk_tensor_free(tg[c]); lma_vk_tensor_free(tu[c]); lma_vk_tensor_free(td[c]);
         free(hgw[c]); free(huw[c]); free(hdw[c]); free(hgs[c]); free(hus[c]); free(hds[c]);
     }
     /* The gate_up -> down chain accumulates fp32 rounding across two long reductions
@@ -1941,11 +1941,11 @@ static int run_absorb(int fmt, int S, int H, int Q, int R, int V, int K, int st0
     for (int i = 0; i < T * K; i++) L[i] = (rand() % 200 - 100) / 100.0f;
     for (int i = 0; i < T * R; i++) Rr[i] = (rand() % 200 - 100) / 100.0f;
     float scale = 0.13f;
-    if (!coli_vk_kv_ensure(layer, T, K, R)) { printf("kv_ensure failed\n"); return 1; }
+    if (!lma_vk_kv_ensure(layer, T, K, R)) { printf("kv_ensure failed\n"); return 1; }
     for (int t = 0; t < T; t++)
-        if (!coli_vk_kv_row(layer, t, L + (size_t)t * K, Rr + (size_t)t * R)) { printf("kv_row failed\n"); return 1; }
-    ColiVkTensor *kvb = NULL;
-    if (!coli_vk_attention_absorb(&kvb, w, ws, fmt, g_ref_gs, cg, q, layer, S, H, Q, R, V, K, st0, T, scale)) {
+        if (!lma_vk_kv_row(layer, t, L + (size_t)t * K, Rr + (size_t)t * R)) { printf("kv_row failed\n"); return 1; }
+    LmaVkTensor *kvb = NULL;
+    if (!lma_vk_attention_absorb(&kvb, w, ws, fmt, g_ref_gs, cg, q, layer, S, H, Q, R, V, K, st0, T, scale)) {
         printf("absorb failed\n"); return 1; }
     float *qabs = malloc((size_t)K * 4), *clat = malloc((size_t)K * 4), *sc = malloc((size_t)(T - st0) * 4);
     for (int s = 0; s < S; s++) for (int h = 0; h < H; h++) {
@@ -1977,7 +1977,7 @@ static int run_absorb(int fmt, int S, int H, int Q, int R, int V, int K, int st0
         if (fabs(cc[i]) > 1e-2) { double r = e / fabs(cc[i]); if (r > maxrel) maxrel = r; } }
     double t0 = now(); int iters = 20;   /* per-call cost, the engine pattern (one submit/layer) */
     for (int k = 0; k < iters; k++)
-        coli_vk_attention_absorb(&kvb, w, ws, fmt, g_ref_gs, cg, q, layer, S, H, Q, R, V, K, st0, T, scale);
+        lma_vk_attention_absorb(&kvb, w, ws, fmt, g_ref_gs, cg, q, layer, S, H, Q, R, V, K, st0, T, scale);
     double ms = (now() - t0) * 1000 / iters;
     printf("absorb fmt=%d S=%d H=%d Q=%d R=%d V=%d K=%d st0=%d T=%d | maxerr=%.4g maxrel=%.4g | %.3f ms/call\n",
            fmt, S, H, Q, R, V, K, st0, T, maxerr, maxrel, ms);
@@ -1987,8 +1987,8 @@ static int run_absorb(int fmt, int S, int H, int Q, int R, int V, int K, int st0
     float *og = malloc((size_t)S * Dout * 4), *oc = malloc((size_t)S * Dout * 4);
     for (size_t i = 0; i < orb * (size_t)Dout; i++) owt[i] = rand() & 0xff;
     for (size_t o = 0; o < onsc; o++) osc[o] = 0.01f + (rand() % 100) / 10000.0f;
-    ColiVkTensor *ot = NULL;
-    if (!coli_vk_attention_absorb_project(&kvb, w, ws, fmt, g_ref_gs, &ot, owt, osc, fmt, g_ref_gs,
+    LmaVkTensor *ot = NULL;
+    if (!lma_vk_attention_absorb_project(&kvb, w, ws, fmt, g_ref_gs, &ot, owt, osc, fmt, g_ref_gs,
             og, q, layer, S, H, Q, R, V, K, st0, T, scale, Dout)) { printf("absorb_project failed\n"); return 1; }
     cpu_ref(oc, cc, owt, osc, fmt, S, H * V, Dout);
     double pmaxrel = 0;
@@ -1996,12 +1996,12 @@ static int run_absorb(int fmt, int S, int H, int Q, int R, int V, int K, int st0
         if (fabs(oc[i]) > 1e-2) { double r = e / fabs(oc[i]); if (r > pmaxrel) pmaxrel = r; } }
     t0 = now();
     for (int k = 0; k < iters; k++)
-        coli_vk_attention_absorb_project(&kvb, w, ws, fmt, g_ref_gs, &ot, owt, osc, fmt, g_ref_gs,
+        lma_vk_attention_absorb_project(&kvb, w, ws, fmt, g_ref_gs, &ot, owt, osc, fmt, g_ref_gs,
             og, q, layer, S, H, Q, R, V, K, st0, T, scale, Dout);
     printf("absorb+project fused                  | maxrel=%.4g | %.3f ms/call (unfused absorb was %.3f)\n",
            pmaxrel, (now() - t0) * 1000 / iters, ms);
-    coli_vk_tensor_free(ot); free(owt); free(osc); free(og); free(oc);
-    coli_vk_tensor_free(kvb);
+    lma_vk_tensor_free(ot); free(owt); free(osc); free(og); free(oc);
+    lma_vk_tensor_free(kvb);
     free(w); free(ws); free(q); free(L); free(Rr); free(cg); free(cc); free(qabs); free(clat); free(sc);
     return (maxrel > 2e-3 || pmaxrel > 5e-3) ? 1 : 0;
 }
@@ -2024,17 +2024,17 @@ static int run_qprep(int fmt, int S, int I, int Oqa, int Okva, int Oqb) {
     for (size_t o = 0; o < nsb; o++) sb[o] = 0.01f + (rand() % 100) / 10000.0f;
     for (int i = 0; i < Oqa; i++) ln[i] = 0.5f + (rand() % 100) / 100.0f;
     for (int i = 0; i < S * I; i++) x[i] = (rand() % 2000 - 1000) / 500.0f;
-    ColiVkTensor *ta = NULL, *tk = NULL, *tb = NULL;
+    LmaVkTensor *ta = NULL, *tk = NULL, *tb = NULL;
     static int qp_layer = 140;         /* distinct high slot per case: the per-layer ln
                                         * cache is upload-once by design (engine weights
                                         * are immutable); reuse here would mix cases */
     int layer = qp_layer++;
-    if (!coli_vk_attn_qprep(layer, &ta, wa, sa, Oqa, &tk, wk, sk, Okva, &tb, wb, sb, Oqb,
+    if (!lma_vk_attn_qprep(layer, &ta, wa, sa, Oqa, &tk, wk, sk, Okva, &tb, wb, sb, Oqb,
                             fmt, g_ref_gs, ln, 1e-6f, x, S, I, qg, kvg, NULL)) {
         printf("qprep unavailable (rmsnorm.spv missing?)\n"); return 1; }
     cpu_ref(lat, x, wa, sa, fmt, S, I, Oqa);
     cpu_ref(kvc, x, wk, sk, fmt, S, I, Okva);
-    for (int s = 0; s < S; s++) {                       /* rmsnorm rows like colibri.c */
+    for (int s = 0; s < S; s++) {                       /* rmsnorm rows like glm52.c */
         double ms = 0; float *r = lat + (size_t)s * Oqa;
         for (int i = 0; i < Oqa; i++) ms += (double)r[i] * r[i];
         float rr = 1.0f / sqrtf((float)(ms / Oqa) + 1e-6f);
@@ -2045,7 +2045,7 @@ static int run_qprep(int fmt, int S, int I, int Oqa, int Okva, int Oqb) {
     for (int i = 0; i < S * Oqb; i++) { float d = fabsf(qg[i] - qc[i]) / (fabsf(qc[i]) + 1e-3f); if (d > mq) mq = d; }
     for (int i = 0; i < S * Okva; i++) { float d = fabsf(kvg[i] - kvc[i]) / (fabsf(kvc[i]) + 1e-3f); if (d > mk) mk = d; }
     printf("qprep fmt=%d S=%d I=%d (%d->%d, kv %d) | maxrel q %.4g kv %.4g\n", fmt, S, I, Oqa, Oqb, Okva, mq, mk);
-    coli_vk_tensor_free(ta); coli_vk_tensor_free(tk); coli_vk_tensor_free(tb);
+    lma_vk_tensor_free(ta); lma_vk_tensor_free(tk); lma_vk_tensor_free(tb);
     free(wa); free(wk); free(wb); free(sa); free(sk); free(sb); free(ln); free(x);
     free(qg); free(kvg); free(lat); free(qc); free(kvc);
     /* q crosses TWO quantized reductions + the norm; random +-8-nibble rows are
@@ -2057,16 +2057,16 @@ static int run_qprep(int fmt, int S, int I, int Oqa, int Okva, int Oqb) {
 
 int main(int argc, char **argv) {
     const char *spv = argc > 1 ? argv[1] : "shaders/qmatmul.spv";
-    if (!coli_vk_init(spv)) { printf("vk init failed\n"); return 1; }
+    if (!lma_vk_init(spv)) { printf("vk init failed\n"); return 1; }
     srand(1234);
     int bad = 0;
-    /* COLI_VK_TEST_BALLAST=N: allocate N idle 4 MB device buffers before benching.
+    /* LMA_VK_TEST_BALLAST=N: allocate N idle 4 MB device buffers before benching.
      * Probes whether per-submit cost scales with the process's ALLOCATION COUNT
      * (RADV/amdgpu CS buffer-list accounting) independent of bytes — the suspected
      * mechanism behind decode attention degrading with expert-tier size even with
      * VRAM to spare (7.9s @2.6k BOs -> 15.6s @4.3k with 2.9 GB free). */
     {
-        int nb = getenv("COLI_VK_TEST_BALLAST") ? atoi(getenv("COLI_VK_TEST_BALLAST")) : 0;
+        int nb = getenv("LMA_VK_TEST_BALLAST") ? atoi(getenv("LMA_VK_TEST_BALLAST")) : 0;
         for (int i = 0; i < nb; i++) {
             VkBuffer b; VkDeviceMemory m;
             if (!alloc_hostvis_mt(4u << 20, &b, &m, NULL, G.memtype)) { printf("ballast stop at %d\n", i); break; }
@@ -2093,20 +2093,20 @@ int main(int argc, char **argv) {
         for (size_t i = 0; i < (size_t)(I + 1) / 2 * O; i++) w[i] = rand() & 0xff;
         for (int o = 0; o < O; o++) sc[o] = 0.01f + (rand() % 100) / 10000.0f;
         float *y = malloc((size_t)O * 4);
-        ColiVkTensor *t = NULL; coli_vk_matmul(&t, y, x, w, sc, 2, 1, I, O, 0);   /* bind */
+        LmaVkTensor *t = NULL; lma_vk_matmul(&t, y, x, w, sc, 2, 1, I, O, 0);   /* bind */
         printf("BATCHED int4 S=1 6144->2048 (our gate/up): %.4f ms/matmul (N=64, one submit)\n",
                bench_batched(t, x, 2, 1, I, O, 64));
-        coli_vk_tensor_free(t); free(x); free(w); free(sc); free(y);
+        lma_vk_tensor_free(t); free(x); free(w); free(sc); free(y);
         I = 2048; O = 6144;   /* our down dims */
         x = malloc((size_t)I * 4); w = malloc((size_t)(I + 1) / 2 * O); sc = malloc((size_t)O * 4);
         for (int i = 0; i < I; i++) x[i] = (rand() % 200 - 100) / 100.0f;
         for (size_t i = 0; i < (size_t)(I + 1) / 2 * O; i++) w[i] = rand() & 0xff;
         for (int o = 0; o < O; o++) sc[o] = 0.01f + (rand() % 100) / 10000.0f;
         y = malloc((size_t)O * 4);
-        t = NULL; coli_vk_matmul(&t, y, x, w, sc, 2, 1, I, O, 0);
+        t = NULL; lma_vk_matmul(&t, y, x, w, sc, 2, 1, I, O, 0);
         printf("BATCHED int4 S=1 2048->6144 (our down):    %.4f ms/matmul (N=64, one submit)\n",
                bench_batched(t, x, 2, 1, I, O, 64));
-        coli_vk_tensor_free(t); free(x); free(w); free(sc); free(y);
+        lma_vk_tensor_free(t); free(x); free(w); free(sc); free(y);
     }
     /* FUSED gate+up: correctness + batched throughput (vs 2x separate gate/up). */
     {
@@ -2119,10 +2119,10 @@ int main(int argc, char **argv) {
         for (int i = 0; i < D; i++) x[i] = (rand()%200-100)/100.0f;
         for (size_t i = 0; i < rb*I; i++) { gw[i] = rand()&0xff; uw[i] = rand()&0xff; }
         for (int o = 0; o < I; o++) { gs[o] = 0.01f; us[o] = 0.01f; }
-        ColiVkTensor *tg = NULL, *tu = NULL; coli_vk_gate_up(&tg, &tu, h, x, gw, gs, uw, us, 2, 1, D, I, 0);
+        LmaVkTensor *tg = NULL, *tu = NULL; lma_vk_gate_up(&tg, &tu, h, x, gw, gs, uw, us, 2, 1, D, I, 0);
         printf("BATCHED fused gate_up int4 6144->2048:     %.4f ms (N=64, SAME expert = L2-cached)\n",
                bench_gu_batched(tg, x, 2, 1, D, I, 64));
-        coli_vk_tensor_free(tg); coli_vk_tensor_free(tu); free(x); free(gw); free(uw); free(gs); free(us); free(h);
+        lma_vk_tensor_free(tg); lma_vk_tensor_free(tu); free(x); free(gw); free(uw); free(gs); free(us); free(h);
     }
     /* FAIR: cycle 8 distinct experts (VRAM reads, not L2) — matches ROCm expert_group. */
     printf("FAIR fused gate_up int4 6144->2048 (8 distinct experts): %.4f ms/expert\n",
@@ -2168,8 +2168,8 @@ int main(int argc, char **argv) {
         for (size_t o = 0; o < n1; o++) s1[o] = 0.01f + (rand() % 100) / 10000.0f;
         for (size_t o = 0; o < n2; o++) s2[o] = 0.01f + (rand() % 100) / 10000.0f;
         for (int i = 0; i < I; i++) x[i] = (rand() % 200 - 100) / 100.0f;
-        ColiVkTensor *t1 = NULL, *t2 = NULL;
-        if (!coli_vk_matmul_pair(&t1, y1, w1, s1, O1, &t2, y2, w2, s2, O2, pf, x, S, I, g_ref_gs)) {
+        LmaVkTensor *t1 = NULL, *t2 = NULL;
+        if (!lma_vk_matmul_pair(&t1, y1, w1, s1, O1, &t2, y2, w2, s2, O2, pf, x, S, I, g_ref_gs)) {
             printf("matmul_pair fmt=%d failed\n", pf); bad = 1;
         } else {
             cpu_ref(c1, x, w1, s1, pf, S, I, O1); cpu_ref(c2, x, w2, s2, pf, S, I, O2);
@@ -2177,11 +2177,11 @@ int main(int argc, char **argv) {
             for (int i = 0; i < O1; i++) { double e = fabs(y1[i]-c1[i]); if (fabs(c1[i])>1e-2) { double r=e/fabs(c1[i]); if (r>mr) mr=r; } }
             for (int i = 0; i < O2; i++) { double e = fabs(y2[i]-c2[i]); if (fabs(c2[i])>1e-2) { double r=e/fabs(c2[i]); if (r>mr) mr=r; } }
             double t0 = now();
-            for (int k = 0; k < 30; k++) coli_vk_matmul_pair(&t1, y1, w1, s1, O1, &t2, y2, w2, s2, O2, pf, x, S, I, g_ref_gs);
+            for (int k = 0; k < 30; k++) lma_vk_matmul_pair(&t1, y1, w1, s1, O1, &t2, y2, w2, s2, O2, pf, x, S, I, g_ref_gs);
             printf("matmul_pair fmt=%d 6144->(2048,576)   | maxrel=%.4g | %.3f ms/pair-call\n", pf, mr, (now()-t0)*1000/30);
             bad |= mr > 1e-3;
         }
-        coli_vk_tensor_free(t1); coli_vk_tensor_free(t2);
+        lma_vk_tensor_free(t1); lma_vk_tensor_free(t2);
         free(w1); free(w2); free(s1); free(s2); free(x); free(y1); free(y2); free(c1); free(c2);
     }
     /* MLA absorb attention core (GLM decode shape + window/causal/int8 variants). */
@@ -2197,7 +2197,7 @@ int main(int argc, char **argv) {
         bad |= run_absorb(4, 2, 64, 192, 64, 256, 512, 17, 300, 8);   // fmt=4 S=2 causal + window
     }
     printf(bad ? "FAIL\n" : "PASS\n");
-    coli_vk_shutdown();
+    lma_vk_shutdown();
     return bad;
 }
 #endif

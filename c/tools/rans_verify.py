@@ -16,14 +16,14 @@ WHAT IS CHECKED, per shard:
   stamp layer (the stamp is MANDATORY for this format — entropy-coded sizes
   are data-dependent, so the stamp is the ONLY signal a U8 tensor is
   entropy-coded at all):
-    E_STAMP_MISSING        __metadata__ or its colibri.fmt key absent while
+    E_STAMP_MISSING        __metadata__ or its lma.fmt key absent while
                            the shard was named on the command line as an
                            entropy container
-    E_STAMP_MALFORMED      colibri.fmt not a JSON {name: format} object
+    E_STAMP_MALFORMED      lma.fmt not a JSON {name: format} object
     E_STAMP_DANGLING       a stamped name with no tensor in the shard
     E_STAMP_DTYPE          a stamped tensor whose dtype is not U8
   table layer:
-    E_TABLE_MISSING        colibri.int4-rans256-g0.table absent while stamps
+    E_TABLE_MISSING        lma.int4-rans256-g0.table absent while stamps
                            claim this format
     E_TABLE_MALFORMED      table JSON/fields/b64 malformed
     E_TABLE_SCALE          scale_bits/M out of range or inconsistent
@@ -203,7 +203,7 @@ def verify_shard(path, failures, max_tensors=None):
               f"other formats — out of this validator's scope, skipped")
     if not ours:
         refuse(failures, path, None, "E_STAMP_MISSING",
-               f"colibri.fmt carries no {rf.FORMAT_NAME!r} stamps")
+               f"lma.fmt carries no {rf.FORMAT_NAME!r} stamps")
         return
 
     if rf.TABLE_KEY not in meta:

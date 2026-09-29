@@ -17,8 +17,8 @@
  *      narrow row -- otherwise the wide slab migrates through the ws[]<->LRU
  *      swap into narrow rows and (1) becomes a lie the allocator disproves
  */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <stdio.h>
@@ -247,7 +247,7 @@ int main(void){
          * expert's worth of budget admits it, one byte less does not. */
         CHECK(pin_prefix_for_budget(&m,ranked,5,four_narrow+(double)wide-1.0,-1)==4);
         CHECK(pin_prefix_for_budget(&m,ranked,5,four_narrow+(double)wide,-1)==5);
-        /* COLI_ANS split: the first raw_n go up raw, the rest at 0.80 of their
+        /* LMA_ANS split: the first raw_n go up raw, the rest at 0.80 of their
          * width. Two raw experts plus 0.80 of two more is 3.6 narrow; 3.7 keeps
          * the check off the rounding edge. Without the split, 3.7 holds three. */
         CHECK(pin_prefix_for_budget(&m,ranked,5,3.7*(double)narrow,2)==4);
@@ -315,7 +315,7 @@ int main(void){
     CHECK(s.slab_cap >= wide);
 
     /* ---- D. the migration itself, as moe() actually performs it ------------ */
-    /* colibri.c:4803 is  ESlot tmp=*dst; *dst=m->ws[q]; m->ws[q]=tmp;  -- the cache
+    /* glm52.c:4803 is  ESlot tmp=*dst; *dst=m->ws[q]; m->ws[q]=tmp;  -- the cache
      * slot's OLD contents travel back into ws[]. So a wide slab reaches a narrow row
      * on the THIRD step, not the first, which is why a two-load test would miss it. */
     {
@@ -340,7 +340,7 @@ int main(void){
     }
 
     /* ---- E. the diagnostic switch actually gates the shrink ---------------- */
-    /* g_slab_shrink is set from COLI_SLAB_SHRINK in main(), which this test does
+    /* g_slab_shrink is set from LMA_SLAB_SHRINK in main(), which this test does
      * not run -- so it is set directly here. Verifying the switch by exporting
      * the variable would have proved nothing, and very nearly did. */
     {

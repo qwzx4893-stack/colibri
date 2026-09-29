@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "colibri-engine"
+name = "lmatomic"
 dynamic = ["version"]
 description = "Tiny engine, immense model — run GLM-5.2 (744B MoE) locally"
 readme = "README.md"
@@ -39,15 +39,15 @@ bench = [
 ]
 
 [project.scripts]
-coli = "colibri.cli:main"
+lmatomic = "lmatomic.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/JustVugg/colibri"
 Issues = "https://github.com/JustVugg/colibri/issues"
 
 [tool.setuptools.dynamic]
-version = {attr = "colibri._version.__version__"}
+version = {attr = "lmatomic._version.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["colibri*"]
+include = ["lmatomic*"]

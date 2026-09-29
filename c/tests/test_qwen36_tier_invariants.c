@@ -112,8 +112,8 @@ static void make_weights(int ne) {
 #define NOTE(fn, l, e) fn((l), (e), g4s[e], u4s[e], d4s[e], scs[e], scs[e] + IH, scs[e] + 2 * IH)
 
 static int start_tier(int ndev, int nl, int ne, int topk, const char *budget_gb) {
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", ndev == 1 ? "0" : ndev == 2 ? "0,1" : "0,1,2", 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", ndev == 1 ? "0" : ndev == 2 ? "0,1" : "0,1,2", 1);
     setenv("QT_NO_WARMSTART", "1", 1);
     /* "auto" is the tier's own spelling of "no explicit budget" (free minus
      * 1 GiB); unsetenv would be POSIX-only and MinGW has no equivalent */

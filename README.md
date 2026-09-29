@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="assets/colibri-logo.svg" width="560" alt="colibrì — tiny engine, immense model">
+  <img src="assets/lmatomic-logo.svg" width="560" alt="LM Atomic — tiny engine, immense model">
 </p>
 
 <p align="center">
-  <a href="https://justvugg.github.io/colibri"><img src="https://img.shields.io/badge/website-justvugg.github.io%2Fcolibri-1f6feb" alt="Website"></a>
+  <a href="https://justvugg.github.io/colibri"><img src="https://img.shields.io/badge/website-justvugg.github.io%2Flmatomic-1f6feb" alt="Website"></a>
   <a href="https://github.com/JustVugg/colibri/releases"><img src="https://img.shields.io/github/v/release/JustVugg/colibri?color=2ea043" alt="Latest release"></a>
 </p>
 
@@ -22,16 +22,16 @@ Nine families run today: **GLM-5.2/5.3** (744B), **GLM-5.3-Flash** (321B, with
 vision), **Inkling** (975B), **Kimi K3** (2.8T), **DeepSeek V4 Flash** (284B), **DeepSeek V4.1 Flash** (552B, with vision),
 **Qwen3.8-Flash-Next** (125B + 51B n-gram), **Qwen3.6** (35B-A3B) and
 **OLMoE** (7B) —
-one C file each, the same `coli chat` / `coli serve` / `coli web` front end.
+one C file each, the same `lmatomic chat` / `lmatomic serve` / `lmatomic web` front end.
 [Full roster ↓](#other-supported-models)
 
-> **Colibrì is an inference engine you can run today, and an open research
+> **LM Atomic is an inference engine you can run today, and an open research
 > platform.** Its primary goal is to pursue inference-side performance across
 > the entire software/hardware boundary — model formats, memory hierarchy,
 > storage I/O, placement, scheduling, kernels, speculation, and CPU/GPU
 > overlap — so large models depend less on scarce hardware and cost less to run.
 
-Colibrì treats VRAM, RAM, and storage as a single multitier hierarchy, and it is
+LM Atomic treats VRAM, RAM, and storage as a single multitier hierarchy, and it is
 deliberately a place to test aggressive systems ideas — so there is **no SLA on
 speed, and a hard guarantee on semantics**: experiments must earn their place
 through reproducible end-to-end measurements, and the default policy **never
@@ -39,8 +39,8 @@ silently changes model precision or router semantics**. Insufficient fast memory
 may reduce speed; it must not quietly redefine the model.
 
 ```
-$ ./coli chat
-  🐦 colibri v1.12.1 — GLM-5.2 · 744B MoE · int4 · streaming CPU
+$ ./lmatomic chat
+  🐦 lmatomic v1.12.1 — GLM-5.2 · 744B MoE · int4 · streaming CPU
   ✓ ready in 32s · resident 9.9 GB
   › ciao!
   ◆ Ciao! 😊 Come posso aiutarti oggi?
@@ -49,21 +49,21 @@ $ ./coli chat
 ## See it running
 
 <p align="center">
-  <img src="docs/media/colibri-dashboard.png" width="900" alt="colibrì web dashboard — live metrics, hardware panel, expert tiers">
+  <img src="docs/media/lmatomic-dashboard.png" width="900" alt="LM Atomic web dashboard — live metrics, hardware panel, expert tiers">
 </p>
-<p align="center"><em>The web dashboard (<code>./coli web</code>), redesigned in 1.12.0: a workspace with a dock for the chat,
+<p align="center"><em>The web dashboard (<code>./lmatomic web</code>), redesigned in 1.12.0: a workspace with a dock for the chat,
 Brio mode, the Brain page and Profiling, in a light or a dark theme. Here Qwen3.6 answering on a CPU box,
 experts streamed from disk.</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-brio.png" width="900" alt="the Brio page: a document read once, a probability for every allowed answer, and an entropy">
+  <img src="docs/media/lmatomic-brio.png" width="900" alt="the Brio page: a document read once, a probability for every allowed answer, and an entropy">
 </p>
 <p align="center"><em><strong>Brio mode</strong>: the same model, told to stop writing. Give it a document and the only answers
 it may pick; it reads the probability of each one, generates nothing, and reports an entropy that says when it is
 not sure. Here: <strong>request changes at 99.9%</strong>, entropy 0.005, 4 tokens read, 0 generated.</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-brain.png" width="900" alt="the Brain page: the measured expert atlas of GLM-5.2 drawn as a cortex, ten regions to enter">
+  <img src="docs/media/lmatomic-brain.png" width="900" alt="the Brain page: the measured expert atlas of GLM-5.2 drawn as a cortex, ten regions to enter">
 </p>
 <p align="center"><em>The <strong>Brain</strong> page, <strong>Explore</strong>: the <a href="https://github.com/JustVugg/colibri/issues/175">measured expert atlas</a> of GLM-5.2
 drawn as a cortex. 13,260 characterised experts in ten regions (Python, SQL, mathematics, poetry, law, Chinese…);
@@ -71,14 +71,14 @@ position is measured routing affinity, not a learned embedding. Choose a region 
 to the model actually running: one cell per expert, colour is the storage tier, and every expert routed in a turn flashes white.</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-brain-region.png" width="900" alt="inside the Python region: 1,142 experts, one of them selected with its measured affinities">
+  <img src="docs/media/lmatomic-brain-region.png" width="900" alt="inside the Python region: 1,142 experts, one of them selected with its measured affinities">
 </p>
 <p align="center"><em>Inside the <strong>Python</strong> region: 1,142 experts as a constellation, each labelled by layer and index. The panel shows
 one of them, layer 17 expert 178: a generalist with entropy 3.13, whose measured affinity is 20.2% Python, 14.6% JSON,
 14.2% conversation, 13.3% SQL.</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-profiling.png" width="900" alt="the Profiling page: where the engine spends each turn">
+  <img src="docs/media/lmatomic-profiling.png" width="900" alt="the Profiling page: where the engine spends each turn">
 </p>
 <p align="center"><em>The <strong>Profiling</strong> page: where the engine spends each turn, by phase, with the last 30 turns as a trend.
 Here Qwen3.6 on a CPU box: 19.0 s of wall time for 36 prompt and 55 generated tokens, 2.9 tok/s, 11.4 s of disk
@@ -86,9 +86,9 @@ service overlapped with compute.</em></p>
 
 ## The research mission
 
-With Colibrì, private frontier model access is not limited by availability of hyperscaler-class hardware.
+With LM Atomic, private frontier model access is not limited by availability of hyperscaler-class hardware.
 
-With its multitiering features Colibrì **removes proprietary hardware dependencies aggressively 
+With its multitiering features LM Atomic **removes proprietary hardware dependencies aggressively 
 optimizing functional inference engine pipelines**.
 
 Our operational mission includes changing how weights are represented and moved, deciding what
@@ -129,7 +129,7 @@ that the next useful optimization can come from anyone willing to measure it.
 
 ## Open hypotheses, experiments, and how to help
 
-Colibrì treats an optimization as a hypothesis until a controlled end-to-end A/B
+LM Atomic treats an optimization as a hypothesis until a controlled end-to-end A/B
 shows otherwise. These are the main questions now:
 
 | hypothesis | evidence so far | experiment still needed |
@@ -169,7 +169,7 @@ So the model doesn't need to *fit* in fast memory — it needs to be **placed**:
 
 Think of the core algorithm as **a JIT, but for weights**. A compiler JIT never
 compiles the whole program — it watches what actually runs and compiles the hot
-paths, just in time. colibrì makes the same bet about a 744B parameter space:
+paths, just in time. LM Atomic makes the same bet about a 744B parameter space:
 parameters are not resident state to be held, they are **data to be staged**
 across a heterogeneous storage hierarchy (VRAM / RAM / NVMe), exactly when the
 router proves they are needed. Measured routing heat decides which experts earn
@@ -179,7 +179,7 @@ the right experts get. It works because routing has measurable structure (see
 the [expert atlas](https://github.com/JustVugg/colibri/issues/175)) — and
 structure is cacheable.
 
-The engine is a single C file (`c/colibri.c`) plus small headers. No BLAS, no
+The engine is a single C file (`c/glm52.c`) plus small headers. No BLAS, no
 Python at runtime, no GPU required.
 
 ### Local cluster mode
@@ -192,13 +192,13 @@ round trip per expert.
 Start the optional registration service:
 
 ```bash
-./coli cluster coordinator --host 0.0.0.0 --port 8765
+./lmatomic cluster coordinator --host 0.0.0.0 --port 8765
 ```
 
 On each worker, with the same converted model available locally:
 
 ```bash
-./coli cluster worker --model /nvme/glm52_i4 --port 9100 \
+./lmatomic cluster worker --model /nvme/glm52_i4 --port 9100 \
   --coordinator http://COORDINATOR:8765 --advertise-host WORKER_IP
 ```
 
@@ -206,7 +206,7 @@ Run the coordinator with discovery, or provide `--cluster-workers
 HOST:PORT,...` for a static setup:
 
 ```bash
-./coli serve --model /nvme/glm52_i4 \
+./lmatomic serve --model /nvme/glm52_i4 \
   --cluster-coordinator http://127.0.0.1:8765
 ```
 
@@ -241,7 +241,7 @@ it and let the engine read from both drives. For GLM-5.2, from `c/` in a source
 checkout (or from an unpacked release):
 
 ```bash
-COLI_MODEL_MIRROR=/second/glm52_i4 python3 ./coli chat --model /fast/glm52_i4
+LMA_MODEL_MIRROR=/second/glm52_i4 python3 ./lmatomic chat --model /fast/glm52_i4
 ```
 
 The engine measures the drives at startup to weight the read split. Buffered
@@ -253,7 +253,7 @@ PowerShell examples, measured gains and limits, and a single-drive comparison.
 Details worth knowing:
 
 - the mirror is **validated at startup** (per-file size + safetensors header must be byte-identical to the primary); divergent or missing files stay on the primary, so a **partial mirror is fine** — a smaller second SSD can serve the shards it holds;
-- the mirror is **never written**: `.coli_usage`, `.coli_kv` and all sidecars stay on the primary;
+- the mirror is **never written**: `.lma_usage`, `.lma_kv` and all sidecars stay on the primary;
 - a read error on the mirror falls back to the primary (one warning, no crash), so unplugging the second drive mid-run degrades instead of killing the server;
 - routing never changes tokens — both copies are byte-identical; enable `PROF=1` for the `MIRROR:` profile counters showing GB served per drive.
 
@@ -261,26 +261,26 @@ The same engine spans the whole range: on a 25 GB laptop everything streams from
 disk (slow but correct); on a large host the entire expert set becomes resident
 (`CUDA_EXPERT_GB=auto PIN_GB=all`) and disk drops out of the decode path
 entirely. Between the tiers sits a **learning cache**: the engine records which
-experts *your* workload routes to (`.coli_usage`, updated every turn) and pins
-the hottest ones automatically — colibrì literally gets faster the more you use
-it. On multi-socket hosts, `COLI_NUMA=1` interleaves the resident weights across
+experts *your* workload routes to (`.lma_usage`, updated every turn) and pins
+the hottest ones automatically — LM Atomic literally gets faster the more you use
+it. On multi-socket hosts, `LMA_NUMA=1` interleaves the resident weights across
 memory controllers ([#82](https://github.com/JustVugg/colibri/issues/82)).
 
-For a second drive that cannot hold the whole model, Colibri can rank a partial
+For a second drive that cannot hold the whole model, LM Atomic can rank a partial
 mirror from the expert history it already learns. Run a few representative
-prompts first so `.coli_usage` reflects the workload, then plan, stage, and
+prompts first so `.lma_usage` reflects the workload, then plan, stage, and
 verify the mirror:
 
 ```bash
-./c/coli mirror plan  --model /fast/glm52_i4 --mirror /second/glm52_i4 \
+./c/lmatomic mirror plan  --model /fast/glm52_i4 --mirror /second/glm52_i4 \
   --budget-gib 200 --reserve-gib 20
-./c/coli mirror stage --model /fast/glm52_i4 --mirror /second/glm52_i4 \
+./c/lmatomic mirror stage --model /fast/glm52_i4 --mirror /second/glm52_i4 \
   --budget-gib 200 --reserve-gib 20
-./c/coli mirror verify --model /fast/glm52_i4 --mirror /second/glm52_i4
+./c/lmatomic mirror verify --model /fast/glm52_i4 --mirror /second/glm52_i4
 ```
 
 The planner reads safetensors headers directly, follows split-model directories
-from `COLI_MODEL_DIRS`, and prioritizes shards that can serve the hottest routed
+from `LMA_MODEL_DIRS`, and prioritizes shards that can serve the hottest routed
 experts. Staging never changes the primary model: it copies through temporary
 files, preserves the requested free-space reserve, verifies every shard with
 SHA-256, never deletes an existing mirror shard, and atomically publishes a
@@ -294,7 +294,7 @@ one `pread`; a bounded async I/O pool (`PIPE=1`, default) loads missing experts
 while resident ones compute; batched positions read each unique expert once
 (**batch-union**); and a router-lookahead thread (`PILOT=1`) prefetches the next
 layer's experts — routing is measurably **71.6% predictable one layer ahead**.
-On GPUs, the resident pipeline (`COLI_CUDA_PIPE=2`) keeps the residual stream
+On GPUs, the resident pipeline (`LMA_CUDA_PIPE=2`) keeps the residual stream
 on-device across layers so the CPU expert loop runs uninterrupted; on Apple
 Silicon an experimental [Metal backend](docs/metal.md) does the batched expert
 math on the unified-memory GPU; and a [Vulkan backend](docs/vulkan.md) brings
@@ -316,7 +316,7 @@ The forward pass is validated against a `transformers` oracle (teacher-forcing
 typically 30-32/32; two tiny-oracle positions are floating-point near-ties and
 toolchain-dependent). MLA attention stores a compressed KV state — 576
 floats/token instead of 32,768 (**57× smaller**) — and persists it across
-restarts (`.coli_kv`): conversations reopen warm with zero re-prefill,
+restarts (`.lma_kv`): conversations reopen warm with zero re-prefill,
 byte-identical to an uninterrupted session. DSA sparse attention (GLM-5.2's
 lightning indexer) is implemented faithfully and validated by forcing full-key
 selection to reproduce dense attention exactly.
@@ -335,7 +335,7 @@ constrained JSON output. Whether speculation is a net win depends on your
 cache temperature — measure, and use `DRAFT=0` when it doesn't pay.
 
 Verify batches can also opt into an **exact attention core** with
-`COLI_EXACT_VERIFY=1` ([#689](https://github.com/JustVugg/colibri/issues/689)):
+`LMA_EXACT_VERIFY=1` ([#689](https://github.com/JustVugg/colibri/issues/689)):
 the CPU MLA-absorb score and context dots accumulate integer products and round
 once, so a near-tie in a verify row resolves the same way on every host, at
 roughly 0.6x tok/s on a tiny oracle (the dot itself is ~5–7x the float loop).
@@ -371,19 +371,19 @@ You need two things: **the program** (a few hundred KB) and **the model**
 (372 GB). Step-by-step for every platform in the
 [Quick Start guide](docs/quickstart.md).
 
-### 1. Get colibri
+### 1. Get LM Atomic
 
 **Download a prebuilt release** — Linux, macOS and Windows, no compiler needed.
 Take the archive for your platform from
 [Releases](https://github.com/JustVugg/colibri/releases) and unpack it:
 
 ```bash
-mkdir colibri && tar xzf colibri-v1.8.0-linux-x86_64.tar.gz -C colibri && cd colibri
-python3 coli info                         # engine ready ✓
+mkdir lmatomic && tar xzf colibri-v1.8.0-linux-x86_64.tar.gz -C lmatomic && cd lmatomic
+python3 lmatomic info                         # engine ready ✓
 ```
 
-Inside you get the engine (`colibri`, `colibri.exe` on Windows), the `coli`
-launcher and its Python helpers. Nothing to rename or configure — `coli` finds
+Inside you get the engine (`lmatomic`, `glm52.exe` on Windows), the `lmatomic`
+launcher and its Python helpers. Nothing to rename or configure — `lmatomic` finds
 the engine next to itself. You only need
 [Python 3](https://www.python.org/downloads/) installed: the launcher and the
 API gateway are Python scripts, while the engine itself is pure C with zero
@@ -396,7 +396,7 @@ git clone https://github.com/JustVugg/colibri && cd colibri/c
 ./setup.sh                                # checks gcc/OpenMP, builds, self-tests
 ```
 
-Want `coli` on your PATH? From a checkout, `pip install -e .` registers it (the
+Want `lmatomic` on your PATH? From a checkout, `pip install -e .` registers it (the
 engine still lives in `c/` — an editable install from the clone, not a wheel).
 
 ### 2. Get the model
@@ -429,14 +429,14 @@ Or convert from the FP8 source yourself — one resumable command that never nee
 the full 756 GB on disk at once:
 
 ```bash
-./coli convert --model /nvme/glm52_i4     # download+convert shard by shard (python, one-time)
+./lmatomic convert --model /nvme/glm52_i4     # download+convert shard by shard (python, one-time)
 ```
 
 #### Other supported models
 
 GLM-5.2 is the reference model, but the same streaming approach runs six more
 families. Each is a **sibling engine** — one C file, its own architecture, the same
-`coli chat` / `coli serve` / `coli web` front end (the launcher picks the binary from
+`lmatomic chat` / `lmatomic serve` / `lmatomic web` front end (the launcher picks the binary from
 the model's `config.json`):
 
 > **What each one needs.** These differ a lot, and reading two of them together
@@ -481,8 +481,8 @@ without a code path of its own. With `CUDA=1` the VRAM expert tier measured
 
 Kimi K3 needs no conversion: its QAT-trained MXFP4 experts are streamed straight from
 the original Hugging Face shards, and the bf16 dense set is quantized at load time.
-Long agent sessions can opt into recurrent-state checkpoints (`COLI_K3_CKPT=N`
-slots in RAM, or parked on disk with `COLI_K3_CKPT_DIR`): an edited or follow-up
+Long agent sessions can opt into recurrent-state checkpoints (`LMA_K3_CKPT=N`
+slots in RAM, or parked on disk with `LMA_K3_CKPT_DIR`): an edited or follow-up
 prompt restores the deepest surviving checkpoint and re-prefills only the tail,
 instead of replaying the whole conversation through the SSM layers. On Vulkan
 hosts `K3_VK_UP=auto` sizes the expert tier upload from measured bandwidth. The
@@ -497,13 +497,13 @@ trade-off written down.
 ### 3. Run it
 
 ```bash
-COLI_MODEL=/nvme/glm52_i4 ./coli chat     # RAM budget, cache and MTP auto-detected
-COLI_MODEL=/nvme/glm52_i4 ./coli plan     # inspect the planned VRAM/RAM/disk placement
-COLI_MODEL=/nvme/glm52_i4 ./coli doctor   # read-only readiness check
-COLI_MODEL=/nvme/glm52_i4 ./coli doctor --deep  # strict tensors/shards/index/mirror preflight
-COLI_MODEL=/nvme/glm52_i4 ./coli tune     # measure and save this machine's fastest safe execution profile
-./coli web  --model /nvme/glm52_i4        # API + dashboard, and opens a browser
-./coli serve --model /nvme/glm52_i4       # API + dashboard, no browser (headless)
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic chat     # RAM budget, cache and MTP auto-detected
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic plan     # inspect the planned VRAM/RAM/disk placement
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic doctor   # read-only readiness check
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic doctor --deep  # strict tensors/shards/index/mirror preflight
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic tune     # measure and save this machine's fastest safe execution profile
+./lmatomic web  --model /nvme/glm52_i4        # API + dashboard, and opens a browser
+./lmatomic serve --model /nvme/glm52_i4       # API + dashboard, no browser (headless)
 ```
 
 #### Brio mode: ask a closed question
@@ -519,7 +519,7 @@ does not ask for it.
 
 ```bash
 # in the TUI: the same model, told to stop writing
-./coli chat --model /nvme/qwen36_i4_gs64
+./lmatomic chat --model /nvme/qwen36_i4_gs64
 > /brio merge | request changes | close
 > 340 lines, 8 files, no tests. CI is green but nothing covers that path.
 
@@ -539,9 +539,9 @@ request and reply shapes, and where it does not help: [docs/brio.md](docs/brio.m
 The dashboard has a Brio page as well.
 
 
-On Windows a release archive ships `coli.cmd`: double-click it for the quick
-start, or run `coli.cmd chat --model D:\glm52_i4` from cmd or PowerShell.
-From a source checkout the same commands work with `python coli chat --model
+On Windows a release archive ships `lmatomic.cmd`: double-click it for the quick
+start, or run `lmatomic.cmd chat --model D:\glm52_i4` from cmd or PowerShell.
+From a source checkout the same commands work with `python lmatomic chat --model
 D:\glm52_i4`. The `.exe` files are the engines, not the launcher: started on
 their own they have no model to load and exit immediately.
 The engine at runtime is pure C — python is only used by the one-time converter
@@ -549,33 +549,33 @@ and the optional API gateway.
 
 #### The same commands run any of the models
 
-`coli` reads the model's `config.json`, picks the matching engine binary, and
+`lmatomic` reads the model's `config.json`, picks the matching engine binary, and
 renders that family's chat template — so **nothing about the command line
 changes between models**. Build the engine you want once, then just point
-`COLI_MODEL` at the right directory:
+`LMA_MODEL` at the right directory:
 
 ```bash
 make -C c glm                                     # GLM-5.2
 make -C c inkling                                 # Inkling
 make -C c kimi_k3                                 # Kimi K3
 
-COLI_MODEL=/nvme/glm52_i4      ./coli chat        # TUI
-COLI_MODEL=/nvme/inkling_i4    ./coli chat
-COLI_MODEL=/nvme/kimi_k3       ./coli chat
+LMA_MODEL=/nvme/glm52_i4      ./lmatomic chat        # TUI
+LMA_MODEL=/nvme/inkling_i4    ./lmatomic chat
+LMA_MODEL=/nvme/kimi_k3       ./lmatomic chat
 
-./coli web --model /nvme/inkling_i4               # API + dashboard, opens a browser
-./coli web --model /nvme/kimi_k3
-./coli serve --model /nvme/inkling_i4             # API + dashboard, no browser
+./lmatomic web --model /nvme/inkling_i4               # API + dashboard, opens a browser
+./lmatomic web --model /nvme/kimi_k3
+./lmatomic serve --model /nvme/inkling_i4             # API + dashboard, no browser
 ```
 
-For the non-GLM engines `coli chat` starts the gateway locally and attaches the
+For the non-GLM engines `lmatomic chat` starts the gateway locally and attaches the
 TUI to it, so the TUI, the API and the dashboard all go through the same
 arch-aware chat template — you never have to pass the template yourself.
 
 Two things that differ per model, both documented in the per-model page:
 
 - **Inkling on a RAM-tight host** needs the int4 dense container and a small
-  expert cache: `./coli chat --model /nvme/inkling_i4 --cap 2`
+  expert cache: `./lmatomic chat --model /nvme/inkling_i4 --cap 2`
   (see [inkling.md](docs/inkling.md) — the default `--cap 8` wants ~14 GB of
   cache on top of the resident set).
 - **Kimi K3** streams its MXFP4 experts from the original checkpoint, so there
@@ -612,15 +612,15 @@ verified under WSL2) that keeps every stage CPU-canonical and falls back per sta
 ```bash
 cd c
 make deepseek-v4
-python ./coli chat --model /path/to/DeepSeek-V4-Flash --ram 32
-# also: coli run / coli serve / coli web
+python ./lmatomic chat --model /path/to/DeepSeek-V4-Flash --ram 32
+# also: lmatomic run / lmatomic serve / lmatomic web
 # Windows CUDA tier: make cuda-dsv4-dll CUDA_ARCH=portable  (+ make cuda-dsv4-dg-dll on RTX 50)
 ```
 
 Two opt-in GPU levers are new and looking for community numbers, both default
 off and byte-identical when unset: `DSV4_HYBRID=1` splits VRAM-tier misses
 between the GPU fill branch and the CPU branch using bandwidths measured at
-runtime, and `COLI_CUDA_MOE_DOUBLE=1` (on top of `COLI_CUDA_MOE_BATCH=1`)
+runtime, and `LMA_CUDA_MOE_DOUBLE=1` (on top of `LMA_CUDA_MOE_BATCH=1`)
 prefetches the next layer's full expert set into a second VRAM bank while the
 current layer computes, falling back to the single bank when VRAM is short.
 The CUDA tier also runs on Pascal and Turing cards now (GTX 10 / RTX 20
@@ -669,7 +669,7 @@ checkpoint validation, and the generated tiny independent oracle.
 
 ## Supporting the project
 
-colibrì started as a one-person project on a 12-core laptop with 25 GB of RAM;
+LM Atomic started as a one-person project on a 12-core laptop with 25 GB of RAM;
 today its numbers come from a community of real machines. If it's useful to you:
 
 - ⭐ star the repo and share it;
@@ -684,7 +684,7 @@ today its numbers come from a community of real machines. If it's useful to you:
 ```
 Makefile                  root build/check entry point
 c/
-├── colibri.c             GLM-5.2 engine  (make glm)
+├── glm52.c             GLM-5.2 engine  (make glm)
 ├── inkling.c             Inkling engine  (make inkling)
 ├── kimi_k3.c             Kimi K3 engine  (make kimi_k3)
 ├── deepseek_v4.c         DeepSeek V4 Flash engine  (make deepseek-v4)
@@ -698,7 +698,7 @@ c/
 ├── tok.h, json.h         tokenizer and JSON parser
 ├── compat.h              Windows/macOS shims (POSIX names, one place)
 ├── expert_store.h        streaming expert cache
-├── route_trace.h         routing telemetry and .coli_usage, engine-agnostic
+├── route_trace.h         routing telemetry and .lma_usage, engine-agnostic
 ├── kv_prefix.h           KV prefix reuse across turns
 │
 ├── backend_cuda.*        optional CUDA tier   (CUDA=1)
@@ -706,9 +706,9 @@ c/
 ├── backend_vulkan.*      optional Vulkan tier (VULKAN=1)
 │
 ├── Makefile              build and local checks
-├── coli                  user-facing CLI
+├── lmatomic                  user-facing CLI
 ├── openai_server.py      OpenAI-compatible HTTP gateway
-├── resource_plan.py      RAM/VRAM planner behind `coli plan` and `coli doctor`
+├── resource_plan.py      RAM/VRAM planner behind `lmatomic plan` and `lmatomic doctor`
 ├── tools/                offline conversion, fixtures and benchmarks
 ├── scripts/              long-running conversion helpers
 └── tests/                dependency-free C and Python tests
@@ -728,7 +728,7 @@ landed in one engine and never reached its siblings.
 From the repository root, `make`, `make check` and `make clean` delegate to the
 engine Makefile.
 
-## Why "colibrì"
+## Why "LM Atomic"
 
 The hummingbird weighs a few grams, hovers in place, and visits a thousand
 flowers a day. This engine keeps a 744-billion-parameter giant alive on
@@ -736,7 +736,7 @@ hummingbird rations: 25 GB of RAM, twelve CPU cores, and a lot of disk patience.
 
 ## Acknowledgements
 
-colibrì is an engine; the minds it runs are a gift. Thank you to the teams
+LM Atomic is an engine; the minds it runs are a gift. Thank you to the teams
 releasing frontier-class weights in the open — **Z.ai** (GLM), **Moonshot AI**
 (Kimi), **Alibaba Qwen**, **MiniMax**, and **Allen AI** (OLMoE) — and to every
 contributor who benchmarked, bisected, replicated an atlas run, or sent a patch.
@@ -783,7 +783,7 @@ these is used or reimplemented in the tree today:
 - [transformers](https://github.com/huggingface/transformers) — the oracle:
   CI reproduces a random-init model token for token against it.
 - [DietGPU](https://github.com/facebookresearch/dietgpu) — the GPU ANS codec
-  behind the experimental compressed expert tier (`COLI_ANS`).
+  behind the experimental compressed expert tier (`LMA_ANS`).
 - [rocWMMA](https://github.com/ROCm/rocWMMA) — the HIP backend maps CUDA's
   `nvcuda::wmma` fragment/mma_sync API onto it (`c/backend_gpu_compat.h`), which
   is what lets one .cu source compile for both vendors.

@@ -13,7 +13,7 @@
   "K3_MLA_BITS": "32",
   "K3_HEAD_BITS": "32",
   "K3_IDOT": "0",
-  "COLI_TEMP": "0"
+  "LMA_TEMP": "0"
  },
  "cases": {
   "short": {

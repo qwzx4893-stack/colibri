@@ -1,4 +1,4 @@
-/* Batteria di test per fse_coli.h — scritta PRIMA che il codec tocchi glm.c.
+/* Batteria di test per fse_lma.h — scritta PRIMA che il codec tocchi glm.c.
  *
  * Questo codec decomprimera' PESI: un bug qui non crasha, corrompe l'output
  * del modello in silenzio. Quindi: round-trip esatti, distribuzioni degeneri,
@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "../fse_coli.h"
+#include "../fse_lma.h"
 
 static uint64_t rng=0x243F6A8885A308D3ull;
 static uint32_t xr(void){ rng^=rng<<13; rng^=rng>>7; rng^=rng<<17; return (uint32_t)(rng>>32); }
@@ -30,7 +30,7 @@ static int roundtrip(const uint8_t *in, size_t n, const char *name, double *rati
 
 int main(void){
     int fail=0; double r;
-    printf("test_fse: rANS nibble per il container colibri'\n");
+    printf("test_fse: rANS nibble per il container lmatomic'\n");
 
     /* --- 1. vettori noti e casi limite --- */
     { uint8_t v[]={0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC,0xDD,0xEE,0xFF};

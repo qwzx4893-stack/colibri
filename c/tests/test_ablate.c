@@ -1,7 +1,7 @@
 /* ============================================================================
  * test_ablate.c — standalone unit tests for the expert causal-ablation logic
  * (abl.h).  No model, no weights: it links the SAME abl.h the engine links and
- * drives a faithful MINIATURE of colibri's moe() routing+accumulate (FASE A
+ * drives a faithful MINIATURE of lmatomic's moe() routing+accumulate (FASE A
  * selection -> route-around compaction -> module-swap remap -> norm_topk ->
  * routed_scale ; FASE C weighted accumulate with the contribution skip) with
  * synthetic router state, applying the EXACT hook arithmetic the ablation hooks
@@ -41,13 +41,13 @@ static const float ROUTED_SCALE = 2.5f;   /* stand-in for c->routed_scale */
 static float expert_out(int layer, int e){ return (float)(1 + (layer*131 + e*7) % 97); }
 
 /* FASE A selection: pick KE distinct experts for (item,layer), strictly
- * decreasing gate; w[] initialised to the (pre-norm) gate, as in colibri. */
+ * decreasing gate; w[] initialised to the (pre-norm) gate, as in lmatomic. */
 static void select_topk(long item, int layer, int *idx, float *w){
     int step = 3, base = (int)((item*7 + layer*11) % E);
     for(int kk=0; kk<KE; kk++){
         int e = (base + kk*step) % E;
         idx[kk] = e;
-        w[kk]   = 0.9f - 0.05f*(float)kk;   /* pre-norm sigmoid gate (colibri: w[kk]=logit[best]) */
+        w[kk]   = 0.9f - 0.05f*(float)kk;   /* pre-norm sigmoid gate (lmatomic: w[kk]=logit[best]) */
     }
 }
 

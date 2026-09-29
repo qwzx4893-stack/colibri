@@ -1,16 +1,16 @@
 """The dashboard's Brain and Profile tabs read four lines from the engine's
 stdout: EMAP, HITS, PROF, TIERS. On Qwen3.6 they were empty, not because
 anything needed activating but because qwen36.c emitted none of them. This
-test drives the engine the way the dashboard does -- through `coli serve`
+test drives the engine the way the dashboard does -- through `lmatomic serve`
 and the /experts and /profile endpoints -- and asserts the data arrives in
 the shape the server parses, so a family that stops emitting a line fails
 here rather than as a blank tab on a user's screen.
 
 It needs a Qwen3.6 container with a tokenizer.json and a built `qwen36`.
-Set COLI_QWEN36_FIXTURE to the container directory; without it the test is
+Set LMA_QWEN36_FIXTURE to the container directory; without it the test is
 skipped, with the reason on the record. The CI job builds the tiny fixture it
 already uses for the token-exact oracle and adds the byte tokenizer from
-tools/make_edge_tiny_tokenizer.py, which is all `coli serve` needs.
+tools/make_edge_tiny_tokenizer.py, which is all `lmatomic serve` needs.
 """
 import json
 import os
@@ -23,7 +23,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-FIXTURE = os.environ.get("COLI_QWEN36_FIXTURE")
+FIXTURE = os.environ.get("LMA_QWEN36_FIXTURE")
 
 
 def free_port():
@@ -39,7 +39,7 @@ def get_json(url, timeout=10):
 
 @unittest.skipUnless(FIXTURE and Path(FIXTURE, "config.json").is_file()
                      and Path(FIXTURE, "tokenizer.json").is_file(),
-                     "COLI_QWEN36_FIXTURE not set to a Qwen3.6 container with a tokenizer")
+                     "LMA_QWEN36_FIXTURE not set to a Qwen3.6 container with a tokenizer")
 @unittest.skipUnless((HERE / "qwen36").exists() or (HERE / "qwen36.exe").exists(),
                      "qwen36 engine is not built")
 class Qwen36DashboardTest(unittest.TestCase):
@@ -47,7 +47,7 @@ class Qwen36DashboardTest(unittest.TestCase):
     def setUpClass(cls):
         cls.port = free_port()
         cls.proc = subprocess.Popen(
-            [sys.executable, str(HERE / "coli"), "serve", "--model", FIXTURE,
+            [sys.executable, str(HERE / "lmatomic"), "serve", "--model", FIXTURE,
              "--port", str(cls.port), "--cap", "4"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         deadline = time.time() + 180
@@ -57,10 +57,10 @@ class Qwen36DashboardTest(unittest.TestCase):
                 break
             except Exception:
                 if cls.proc.poll() is not None:
-                    raise RuntimeError("coli serve exited: " + cls.proc.stdout.read()[-2000:])
+                    raise RuntimeError("lmatomic serve exited: " + cls.proc.stdout.read()[-2000:])
                 time.sleep(1)
         else:
-            raise RuntimeError("coli serve did not come up in 180 s")
+            raise RuntimeError("lmatomic serve did not come up in 180 s")
         model = get_json(f"http://127.0.0.1:{cls.port}/v1/models")["data"][0]["id"]
         body = json.dumps({"model": model, "prompt": "abcabcabc", "max_tokens": 3}).encode()
         req = urllib.request.Request(f"http://127.0.0.1:{cls.port}/v1/completions", data=body,

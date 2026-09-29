@@ -22,7 +22,7 @@
  * drives tier_warmstart() directly against the fake CUDA backend shared with
  * the other tier tests.
  *
- * Include order matters: qwen36.c first (it never references coli_cuda_*),
+ * Include order matters: qwen36.c first (it never references lma_cuda_*),
  * then the fake backend, then qwen36_tier.c -- which puts the tier's own
  * statics (qs(), G) in this TU, so the test can read back the exact pointer
  * the tier kept. No symbol collides between the two sources.
@@ -156,10 +156,10 @@ static void case_int8(void) {
     printf("int8 container\n");
     Model m; build_model(&m); fill_int8(&m);
 
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", "0", 1);
     unsetenv("QT_NO_WARMSTART");
-    unsetenv("COLI_KEEP_INT8");
+    unsetenv("LMA_KEEP_INT8");
     fake_uploads = 0;
 
     if (!qt_init(NL, NE, EXP_D, EXP_IH, NE, TOPK, 0 /* per-row */, 0 /* int8 */)) {
@@ -195,10 +195,10 @@ static void case_int4(void) {
     printf("int4 container\n");
     Model m; build_model(&m); fill_int4(&m);
 
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", "0", 1);
     unsetenv("QT_NO_WARMSTART");
-    unsetenv("COLI_KEEP_INT8");
+    unsetenv("LMA_KEEP_INT8");
     fake_uploads = 0;
 
     if (!qt_init(NL, NE, EXP_D, EXP_IH, NE, TOPK, 0 /* per-row */, 1 /* int4 */)) {

@@ -12,7 +12,7 @@ class DeepSeekV4DSparkSourceTest(unittest.TestCase):
         cls.drafter = (ROOT / "deepseek_v4_dspark.inc").read_text(
             encoding="utf-8"
         )
-        cls.launcher = (ROOT / "coli").read_text(encoding="utf-8")
+        cls.launcher = (ROOT / "lmatomic").read_text(encoding="utf-8")
 
     def test_complete_three_stage_drafter_is_built(self):
         self.assertEqual(self.drafter.count("static int v4_dspark_draft("), 1)
@@ -22,10 +22,10 @@ class DeepSeekV4DSparkSourceTest(unittest.TestCase):
 
     def test_drafter_is_lazy_and_budgeted_before_target_cache(self):
         reserve = self.engine.index("engine->runtime.dspark_reserve_bytes =")
-        store = self.engine.index("coli_expert_store_backend_open_selected(", reserve)
+        store = self.engine.index("lma_expert_store_backend_open_selected(", reserve)
         self.assertLess(reserve, store)
         self.assertIn("load=lazy verification=exact-target", self.engine)
-        self.assertIn("double total_gb = coli_v4_dspark_cache_gb()", self.drafter)
+        self.assertIn("double total_gb = lma_v4_dspark_cache_gb()", self.drafter)
 
     def test_full_drafter_does_not_reserve_for_other_mtp_profiles(self):
         requested = self.engine.index("requested_full_dspark =")
@@ -73,7 +73,7 @@ class DeepSeekV4DSparkSourceTest(unittest.TestCase):
     def test_full_mtp_expands_ue8m0_scales_once(self):
         self.assertIn("float *wq_a_s, *wq_b_s", self.drafter)
         self.assertIn("st_read_scale_f32(", self.drafter)
-        self.assertIn("view->scale_format = COLI_SCALE_F32", self.drafter)
+        self.assertIn("view->scale_format = LMA_SCALE_F32", self.drafter)
         self.assertIn("* sizeof(float);", self.drafter)
         self.assertIn("static int v4_ds_pack_rows8(", self.drafter)
         self.assertIn("view->block_rows = 8", self.drafter)

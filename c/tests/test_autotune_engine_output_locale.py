@@ -1,4 +1,4 @@
-"""`coli tune` on GLM must read the engine's output whatever the locale.
+"""`lmatomic tune` on GLM must read the engine's output whatever the locale.
 
 autotune._run captured the engine's stdout and stderr in text mode, i.e.
 decoded in the locale's code page. The GLM engine writes UTF-8: with PROF=1,
@@ -6,7 +6,7 @@ which every calibration and replay run sets, its prefill progress line is
 "[prefill] layer 1/78 · 12 token · +0.10s" and its profile verdict carries an
 em dash. On a code page that cannot decode those bytes (cp949, cp932, or the C
 locale with UTF-8 mode off) the reader thread raised UnicodeDecodeError,
-proc.stdout came back None, and `coli tune` died in calibration with
+proc.stdout came back None, and `lmatomic tune` died in calibration with
 
     TypeError: unsupported operand type(s) for +: 'NoneType' and 'str'
 

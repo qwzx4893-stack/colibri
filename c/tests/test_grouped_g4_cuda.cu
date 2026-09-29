@@ -12,7 +12,7 @@
  * upload path applies, so the kernels are exercised exactly as deployed.
  *
  * Phase 2 goes through the public API instead of raw kernels: upload_g plus
- * coli_cuda_expert_group (sync) and coli_cuda_expert_group_issue/take (the
+ * lma_cuda_expert_group (sync) and lma_cuda_expert_group_issue/take (the
  * async decode path the VRAM expert tiers ride) against the same reference —
  * the async result must be bit-identical to the sync one.
  *
@@ -119,9 +119,9 @@ int main(void){
      * call; it must dispatch fmt=4 like the sync path and match it bit for bit. */
     {
         int devs[1]={0};
-        if(!coli_cuda_init(devs,1)){ printf("FAIL cuda init\n"); return 1; }
+        if(!lma_cuda_init(devs,1)){ printf("FAIL cuda init\n"); return 1; }
         int rows[COUNT]={1,2,1}, total=4, api_bad=0;
-        ColiCudaTensor *tg[COUNT]={},*tu[COUNT]={},*td[COUNT]={};
+        LmaCudaTensor *tg[COUNT]={},*tu[COUNT]={},*td[COUNT]={};
         uint8_t *hg[COUNT],*hu[COUNT],*hd[COUNT]; float *hgs[COUNT],*hus[COUNT],*hds[COUNT];
         for(int c=0;c<COUNT;c++){
             int cgs = c==2 ? 0 : gs;            /* expert 2 rides along as fmt=2 */
@@ -135,16 +135,16 @@ int main(void){
             for(size_t i=0;i<(size_t)I*cngD;i++){ hgs[c][i]=.01f+.05f*(rand()/(float)RAND_MAX);
                                                   hus[c][i]=.01f+.05f*(rand()/(float)RAND_MAX); }
             for(size_t i=0;i<(size_t)D*cngI;i++) hds[c][i]=.01f+.05f*(rand()/(float)RAND_MAX);
-            if(!coli_cuda_tensor_upload_g(&tg[c],hg[c],hgs[c],fmt,D,I,0,cgs)||
-               !coli_cuda_tensor_upload_g(&tu[c],hu[c],hus[c],fmt,D,I,0,cgs)||
-               !coli_cuda_tensor_upload_g(&td[c],hd[c],hds[c],fmt,I,D,0,cgs)){
+            if(!lma_cuda_tensor_upload_g(&tg[c],hg[c],hgs[c],fmt,D,I,0,cgs)||
+               !lma_cuda_tensor_upload_g(&tu[c],hu[c],hus[c],fmt,D,I,0,cgs)||
+               !lma_cuda_tensor_upload_g(&td[c],hd[c],hds[c],fmt,I,D,0,cgs)){
                 printf("FAIL upload_g\n"); return 1; }
         }
         float *x=(float*)malloc((size_t)total*D*4),*ysync=(float*)malloc((size_t)total*D*4);
         for(size_t i=0;i<(size_t)total*D;i++) x[i]=(rand()/(float)RAND_MAX-.5f)*2.f;
-        if(!coli_cuda_expert_group(tg,tu,td,rows,COUNT,ysync,x)){ printf("FAIL sync group\n"); return 1; }
-        if(!coli_cuda_expert_group_issue(tg,tu,td,rows,COUNT,x)){ printf("FAIL async issue\n"); return 1; }
-        const float *yasync=coli_cuda_expert_group_take(0);
+        if(!lma_cuda_expert_group(tg,tu,td,rows,COUNT,ysync,x)){ printf("FAIL sync group\n"); return 1; }
+        if(!lma_cuda_expert_group_issue(tg,tu,td,rows,COUNT,x)){ printf("FAIL async issue\n"); return 1; }
+        const float *yasync=lma_cuda_expert_group_take(0);
         if(!yasync){ printf("FAIL async take\n"); return 1; }
         int off=0;
         for(int c=0;c<COUNT;c++){
@@ -165,10 +165,10 @@ int main(void){
             off+=rows[c];
         }
         printf("grouped-g4 API: sync vs oracle + async(issue/take) vs sync, %d mismatches\n",api_bad);
-        for(int c=0;c<COUNT;c++){ coli_cuda_tensor_free(tg[c]);coli_cuda_tensor_free(tu[c]);coli_cuda_tensor_free(td[c]);
+        for(int c=0;c<COUNT;c++){ lma_cuda_tensor_free(tg[c]);lma_cuda_tensor_free(tu[c]);lma_cuda_tensor_free(td[c]);
             free(hg[c]);free(hu[c]);free(hd[c]);free(hgs[c]);free(hus[c]);free(hds[c]); }
         free(x);free(ysync);
-        coli_cuda_shutdown();
+        lma_cuda_shutdown();
         if(api_bad){ printf("FAIL\n"); return 1; }
     }
     printf("OK\n"); return 0;

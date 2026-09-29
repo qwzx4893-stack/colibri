@@ -1,4 +1,4 @@
-/* Fused-Metal format-gate NOTICE test (see metal_fmt_gate_notice in colibri.c, called
+/* Fused-Metal format-gate NOTICE test (see metal_fmt_gate_notice in glm52.c, called
  * once from model_init after all layer tensors are resolved).
  *
  * The trap: a v1-class mixed-precision container can mint any fused-path weight tensor
@@ -10,22 +10,22 @@
  * metal_fused_fmt_ok() allowlist (fmt 1/2/3/4). A miss silently drops the layer off the
  * fused path onto the CPU implementation -- historically with no notice at all, and the
  * kv_b-only notice this one replaced had itself drifted (it ignored g_moe_exact and
- * stayed silent on fmt=4 kv_b under COLI_METAL_MOE_EXACT=1 while both gates closed).
+ * stayed silent on fmt=4 kv_b under LMA_METAL_MOE_EXACT=1 while both gates closed).
  * This test proves the notice (stderr only, NOT a behavior change): one line per
  * offending tensor KIND (bounded, never per-layer), silent when clean, silent without
  * Metal, MTP head excluded, and mode-aware exactly like the gates. It also pins the
  * shared predicate's truth table and the gate masks' bit membership, since the gates
  * consume the exact same function. It calls the functions directly against a hand-built
  * Model, so it needs no real snapshot on disk and no Metal backend link --
- * g_metal_enabled and g_moe_exact are declared unconditionally in colibri.c precisely so
+ * g_metal_enabled and g_moe_exact are declared unconditionally in glm52.c precisely so
  * this stays portable.
  *
  * Portable stderr capture: freopen(stderr) onto a temp file, dup()/dup2() to save and
  * restore the real fd 2 around it. Deliberately no child-process spawn/reap primitives
  * anywhere in this file -- those are POSIX-only and the earlier version of this kind of
  * test broke Windows CI. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <stdio.h>
@@ -188,7 +188,7 @@ int main(void){
         free(m.L);
     }
 
-    /* (a5) MODE TERM (the r4 drift cure): under g_moe_exact=1 (COLI_METAL_MOE_EXACT=1)
+    /* (a5) MODE TERM (the r4 drift cure): under g_moe_exact=1 (LMA_METAL_MOE_EXACT=1)
      * the gates' kv_b term is fmt==2 EXACTLY -- grouped fmt=4 closes both gates, so the
      * notice must fire for it. Mixed 2/4: only the fmt=4 layers are misses. The
      * pre-r4 notice (fmt!=2 && fmt!=4) stayed silent here: gates closed, no signal. */
@@ -204,12 +204,12 @@ int main(void){
         CHECK(count_sub(buf, "[METAL]") == 1);
         CHECK(strstr(buf, "fmt=4") != NULL);               /* the offending format is grouped int4 */
         CHECK(strstr(buf, "2/4 layer") != NULL);            /* only the fmt=4 layers count */
-        CHECK(strstr(buf, "COLI_METAL_MOE_EXACT") != NULL); /* names the mode that excludes fmt=4 */
+        CHECK(strstr(buf, "LMA_METAL_MOE_EXACT") != NULL); /* names the mode that excludes fmt=4 */
         /* mode ON -> the MODE-AWARE remedy: `--kvb-bits 4` alone is circular here (the
          * converter's default --group-size 64 mints fmt=4 again), so the message must
          * name the ungrouped opt-out and the option of unsetting the mode. */
         CHECK(strstr(buf, "--group-size 0") != NULL);
-        CHECK(strstr(buf, "unsetting COLI_METAL_MOE_EXACT") != NULL);
+        CHECK(strstr(buf, "unsetting LMA_METAL_MOE_EXACT") != NULL);
 
         /* ... and all-fmt=4 under the same mode: 3/3 miss */
         for(int i=0;i<4;i++) m.L[i].kv_b.fmt = 4;

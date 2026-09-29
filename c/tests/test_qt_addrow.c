@@ -1,4 +1,4 @@
-/* qt_addrow()/qt_matvec_rows() (colibri.c) -- per-row absorb helpers used only by the
+/* qt_addrow()/qt_matvec_rows() (glm52.c) -- per-row absorb helpers used only by the
  * kv_b MLA-absorption CPU path (l->kv_b, see attention_rows/decode). FIX ROUND 2, engine
  * defect (clean-room conformance trial finding, mutation-proven): both functions dispatch
  * fmt 0/4/5 explicitly, then fall through assuming a PER-ROW scale (t->s[row]) followed by
@@ -33,8 +33,8 @@
  * stamped scale sidecar, and attention_rows' `int absorb = kvs || ...` makes absorb
  * unbypassable on the batched serving path. These arms are the decode support that
  * container needs. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <stdio.h>
@@ -246,7 +246,7 @@ static void test_byte_identity_all_formats(void){
  * same block-scale geometry and the exact same accumulation order (float-accumulate within
  * a 128-wide block, double-accumulate the per-block partials) -- both were written to
  * mirror that convention deliberately (see this PR's qt_matvec_rows fmt=8 branch comment
- * in colibri.c). Compiled in the same translation unit with the same flags, so the two are
+ * in glm52.c). Compiled in the same translation unit with the same flags, so the two are
  * expected to agree tightly; the tolerance below is a guard against incidental FP-contraction
  * differences between the two call sites, not evidence of a real algorithmic mismatch. */
 static void test_fmt8_matmul_fp8_parity(void){

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Il percorso Vulkan di GLM-5.3 risponde come la CPU.
 
-Con COLI_VULKAN=1 le matrici residenti passano dal backend Vulkan invece che
+Con LMA_VULKAN=1 le matrici residenti passano dal backend Vulkan invece che
 dai kernel di quant.h. Sono due implementazioni diverse della stessa moltiplicazione,
 e la sola cosa che conta e' che diano gli stessi token: un kernel che sbaglia
 la decodifica dei nibble, il verso dei gruppi o l'ordine delle scale non da'
@@ -32,10 +32,10 @@ from pathlib import Path
 def run(binary, fixture, reference, vulkan, shaders):
     environment = {**os.environ, "GLM53_BITS": "4"}
     if vulkan:
-        environment["COLI_VULKAN"] = "1"
-        environment["COLI_VK_SHADERS"] = str(shaders)
+        environment["LMA_VULKAN"] = "1"
+        environment["LMA_VK_SHADERS"] = str(shaders)
     else:
-        environment.pop("COLI_VULKAN", None)
+        environment.pop("LMA_VULKAN", None)
     command = [binary, "--model", str(fixture),
                "--ids", ",".join(str(t) for t in reference["prompt"]),
                "--greedy", "4"]

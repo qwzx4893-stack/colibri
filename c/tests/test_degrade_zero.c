@@ -2,9 +2,9 @@
  *
  * Strategy: mirrors test_ablate.c — a standalone mini-harness that reimplements
  * only the routing data structures the DEGRADE_ZERO block in moe() touches.
- * No colibri.c include, no Model, no weights, no disk I/O needed.
+ * No glm52.c include, no Model, no weights, no disk I/O needed.
  *
- * The block under test (colibri.c, "DEGRADE_ZERO: zero-fill miss slots..."):
+ * The block under test (glm52.c, "DEGRADE_ZERO: zero-fill miss slots..."):
  *   1. Marks cache hits as always-keep.
  *   2. Per-position tau gate: a miss expert is kept if ANY position routes to it
  *      with weight >= tau (each position tested independently, not aggregated).
@@ -67,7 +67,7 @@ static int is_resident(int eid) {
     return 0;
 }
 
-/* ---- the drop logic extracted verbatim from colibri.c moe() --------------- *
+/* ---- the drop logic extracted verbatim from glm52.c moe() --------------- *
  * Parameters match the local variables in moe() at the insertion point:
  *   idxs[S*K], ws[S*K], keff[S], uniq[nu], nu, S, K.
  * Returns the new nu after compaction. */

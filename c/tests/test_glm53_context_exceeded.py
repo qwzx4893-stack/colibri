@@ -3,7 +3,7 @@
 The gateway maps one engine frame to the OpenAI error clients act on:
 `ERROR <id> CONTEXT_EXCEEDED ...` (#506, both spellings since #1381). glm53
 refused a prompt that does not fit its session with `ERROR <id> BAD_REQUEST`,
-which the gateway can only treat as an engine fault: HTTP 500 "The colibri
+which the gateway can only treat as an engine fault: HTTP 500 "The lmatomic
 engine failed to process the request.", streaming or not. A client that
 compacts its conversation on context_length_exceeded never gets the chance to.
 olmoe and inkling had the same gap (#1483).
@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent.parent
 # job of check.yml, which builds glm53 and the fixture; the Python job of
 # ci.yml cannot generate the fixture (it needs PyTorch and Transformers).
 BINARY = next((path for path in (HERE / "glm53.exe", HERE / "glm53") if path.exists()), None)
-FIXTURE = Path(os.environ.get("COLI_GLM53_FIXTURE", ""))
+FIXTURE = Path(os.environ.get("LMA_GLM53_FIXTURE", ""))
 MAXT = 64                               # the smallest session glm53 accepts
 MAX_TOKENS = 4
 
@@ -66,7 +66,7 @@ def serve_turn(prompt):
 
 @unittest.skipUnless(BINARY, "glm53 engine is not built")
 @unittest.skipUnless(FIXTURE.name and (FIXTURE / "config.json").is_file(),
-                     "COLI_GLM53_FIXTURE not set to a GLM-5.3-Flash container")
+                     "LMA_GLM53_FIXTURE not set to a GLM-5.3-Flash container")
 class Glm53ContextExceededTest(unittest.TestCase):
     OVER_LONG = b"abc" * 40             # 120 bytes, more tokens than MAXT holds
 

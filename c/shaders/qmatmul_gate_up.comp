@@ -1,5 +1,5 @@
 #version 450
-// Fused dual projection + SiLU gate, the VK equivalent of colibri's
+// Fused dual projection + SiLU gate, the VK equivalent of lmatomic's
 // grouped_hidden_w4_dual:  hidden[s,o] = silu(gate[s,o]) * up[s,o]
 //   gate[s,o] = (sum_i x[s,i]*dequant(Wg[o,i])) * gscale[o]
 //   up  [s,o] = (sum_i x[s,i]*dequant(Wu[o,i])) * uscale[o]

@@ -27,7 +27,7 @@ Run them from `c/`, for example:
 
 ```sh
 python3 tools/convert_fp8_to_int4.py --selftest
-python3 tools/make_glm_bench_model.py --output /tmp/colibri-bench
+python3 tools/make_glm_bench_model.py --output /tmp/lmatomic-bench
 ```
 
 `make_glm_oracle.py` also produces the quantized routed-expert fixtures for the
@@ -40,6 +40,6 @@ from the dequantized weights so the engine reproduces it token-exactly:
 python3 tools/make_glm_oracle.py --fmt6   # -> glm_tiny_fmt6/
 python3 tools/make_glm_oracle.py --fmt4   # -> glm_tiny_fmt4/
 # verify the engine loads the formats directly (32/32 expected):
-SNAP=./glm_tiny_fmt6 REF=./glm_tiny_fmt6/ref_glm.json TF=1 COLI_TEMP=0 ./colibri 64 16 16
-SNAP=./glm_tiny_fmt4 REF=./glm_tiny_fmt4/ref_glm.json TF=1 COLI_TEMP=0 ./colibri 64 16 16
+SNAP=./glm_tiny_fmt6 REF=./glm_tiny_fmt6/ref_glm.json TF=1 LMA_TEMP=0 ./glm52 64 16 16
+SNAP=./glm_tiny_fmt4 REF=./glm_tiny_fmt4/ref_glm.json TF=1 LMA_TEMP=0 ./glm52 64 16 16
 ```

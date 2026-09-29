@@ -3,7 +3,7 @@
  * The helper is shared by the GLM, Kimi K3, and OLMoE engines.  Exercise its
  * runtime contract directly: cap an SMT host to physical cores when topology is
  * available, preserve an explicit OMP_NUM_THREADS override, and honor the
- * existing COLI_NO_OMP_TUNE kill switch.  Hosts without SMT still validate the
+ * existing LMA_NO_OMP_TUNE kill switch.  Hosts without SMT still validate the
  * two override paths and correctly leave the OpenMP default unchanged. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,7 +32,7 @@ static int test_windows_variable_records(void)
         memcpy(record + offsetof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, Size),
                &size, sizeof(size));
     }
-    if (coli_count_windows_physical_cores(records, sizeof(records)) != 2) {
+    if (lma_count_windows_physical_cores(records, sizeof(records)) != 2) {
         fprintf(stderr, "Windows variable-sized topology records lost a core\n");
         return 1;
     }
@@ -48,16 +48,16 @@ int main(void)
 #else
     int fail = 0;
     int logical = omp_get_num_procs();
-    int physical = coli_physical_cores();
+    int physical = lma_physical_cores();
 
 #ifdef _WIN32
     fail |= test_windows_variable_records();
 #endif
 
     unsetenv("OMP_NUM_THREADS");
-    unsetenv("COLI_NO_OMP_TUNE");
+    unsetenv("LMA_NO_OMP_TUNE");
     omp_set_num_threads(logical);
-    coli_omp_tune_threads("test");
+    lma_omp_tune_threads("test");
     int got = omp_get_max_threads();
     int want = physical > 0 && physical < logical ? physical : logical;
     if (got != want) {
@@ -69,7 +69,7 @@ int main(void)
     int sentinel = logical > 1 ? logical - 1 : 1;
     omp_set_num_threads(sentinel);
     setenv("OMP_NUM_THREADS", "7", 1);
-    coli_omp_tune_threads("test");
+    lma_omp_tune_threads("test");
     if (omp_get_max_threads() != sentinel) {
         fprintf(stderr, "explicit OMP_NUM_THREADS override was not preserved\n");
         fail = 1;
@@ -77,13 +77,13 @@ int main(void)
     unsetenv("OMP_NUM_THREADS");
 
     omp_set_num_threads(sentinel);
-    setenv("COLI_NO_OMP_TUNE", "1", 1);
-    coli_omp_tune_threads("test");
+    setenv("LMA_NO_OMP_TUNE", "1", 1);
+    lma_omp_tune_threads("test");
     if (omp_get_max_threads() != sentinel) {
-        fprintf(stderr, "COLI_NO_OMP_TUNE kill switch was not preserved\n");
+        fprintf(stderr, "LMA_NO_OMP_TUNE kill switch was not preserved\n");
         fail = 1;
     }
-    unsetenv("COLI_NO_OMP_TUNE");
+    unsetenv("LMA_NO_OMP_TUNE");
 
     if (fail) {
         puts("test_omp_tune: FAIL");

@@ -17,7 +17,7 @@ bandwidth":
 | about 2900–3000 MB/s | unbuffered, 64 KiB-multiple, QD4+ | the useful result for that host and workload |
 
 The third row is deliberately retained as a retraction. A controlled rerun did
-not reproduce the claimed length effect, so Colibri did not carry the proposed
+not reproduce the claimed length effect, so LM Atomic did not carry the proposed
 64 KiB rounding patch. Correcting a mechanism is part of the benchmark record,
 not something to hide from it.
 
@@ -79,7 +79,7 @@ their later correction of the #863 explanation.
 ## Compare HTTP serving with a fixed workload
 
 `c/tools/benchmark_http_serving.py` uses the OpenAI-compatible streaming chat
-endpoint and Python's standard library. Run it against Colibri, SGLang, or vLLM
+endpoint and Python's standard library. Run it against LM Atomic, SGLang, or vLLM
 with the same workload and generation settings. This measures the whole HTTP
 request path, including server queueing and prefill, unlike a steady-decode-only
 engine benchmark. No performance comparison is implied by providing the tool.
@@ -99,7 +99,7 @@ From the repository root, with the server already running:
 python3 c/tools/benchmark_http_serving.py \
   --base-url http://127.0.0.1:8000/v1 --model your-served-model \
   --workload prompts.jsonl --concurrency 4 --repeats 3 \
-  --max-tokens 128 --temperature 0 --timeout 60 --output colibri-c4.json
+  --max-tokens 128 --temperature 0 --timeout 60 --output lmatomic-c4.json
 ```
 
 Repeat with the other server's API root, model alias, and a distinct output file.
@@ -248,7 +248,7 @@ Goodput still divides qualifying completions by the entire batch wall time,
 including the drain after the last scheduled arrival. Keep rate, concurrency,
 request count, latency targets and timing basis equal across compared reports.
 
-### Repeated Colibri / SGLang / vLLM baseline
+### Repeated LM Atomic / SGLang / vLLM baseline
 
 The [three-engine baseline protocol](baselines/README.md) provides a manifest,
 rotating run plan and C1/C4/C8/C16 collector using this HTTP harness. Its comparison

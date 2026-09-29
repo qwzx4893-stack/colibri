@@ -23,7 +23,7 @@ Regeneration (run from c/):
     python3 tools/make_glm_oracle.py --fmt6
     python3 tools/make_glm_oracle.py --fmt4
 
-Determinism: both the worker and the coordinator run the SAME c/colibri binary
+Determinism: both the worker and the coordinator run the SAME c/glm52 binary
 (same ARCH) with the SAME numeric-path env block, so the comparison is
 meaningful rather than accidental.
 """
@@ -39,11 +39,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 C_DIR = HERE.parent
-ENGINE = C_DIR / "colibri"
+ENGINE = C_DIR / "lmatomic"
 FMT6 = C_DIR / "glm_tiny_fmt6"
 FMT4 = C_DIR / "glm_tiny_fmt4"
 
-# cap, ebits, dbits — same order the engine parses argv (c/colibri.c main()).
+# cap, ebits, dbits — same order the engine parses argv (c/glm52.c main()).
 ENGINE_ARGS = ["64", "16", "16"]
 
 # Numeric-path determinism pinning, applied to BOTH the worker and the
@@ -52,16 +52,16 @@ ENGINE_ARGS = ["64", "16", "16"]
 _NUMERIC_ENV = {
     "IDOT": "0",
     "I4S": "1",
-    "COLI_NO_FUSED_PAIR": "1",
+    "LMA_NO_FUSED_PAIR": "1",
     "SPEC_PIN": "0",
     "XEXP": "0",
     "I4_ACC512": "0",
     "I3_AVX512": "0",
     "DRAFT": "0",
-    "COLI_CUDA": "0",
-    "COLI_METAL": "0",
-    "COLI_VULKAN": "0",
-    "COLI_NO_OMP_TUNE": "1",
+    "LMA_CUDA": "0",
+    "LMA_METAL": "0",
+    "LMA_VULKAN": "0",
+    "LMA_NO_OMP_TUNE": "1",
 }
 
 
@@ -79,7 +79,7 @@ def _available() -> bool:
 
 def _skip_reason() -> str:
     if not ENGINE.exists():
-        return "colibri is not built (run: make colibri)"
+        return "lmatomic is not built (run: make glm52)"
     return "glm_tiny_fmt6 fixture absent (run: python3 tools/make_glm_oracle.py --fmt6)"
 
 

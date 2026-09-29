@@ -127,7 +127,7 @@ static void case_ceiling(void) {
 
 /* #1641: max_tokens is a ceiling, not a target. The gateway's default budget
  * (8192, the whole default context) used to be refused on every request
- * without max_tokens and on every `coli chat` message; now it is clamped to
+ * without max_tokens and on every `lmatomic chat` message; now it is clamped to
  * the room the context leaves, and only a prompt that does not fit is refused.
  * A read-only logprobs request (max_tokens 0) may fill the context exactly. */
 static void case_budget(void) {

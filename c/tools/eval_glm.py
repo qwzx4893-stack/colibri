@@ -258,7 +258,7 @@ def completion_error(returncode, completed, expected, continuation_tokens,
     None if it can report a table (even a partial one).
 
     Matches dev's own exit-code contract exactly, since callers such as
-    ``coli bench`` (``sys.exit(subprocess.call(cmd, ...))``) and
+    ``lmatomic bench`` (``sys.exit(subprocess.call(cmd, ...))``) and
     ``diag_harness.py`` (which parses this tool's own accuracy table from
     a subprocess call) depend on it: dev exits nonzero ONLY when the
     engine itself produced nothing at all (nonzero exit AND zero

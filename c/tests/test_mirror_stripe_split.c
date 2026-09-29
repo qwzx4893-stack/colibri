@@ -17,9 +17,9 @@
  * These are pure-arithmetic checks: no fds, no threads, no model. The plan
  * reads only its arguments plus g_mir_cut, so a test drives it by setting that.
  */
-#define COLI_STRIPE_SPLIT_TEST 1
-#define main coli_glm_main_unused   /* same trick as test_cap_precedence.c */
-#include "../colibri.c"
+#define LMA_STRIPE_SPLIT_TEST 1
+#define main lma_glm_main_unused   /* same trick as test_cap_precedence.c */
+#include "../glm52.c"
 #undef main
 
 static int failures = 0;

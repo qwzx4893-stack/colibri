@@ -30,8 +30,8 @@
  *
  * In-memory only (no scratch files), so it builds clean on the Windows MinGW CI
  * job without the unmerged compat shim. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <math.h>

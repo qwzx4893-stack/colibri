@@ -16,7 +16,7 @@
  *        make -C c tests/test_olmoe_dot_i8_16_sse41   (forces the SSE4.1 body)
  */
 #define OLMOE_TESTING 1
-#define main coli_olmoe_main_unused
+#define main lma_olmoe_main_unused
 #include "../olmoe.c"
 #undef main
 

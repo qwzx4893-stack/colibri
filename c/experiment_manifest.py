@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate reproducible, one-variable Colibri experiment records."""
+"""Validate reproducible, one-variable LM Atomic experiment records."""
 
 from __future__ import annotations
 

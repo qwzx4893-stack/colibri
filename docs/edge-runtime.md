@@ -1,37 +1,37 @@
 # Model-edge runtime ABI
 
-`c/edge_runtime.h` is Colibri's engine-neutral local C boundary for the two
+`c/edge_runtime.h` is LM Atomic's engine-neutral local C boundary for the two
 ends of a distributed inference route:
 
 ```text
 text -> tokenizer -> embedding -> one or more Segment engines -> final head
 ```
 
-It is not a network protocol. Colibri owns tokenization, model boundary math,
+It is not a network protocol. LM Atomic owns tokenization, model boundary math,
 formats and kernels; a consumer such as Lumabri owns discovery, transport,
 placement, leases and session lifecycle. Together with
 [`segment_runtime.h`](../c/segment_runtime.h), this lets a chatter process run
 a real model without loading every transformer layer locally.
 
-The ABI is additive. Ordinary Colibri CLIs do not link or register Edge
+The ABI is additive. Ordinary LM Atomic CLIs do not link or register Edge
 adapters and keep their existing initialization and inference paths.
 
 External consumers can build the complete CPU-baseline runtime with
 `make -C c segment-edge-library`. The resulting
-`c/build/segment/libcolibri_segment_edge.a` contains both public runtimes and
+`c/build/segment/liblmatomic_segment_edge.a` contains both public runtimes and
 all seven built-in adapters. Consumers link it after their own objects and call
-the explicit registration functions below; ordinary Colibri executables do
+the explicit registration functions below; ordinary LM Atomic executables do
 not link this archive.
 
 ## Lifecycle and compatibility
 
 1. Explicitly register the required adapters during process initialization.
    There are no link-time constructors, including on Windows.
-2. Open one model boundary with `coli_edge_engine_open`.
+2. Open one model boundary with `lma_edge_engine_open`.
 3. Read its capabilities and require an exact match with the routed Segment
    chain for `state_schema`, `numeric_class`, state dtype and state width.
 4. Tokenize and embed the prompt, run it through the complete Segment chain,
-   then call `coli_edge_select` on the last row.
+   then call `lma_edge_select` on the last row.
 5. For decode, embed the selected token and repeat at the next position.
 6. Close the Edge engine after its sessions have drained.
 
@@ -41,7 +41,7 @@ the runtime, so an older runtime cannot leave future extension fields
 uninitialized.
 
 Version 1 deliberately exposes deterministic greedy selection. Sampling is a
-future additive operation; it is not emulated outside Colibri. Registration
+future additive operation; it is not emulated outside LM Atomic. Registration
 must finish before concurrent lookup. A consumer should currently host one
 active model per chatter process because some existing engine configuration is
 process-global; Qwen's production tokenizer makes that restriction explicit
@@ -50,7 +50,7 @@ and rejects a second live Qwen Edge engine.
 ## Real adapters
 
 `c/edge_adapters.h` exposes explicit registration functions for every current
-Colibri model family:
+LM Atomic model family:
 
 | Adapter | Boundary state | Edge residency |
 | --- | --- | --- |
@@ -64,22 +64,22 @@ Colibri model family:
 
 Every adapter currently advertises CPU only. Accelerator flags will be added
 only when that adapter actually executes its Edge operations on the matching
-Colibri backend. `resident_bytes` reports the adapter-owned model tensors and
+LM Atomic backend. `resident_bytes` reports the adapter-owned model tensors and
 can be bounded with `memory_limit_bytes`; model files and tokenizer metadata
 remain additional mapped/indexed resources.
 
 ## API contract
 
 Tokenize and detokenize support a sizing pass by passing a null output with
-zero capacity. `coli_edge_embed` accepts exactly one token ID per row and emits
-`rows * state_width` values in the advertised dtype. `coli_edge_select`
+zero capacity. `lma_edge_embed` accepts exactly one token ID per row and emits
+`rows * state_width` values in the advertised dtype. `lma_edge_select`
 applies the model's exact final transform and output head to every input row,
 returning one greedy token and an optional score per row. Edge ABI v2 also
-exposes `coli_edge_logits`, which returns the complete row-major vocabulary
-logits after that same model-specific transform. Colibri therefore remains the
+exposes `lma_edge_logits`, which returns the complete row-major vocabulary
+logits after that same model-specific transform. LM Atomic therefore remains the
 owner of model math, while a serving caller can apply temperature, top-p and
 its own reproducible RNG policy without duplicating any of the six heads.
-`argmax(logits)` is release-gated against `coli_edge_select` for every family.
+`argmax(logits)` is release-gated against `lma_edge_select` for every family.
 
 The runtime validates structure sizes, activation geometry, batch limits,
 output capacities and cancellation before entering an adapter. Model adapters

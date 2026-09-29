@@ -146,10 +146,10 @@ class ResourcePlanTest(unittest.TestCase):
                            engine_group="glm53")
         self.assertEqual(glm53, {})
 
-    def test_only_the_colibri_engine_gets_its_own_knobs(self):
-        """DRAFT, PIPE, COLI_CUDA_PIPE, COLI_NUMA and PIN_GB are read by
-        colibri.c and by no other engine. glm53 was excluded; every other
-        sibling was still told to set them, in `coli plan`, in `coli doctor`
+    def test_only_the_lmatomic_engine_gets_its_own_knobs(self):
+        """DRAFT, PIPE, LMA_CUDA_PIPE, LMA_NUMA and PIN_GB are read by
+        glm52.c and by no other engine. glm53 was excluded; every other
+        sibling was still told to set them, in `lmatomic plan`, in `lmatomic doctor`
         and in the --auto-tier environment."""
         from family_registry import all_families
         from resource_plan import _auto_tune
@@ -158,11 +158,11 @@ class ResourcePlanTest(unittest.TestCase):
                 "free_bytes": 24 * GB}]
         cases = (("disk", 0.50, [], 2), ("compute", 1.0, [], 2),
                  ("compute", 1.0, gpu, 2), ("mixed", 0.80, gpu + gpu, 1))
-        core = [_auto_tune(*case, False, engine_group="colibri-core") for case in cases]
+        core = [_auto_tune(*case, False, engine_group="glm52-core") for case in cases]
         self.assertEqual({key for tune in core for key in tune},
-                         {"DRAFT", "PIPE", "COLI_CUDA_PIPE", "COLI_NUMA",
+                         {"DRAFT", "PIPE", "LMA_CUDA_PIPE", "LMA_NUMA",
                           "_numa_hint", "PIN_GB"})
-        groups = {family.engine_group for family in all_families()} - {"colibri-core"}
+        groups = {family.engine_group for family in all_families()} - {"glm52-core"}
         self.assertIn("qwen36", groups)
         for group in sorted(groups):
             for case in cases:
@@ -193,7 +193,7 @@ class ResourcePlanTest(unittest.TestCase):
         self.assertEqual(automatic, 128)
         self.assertEqual(cap_for_arch("deepseek_v41", 4, {"RAM_GB": "12"}, self.model), 4)
 
-    def test_sibling_plan_advises_no_colibri_knob(self):
+    def test_sibling_plan_advises_no_lmatomic_knob(self):
         other = tempfile.TemporaryDirectory()
         self.addCleanup(other.cleanup)
         olmoe = Path(other.name)
@@ -217,7 +217,7 @@ class ResourcePlanTest(unittest.TestCase):
         self.assertEqual(plan["tune"], {})
         self.assertNotIn("auto-tune:", format_plan(plan))
         env = environment_for_plan(plan, {})
-        for key in ("DRAFT", "PIPE", "COLI_CUDA_PIPE", "COLI_NUMA", "PIN_GB"):
+        for key in ("DRAFT", "PIPE", "LMA_CUDA_PIPE", "LMA_NUMA", "PIN_GB"):
             self.assertNotIn(key, env)
 
     def _kimi_model(self):
@@ -285,7 +285,7 @@ class ResourcePlanTest(unittest.TestCase):
     def test_kimi_plan_exports_the_expert_cache_knob_the_engine_reads(self):
         """Kimi K3 sizes the expert LRU from K3_EXPERT_GB (default 8 GB).
         RAM_GB is only a ceiling, and main() never takes argv as a cap, so
-        --auto-tier that set RAM_GB and COLI_PLAN_CAP left the 8 GB default
+        --auto-tier that set RAM_GB and LMA_PLAN_CAP left the 8 GB default
         in place on a machine whose plan had hundreds of GB of warm experts."""
         plan = build_plan(self._kimi_model(), context=32, available_memory=32 * GB,
                           available_disk=1, gpus=[], cpu_sockets=1)
@@ -304,7 +304,7 @@ class ResourcePlanTest(unittest.TestCase):
 
     def test_glm53_plan_exports_the_expert_cache_knob_the_engine_reads(self):
         """glm53.c reads GLM53_EXPERT_GB, not RAM_GB. --auto-tier exported
-        RAM_GB (inert) and relied on COLI_PLAN_CAP as argv, which a direct
+        RAM_GB (inert) and relied on LMA_PLAN_CAP as argv, which a direct
         engine launch never sees."""
         plan = build_plan(self._glm53_model(), context=32, available_memory=32 * GB,
                           available_disk=1, gpus=[], cpu_sockets=1)
@@ -322,8 +322,8 @@ class ResourcePlanTest(unittest.TestCase):
     def test_cpu_socket_count_is_positive(self):
         self.assertGreaterEqual(cpu_socket_count(), 1)
 
-    # #379: read_ssd_probe reads the cached F_NOCACHE measurement colibri.c writes to
-    # <model>/.coli_ssd on its first Metal+darwin startup. This is the read-only
+    # #379: read_ssd_probe reads the cached F_NOCACHE measurement glm52.c writes to
+    # <model>/.lma_ssd on its first Metal+darwin startup. This is the read-only
     # Python-side half of the probe contract (S4) -- never re-measures, never
     # guesses, so every case here is pure file parsing. Trust mirrors the
     # engine: only a v2 cache recorded on THIS volume (matching st_dev) counts.
@@ -332,7 +332,7 @@ class ResourcePlanTest(unittest.TestCase):
             dev = os.stat(self.model).st_dev
         # byte-exact: text mode would CRLF-translate on Windows and the strict
         # reader would (correctly) reject the fixture as garbage
-        (self.model / ".coli_ssd").write_bytes(f"v2 {gbs} {dev}\n".encode("ascii"))
+        (self.model / ".lma_ssd").write_bytes(f"v2 {gbs} {dev}\n".encode("ascii"))
 
     def test_ssd_probe_missing_file_returns_none(self):
         self.assertIsNone(read_ssd_probe(self.model))
@@ -351,20 +351,20 @@ class ResourcePlanTest(unittest.TestCase):
         # Pre-v2 caches were written before cold-range steering existed, so the
         # value may be page-cache contamination; the engine re-probes and
         # upgrades, and until then there is no number worth surfacing.
-        (self.model / ".coli_ssd").write_bytes(b"14.322\n")
+        (self.model / ".lma_ssd").write_bytes(b"14.322\n")
         self.assertIsNone(read_ssd_probe(self.model))
 
     def test_ssd_probe_unparsable_file_returns_none(self):
-        (self.model / ".coli_ssd").write_bytes(b"not-a-number\n")
+        (self.model / ".lma_ssd").write_bytes(b"not-a-number\n")
         self.assertIsNone(read_ssd_probe(self.model))
 
     def test_ssd_probe_empty_file_returns_none(self):
-        (self.model / ".coli_ssd").write_bytes(b"")
+        (self.model / ".lma_ssd").write_bytes(b"")
         self.assertIsNone(read_ssd_probe(self.model))
 
     def test_ssd_probe_grammar_matches_c_reader_vectors(self):
         # THE parity pin (#386 fix round): parse_ssd_cache() must accept exactly
-        # the grammar colibri.c's coli_ssd_cache_parse() accepts. Both suites
+        # the grammar glm52.c's lma_ssd_cache_parse() accepts. Both suites
         # consume the same vector file; edit it and both sides re-judge.
         vectors = Path(__file__).parent / "fixtures" / "ssd_cache_vectors.txt"
         unescape = {"n": b"\n", "r": b"\r", "t": b"\t", "0": b"\x00",
@@ -408,9 +408,9 @@ class ResourcePlanTest(unittest.TestCase):
         self.assertEqual(ssd_probe_state(self.model), ("ok", 14.322))
         self._write_v2_cache("14.322", dev=os.stat(self.model).st_dev + 1)
         self.assertEqual(ssd_probe_state(self.model), ("foreign", None))
-        (self.model / ".coli_ssd").write_bytes(b"14.322\n")
+        (self.model / ".lma_ssd").write_bytes(b"14.322\n")
         self.assertEqual(ssd_probe_state(self.model), ("legacy", None))
-        (self.model / ".coli_ssd").write_bytes(b"inf\n")
+        (self.model / ".lma_ssd").write_bytes(b"inf\n")
         self.assertEqual(ssd_probe_state(self.model), ("garbage", None))
 
     def test_ssd_probe_surfaces_in_plan_and_format(self):
@@ -421,7 +421,7 @@ class ResourcePlanTest(unittest.TestCase):
         self.assertIn("14.3 GB/s", format_plan(plan))
 
     def test_ssd_probe_pending_states_surface_in_format(self):
-        (self.model / ".coli_ssd").write_bytes(b"14.3\n")   # legacy
+        (self.model / ".lma_ssd").write_bytes(b"14.3\n")   # legacy
         plan = build_plan(self.model, available_memory=16 * GB, available_disk=1)
         self.assertIsNone(plan["ssd_probe_gbs"])
         self.assertEqual(plan["ssd_probe_state"], "legacy")
@@ -463,7 +463,7 @@ class ResourcePlanTest(unittest.TestCase):
         self.assertEqual(delta, 3 * per_slot)
 
     def test_olmoe_plans_instead_of_refusing(self):
-        # #1066: OLMoE used to refuse in `coli plan`/`doctor` because its
+        # #1066: OLMoE used to refuse in `lmatomic plan`/`doctor` because its
         # planner_geometry was None (which under-reserved as zero-byte KV). With
         # the adapter it plans, charging an fp32 K and V cache per layer sized at
         # num_attention_heads * head_dim (mirrors olmoe.c:1019-1020), no fixed
@@ -534,7 +534,7 @@ class ResourcePlanTest(unittest.TestCase):
 
     # --- identity-only devices -------------------------------------------
     # A device can be discovered without its free memory being qualified as a
-    # Colibri placement budget. That is the state of a Windows AMD device found
+    # LM Atomic placement budget. That is the state of a Windows AMD device found
     # through hipInfo: the runtime may well report a free figure, but on an
     # integrated part it describes the same physical pages the host RAM tier is
     # already counting. Until a later slice qualifies that relationship, such a
@@ -584,7 +584,7 @@ class ResourcePlanTest(unittest.TestCase):
         self.assertNotEqual(gpu_plan["bottleneck_class"], "mixed")
         self.assertEqual(gpu_plan["tune"].get("DRAFT"), cpu_plan["tune"].get("DRAFT"))
         # Nor may it switch on the resident pipeline.
-        self.assertNotIn("COLI_CUDA_PIPE", gpu_plan["tune"])
+        self.assertNotIn("LMA_CUDA_PIPE", gpu_plan["tune"])
         # The strongest statement of the contract: for the same inputs, the
         # recommended environment is byte-identical to the CPU-only host's.
         # PIN_GB=all may legitimately appear in BOTH -- that is the no-GPU
@@ -593,9 +593,9 @@ class ResourcePlanTest(unittest.TestCase):
         env = environment_for_plan(gpu_plan, {"PIN": "stats.txt"})
         cpu_env = environment_for_plan(cpu_plan, {"PIN": "stats.txt"})
         self.assertEqual(env, cpu_env)
-        self.assertNotIn("COLI_CUDA_PIPE", env)
-        self.assertNotIn("COLI_CUDA", env)
-        self.assertNotIn("COLI_GPU", env)
+        self.assertNotIn("LMA_CUDA_PIPE", env)
+        self.assertNotIn("LMA_CUDA", env)
+        self.assertNotIn("LMA_GPU", env)
         self.assertNotIn("CUDA_EXPERT_GB", env)
         self.assertNotEqual(env.get("PIN_GB"), f"{gpu_plan['tiers']['vram']['budget_bytes'] / GB:.3f}")
 
@@ -619,7 +619,7 @@ class ResourcePlanTest(unittest.TestCase):
                           available_disk=1, gpus=gpus, physical_cpus=8,
                           cpu_sockets=1)
         self.assertEqual(plan["tiers"]["vram"]["budget_bytes"], 0)
-        self.assertEqual(plan["tune"]["COLI_CUDA_PIPE"]["value"], "1")
+        self.assertEqual(plan["tune"]["LMA_CUDA_PIPE"]["value"], "1")
         self.assertTrue(any("already in use" in warning
                             for warning in plan["warnings"]))
 
@@ -634,8 +634,8 @@ class ResourcePlanTest(unittest.TestCase):
         # The qualified card earns a tier; the unqualified one must not be
         # named to the engine as a placement target.
         self.assertGreater(plan["tiers"]["vram"]["budget_bytes"], 0)
-        self.assertEqual(env.get("COLI_GPU"), "1")
-        self.assertNotIn("COLI_GPUS", env)
+        self.assertEqual(env.get("LMA_GPU"), "1")
+        self.assertNotIn("LMA_GPUS", env)
 
     # --- Windows AMD discovery through hipInfo ----------------------------
     # Captured from hipInfo.exe shipped with the Windows HIP SDK (TheRock and
@@ -704,7 +704,7 @@ memInfo.free:                     23.50 GB (97%)
                           available_disk=1, gpus=devices, physical_cpus=8,
                           cpu_sockets=1)
         self.assertEqual(plan["tiers"]["vram"]["budget_bytes"], 0)
-        self.assertNotIn("COLI_CUDA_PIPE", plan["tune"])
+        self.assertNotIn("LMA_CUDA_PIPE", plan["tune"])
         self.assertNotIn("CUDA_EXPERT_GB", environment_for_plan(plan))
 
     def test_windows_discrete_amd_device_is_not_marked_unified(self):
@@ -765,9 +765,9 @@ memInfo.free:                     23.50 GB (97%)
                     "memInfo.total:                    89.39 GB\n")
         self.assertEqual(self._run_hipinfo(headless), [])
 
-    def test_hipinfo_lookup_prefers_the_colibri_runtime_over_a_stale_install(self):
+    def test_hipinfo_lookup_prefers_the_lmatomic_runtime_over_a_stale_install(self):
         # This machine has had two Windows HIP installs at once. The engine
-        # binds the runtime COLI_HIP_RUNTIME_DIR names, and hipInfo sits beside
+        # binds the runtime LMA_HIP_RUNTIME_DIR names, and hipInfo sits beside
         # amdhip64_7.dll in that same directory, so its answer describes the
         # runtime that will actually be used. An ambient HIP_PATH pointing at a
         # different SDK must not win.
@@ -778,12 +778,12 @@ memInfo.free:                     23.50 GB (97%)
             for directory in (chosen, stale):
                 directory.mkdir(parents=True)
                 (directory / "hipInfo.exe").write_bytes(b"")
-            env = {"COLI_HIP_RUNTIME_DIR": str(chosen),
+            env = {"LMA_HIP_RUNTIME_DIR": str(chosen),
                    "HIP_PATH": str(stale.parent)}
             with mock.patch.object(sys, "platform", "win32"), \
                  mock.patch.dict(os.environ, env, clear=False):
                 self.assertEqual(_hipinfo_executable(), chosen / "hipInfo.exe")
-            # With no Colibri-specific runtime selected, the SDK root is used.
+            # With no LM Atomic-specific runtime selected, the SDK root is used.
             with mock.patch.object(sys, "platform", "win32"), \
                  mock.patch.dict(os.environ, {"HIP_PATH": str(stale.parent)}, clear=True):
                 self.assertEqual(_hipinfo_executable(), stale / "hipInfo.exe")
@@ -956,9 +956,9 @@ memInfo.free:                     23.50 GB (97%)
         cap = plan["tiers"]["ram"]["cache_slots_per_layer"]
         self.assertGreaterEqual(cap, 1)
         environment = environment_for_plan(plan)
-        self.assertEqual(environment["COLI_PLAN_CAP"], str(cap))
-        self.assertEqual(environment["COLI_CUDA"], "1")
-        self.assertEqual(environment["COLI_GPU"], "0")
+        self.assertEqual(environment["LMA_PLAN_CAP"], str(cap))
+        self.assertEqual(environment["LMA_CUDA"], "1")
+        self.assertEqual(environment["LMA_GPU"], "0")
         for variable in ("Q38_NATIVE_FP8", "Q38_NATIVE_BF16"):
             with self.subTest(variable=variable), self.assertRaisesRegex(
                     ValueError, "requires native expert storage"):
@@ -979,7 +979,7 @@ memInfo.free:                     23.50 GB (97%)
         self.assertEqual(tiny["tiers"]["vram"]["trunk_bytes"], 0)
 
     def test_cli_emits_versioned_json(self):
-        cli = Path(__file__).parents[1] / "coli"
+        cli = Path(__file__).parents[1] / "lmatomic"
         run = subprocess.run([
             sys.executable, str(cli), "plan", "--model", str(self.model),
             "--gpu", "none", "--json",
@@ -996,10 +996,10 @@ memInfo.free:                     23.50 GB (97%)
         plan = build_plan(self.model, ram_gb=16, available_memory=32 * GB,
                           available_disk=1, gpus=gpus, cpu_sockets=2)
         env = environment_for_plan(plan, {"RAM_GB": "12", "PIN": "stats.txt",
-                                               "COLI_GPUS": "1"})
+                                               "LMA_GPUS": "1"})
         self.assertEqual(env["RAM_GB"], "12")
-        self.assertEqual(env["COLI_CUDA"], "1")
-        self.assertEqual(env["COLI_GPUS"], "1")
+        self.assertEqual(env["LMA_CUDA"], "1")
+        self.assertEqual(env["LMA_GPUS"], "1")
         self.assertEqual(env["OMP_NUM_THREADS"], str(plan["cpu"]["physical_cores"]))
         # The plan must NOT set OMP_PROC_BIND / OMP_PLACES on any platform:
         # the engine's own hot-thread tuning owns affinity (it prefers
@@ -1016,14 +1016,14 @@ memInfo.free:                     23.50 GB (97%)
         self.assertEqual(explicit_threads["OMP_PROC_BIND"], "close")
 
         if sys.platform.startswith("linux"):
-            self.assertEqual(env["COLI_NUMA"], "1")
-            explicit_numa = environment_for_plan(plan, {"COLI_NUMA": "0"})
-            self.assertEqual(explicit_numa["COLI_NUMA"], "0")
+            self.assertEqual(env["LMA_NUMA"], "1")
+            explicit_numa = environment_for_plan(plan, {"LMA_NUMA": "0"})
+            self.assertEqual(explicit_numa["LMA_NUMA"], "0")
 
     def test_single_socket_plan_does_not_enable_numa(self):
         plan = build_plan(self.model, available_memory=16 * GB, available_disk=1,
                           gpus=[], physical_cpus=8, cpu_sockets=1)
-        self.assertNotIn("COLI_NUMA", environment_for_plan(plan))
+        self.assertNotIn("LMA_NUMA", environment_for_plan(plan))
 
     def test_auto_tune_mtp_off_when_compute_bound(self):
         # Tiny model with 64 GB RAM and no GPU: all experts fit in RAM with no
@@ -1074,15 +1074,15 @@ memInfo.free:                     23.50 GB (97%)
         ]
         plan = build_plan(self.model, ram_gb=16, available_memory=32 * GB,
                           available_disk=1, gpus=gpus, cpu_sockets=2)
-        self.assertEqual(plan["tune"]["COLI_CUDA_PIPE"]["value"], "2")
+        self.assertEqual(plan["tune"]["LMA_CUDA_PIPE"]["value"], "2")
         env = environment_for_plan(plan)
-        self.assertEqual(env["COLI_CUDA_PIPE"], "2")
+        self.assertEqual(env["LMA_CUDA_PIPE"], "2")
 
     def test_auto_tune_pipe_single_gpu(self):
         gpus = [{"index": 0, "name": "a", "total_bytes": 12 * GB, "free_bytes": 10 * GB}]
         plan = build_plan(self.model, ram_gb=16, available_memory=32 * GB,
                           available_disk=1, gpus=gpus, cpu_sockets=1)
-        self.assertEqual(plan["tune"]["COLI_CUDA_PIPE"]["value"], "1")
+        self.assertEqual(plan["tune"]["LMA_CUDA_PIPE"]["value"], "1")
 
     def test_auto_tune_numa_hint_for_cpu_only(self):
         plan = build_plan(self.model, ram_gb=64, available_memory=64 * GB,
@@ -1106,9 +1106,9 @@ memInfo.free:                     23.50 GB (97%)
                                  "free_bytes": 8 * GB}])
         env = environment_for_plan(plan, cuda_enabled=False)
         self.assertIn("RAM_GB", env)
-        self.assertNotIn("COLI_CUDA", env)
-        disabled = environment_for_plan(plan, {"COLI_CUDA": "0"}, cuda_enabled=True)
-        self.assertNotIn("COLI_GPU", disabled)
+        self.assertNotIn("LMA_CUDA", env)
+        disabled = environment_for_plan(plan, {"LMA_CUDA": "0"}, cuda_enabled=True)
+        self.assertNotIn("LMA_GPU", disabled)
         self.assertNotIn("CUDA_EXPERT_GB", disabled)
 
     def test_rejects_unknown_policy_and_marks_experimental_policy(self):
@@ -1124,7 +1124,7 @@ memInfo.free:                     23.50 GB (97%)
         plan = build_plan(self.model, available_memory=16 * GB, available_disk=1,
                           gpus=[], policy="balanced")
         env = environment_for_plan(plan)
-        self.assertEqual(env["COLI_POLICY"], "balanced")
+        self.assertEqual(env["LMA_POLICY"], "balanced")
         self.assertEqual(env["REPIN"], "64")
         explicit = environment_for_plan(plan, {"REPIN": "0"})
         self.assertEqual(explicit["REPIN"], "0")
@@ -1151,7 +1151,7 @@ memInfo.free:                     23.50 GB (97%)
         self.assertEqual(plan["next_actions"][0]["priority"], "required")
         text = format_plan(plan)
         self.assertIn("next actions:", text)
-        self.assertIn("coli tune --model <model>", text)
+        self.assertIn("lmatomic tune --model <model>", text)
 
     def test_trusted_storage_probe_removes_probe_action(self):
         info = analyze_model(self.model)

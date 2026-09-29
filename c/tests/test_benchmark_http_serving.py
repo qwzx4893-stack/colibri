@@ -312,7 +312,7 @@ class BenchmarkTest(unittest.TestCase):
             self.assertEqual(report["requests"][0]["scheduled_seconds"], 0)
 
 
-class ColibriIntegrationTest(unittest.TestCase):
+class LmAtomicIntegrationTest(unittest.TestCase):
     def test_real_gateway_with_fake_engine(self):
         class Engine:
             fail = False

@@ -38,7 +38,7 @@ class Engine:
     def __init__(self):
         env = dict(os.environ, SNAP=str(FIXTURE), SERVE="1",
                    TOK=str(FIXTURE / "tokenizer.json"),
-                   COLI_NO_OMP_TUNE="1", OMP_NUM_THREADS="2")
+                   LMA_NO_OMP_TUNE="1", OMP_NUM_THREADS="2")
         self.p = subprocess.Popen([str(ENGINE)], env=env, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                   bufsize=0)

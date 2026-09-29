@@ -1,9 +1,9 @@
 """env_for: default Windows misurati (DIRECT/PIPE/PILOT_REAL + blocco OMP).
 
-Carica `coli` come modulo (ha la guardia __main__) e verifica il contratto:
+Carica `lmatomic` come modulo (ha la guardia __main__) e verifica il contratto:
 - win32: i tre default I/O e il blocco OMP sono setdefault
 - un override esplicito dell'utente vince sempre
-- COLI_NO_OMP_TUNE spegne SOLO il blocco OMP, non i default I/O
+- LMA_NO_OMP_TUNE spegne SOLO il blocco OMP, non i default I/O
 - non-win32: env_for non tocca nulla di tutto questo
 """
 import importlib.machinery
@@ -21,10 +21,10 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 
-_loader = importlib.machinery.SourceFileLoader("coli_cli", str(HERE / "coli"))
-_spec = importlib.util.spec_from_loader("coli_cli", _loader)
-coli = importlib.util.module_from_spec(_spec)
-_loader.exec_module(coli)
+_loader = importlib.machinery.SourceFileLoader("lma_cli", str(HERE / "lmatomic"))
+_spec = importlib.util.spec_from_loader("lma_cli", _loader)
+lmatomic = importlib.util.module_from_spec(_spec)
+_loader.exec_module(lmatomic)
 
 _MODEL_DIR = tempfile.TemporaryDirectory()
 _MODEL = Path(_MODEL_DIR.name)
@@ -49,9 +49,9 @@ class EnvDefaultsTest(unittest.TestCase):
         False keeps these tests independent of the host's GPU."""
         with mock.patch.dict(os.environ, environ, clear=True), \
              mock.patch.object(sys, "platform", platform), \
-             mock.patch.object(coli, "cuda_binary", return_value=cuda), \
+             mock.patch.object(lmatomic, "cuda_binary", return_value=cuda), \
              mock.patch("resource_plan.physical_cpu_count", return_value=8):
-            return coli.env_for(args())
+            return lmatomic.env_for(args())
 
     def test_win32_sets_measured_defaults(self):
         e = self.env_for_with({}, "win32")
@@ -68,7 +68,7 @@ class EnvDefaultsTest(unittest.TestCase):
         self.assertEqual(e["PILOT_REAL"], "1")  # non overridden -> default
 
     def test_kill_switch_scope_is_omp_only(self):
-        e = self.env_for_with({"COLI_NO_OMP_TUNE": "1"}, "win32")
+        e = self.env_for_with({"LMA_NO_OMP_TUNE": "1"}, "win32")
         self.assertNotIn("OMP_WAIT_POLICY", e)
         self.assertNotIn("OMP_NUM_THREADS", e)
         self.assertEqual(e["DIRECT"], "1")   # i default I/O restano attivi
@@ -116,14 +116,14 @@ class SiblingPlanRefusalTest(unittest.TestCase):
 
     def test_chat_refuses_before_popen_without_traceback(self):
         build_plan, environment = self.plan_refusal()
-        with mock.patch.object(coli, "need_model"), \
-             mock.patch.object(coli, "engine_for", return_value="/engines/qwen38"), \
-             mock.patch.object(coli, "resource_request", return_value=(0, 0, [], 0)), \
+        with mock.patch.object(lmatomic, "need_model"), \
+             mock.patch.object(lmatomic, "engine_for", return_value="/engines/qwen38"), \
+             mock.patch.object(lmatomic, "resource_request", return_value=(0, 0, [], 0)), \
              mock.patch("resource_plan.physical_cpu_count", return_value=8), \
-             mock.patch.object(coli, "banner"), build_plan, environment, \
-             mock.patch.object(coli.subprocess, "Popen") as popen:
+             mock.patch.object(lmatomic, "banner"), build_plan, environment, \
+             mock.patch.object(lmatomic.subprocess, "Popen") as popen:
             with self.assertRaises(SystemExit) as stopped:
-                coli.cmd_chat(self.refusal_args())
+                lmatomic.cmd_chat(self.refusal_args())
         message = str(stopped.exception)
         self.assertIn("invalid resource plan", message)
         self.assertIn("one expert slot", message)
@@ -137,23 +137,23 @@ class SiblingPlanRefusalTest(unittest.TestCase):
             port=9123, host="127.0.0.1", model_id=None,
             cluster_coordinator=None, cluster_workers=None,
         )
-        with mock.patch.object(coli, "need_model"), \
-             mock.patch.object(coli, "engine_for", return_value="/engines/qwen38"), \
-             mock.patch.object(coli, "resource_request", return_value=(0, 0, [], 0)), \
+        with mock.patch.object(lmatomic, "need_model"), \
+             mock.patch.object(lmatomic, "engine_for", return_value="/engines/qwen38"), \
+             mock.patch.object(lmatomic, "resource_request", return_value=(0, 0, [], 0)), \
              mock.patch("resource_plan.physical_cpu_count", return_value=8), \
-             mock.patch.object(coli, "serve_pidfile", return_value=str(pidfile)), \
-             mock.patch.object(coli, "banner"), build_plan, environment, \
+             mock.patch.object(lmatomic, "serve_pidfile", return_value=str(pidfile)), \
+             mock.patch.object(lmatomic, "banner"), build_plan, environment, \
              mock.patch("openai_server.ARCH", "glm"), \
              mock.patch("openai_server.serve") as serve:
             with self.assertRaises(SystemExit) as stopped:
-                coli.cmd_serve(arguments)
+                lmatomic.cmd_serve(arguments)
         self.assertIn("invalid resource plan", str(stopped.exception))
         serve.assert_not_called()
         self.assertFalse(pidfile.exists())
 
 
 class CudaAutoEnableTest(unittest.TestCase):
-    """Windows bare `coli chat` (no --gpu/--vram/--auto-tier) used to ALWAYS run
+    """Windows bare `lmatomic chat` (no --gpu/--vram/--auto-tier) used to ALWAYS run
     CPU-only even on a CUDA build with a GPU present. env_for now auto-enables
     CUDA on win32 when cuda_binary() is True and a GPU is discoverable; falls
     back to CPU with a warning if nvidia-smi (discover_gpus) is missing; stays
@@ -181,13 +181,13 @@ class CudaAutoEnableTest(unittest.TestCase):
 
         with mock.patch.dict(os.environ, {}, clear=True), \
              mock.patch.object(sys, "platform", platform), \
-             mock.patch.object(coli, "cuda_binary", return_value=cuda), \
+             mock.patch.object(lmatomic, "cuda_binary", return_value=cuda), \
              mock.patch.object(resource_plan, "discover_gpus", return_value=gpus), \
              mock.patch.object(resource_plan, "physical_cpu_count", return_value=8), \
              mock.patch.object(resource_plan, "build_plan", return_value=plan), \
              mock.patch.object(resource_plan, "environment_for_plan",
                                side_effect=fake_environment_for_plan):
-            return coli.env_for(a)
+            return lmatomic.env_for(a)
 
     def _fake_gpu(self, index=0, name="NVIDIA GeForce RTX 5070 Ti",
                   total_mib=16384, free_mib=15000):
@@ -197,8 +197,8 @@ class CudaAutoEnableTest(unittest.TestCase):
 
     def test_win32_auto_enables_cuda_when_gpu_present(self):
         e = self._env_for("win32", cuda=True, gpus=[self._fake_gpu()])
-        self.assertEqual(e["COLI_CUDA"], "1")
-        self.assertEqual(e["COLI_GPUS"], "0")
+        self.assertEqual(e["LMA_CUDA"], "1")
+        self.assertEqual(e["LMA_GPUS"], "0")
         # VRAM budget is sized from free VRAM by build_plan (real minus reserve),
         # so it must be present and positive — never a guess or zero.
         self.assertIn("CUDA_EXPERT_GB", e)
@@ -253,47 +253,47 @@ class CudaAutoEnableTest(unittest.TestCase):
                                            "devices": gpus}}}
                 with mock.patch.dict(os.environ, {"CUDA_EXPERT_GB": requested}, clear=True), \
                      mock.patch.object(sys, "platform", "win32"), \
-                     mock.patch.object(coli, "cuda_binary", return_value=True), \
+                     mock.patch.object(lmatomic, "cuda_binary", return_value=True), \
                      mock.patch.object(resource_plan, "discover_gpus", return_value=gpus), \
                      mock.patch.object(resource_plan, "physical_cpu_count", return_value=8), \
                      mock.patch.object(resource_plan, "build_plan", return_value=plan):
-                    e = coli.env_for(args())
+                    e = lmatomic.env_for(args())
                 self.assertEqual(e["CUDA_EXPERT_GB"], requested)
                 self.assertNotIn("CUDA_DENSE", e)
 
     def test_win32_falls_back_to_cpu_when_nvidia_smi_missing(self):
-        # coli_cuda.dll present (cuda=True) but nvidia-smi absent (no GPUs found)
-        # -> warn + CPU-only, never crash, never set COLI_CUDA.
+        # lma_cuda.dll present (cuda=True) but nvidia-smi absent (no GPUs found)
+        # -> warn + CPU-only, never crash, never set LMA_CUDA.
         e = self._env_for("win32", cuda=True, gpus=[])
-        self.assertNotIn("COLI_CUDA", e)
-        self.assertNotIn("COLI_GPUS", e)
+        self.assertNotIn("LMA_CUDA", e)
+        self.assertNotIn("LMA_GPUS", e)
         self.assertNotIn("CUDA_EXPERT_GB", e)
 
     def test_win32_does_not_auto_enable_an_unqualified_gpu(self):
         # A device whose free memory is not qualified as a placement budget
         # (free_bytes is None -- a Windows AMD part found through hipInfo) is
         # discovered and worth reporting, but auto-enable is an automatic
-        # placement decision and must not be made from it. Bare `coli chat`
+        # placement decision and must not be made from it. Bare `lmatomic chat`
         # stays on the CPU path, exactly as if nothing had been found.
         identity_only = {"index": 0, "name": "AMD Radeon(TM) 8060S Graphics",
                          "arch": "gfx1151", "total_bytes": 78 * 1024 ** 3,
                          "free_bytes": None, "unified_memory": True}
         e = self._env_for("win32", cuda=True, gpus=[identity_only])
-        self.assertNotIn("COLI_CUDA", e)
-        self.assertNotIn("COLI_GPUS", e)
+        self.assertNotIn("LMA_CUDA", e)
+        self.assertNotIn("LMA_GPUS", e)
         self.assertNotIn("CUDA_EXPERT_GB", e)
 
     def test_win32_cpu_build_stays_silent(self):
-        # No coli_cuda.dll (cuda=False) -> CPU build, nothing GPU-related emitted.
+        # No lma_cuda.dll (cuda=False) -> CPU build, nothing GPU-related emitted.
         e = self._env_for("win32", cuda=False, gpus=[self._fake_gpu()])
-        self.assertNotIn("COLI_CUDA", e)
-        self.assertNotIn("COLI_GPUS", e)
+        self.assertNotIn("LMA_CUDA", e)
+        self.assertNotIn("LMA_GPUS", e)
 
     def test_linux_bare_chat_not_auto_enabled(self):
         # The auto-enable is scoped to win32: a Linux bare chat with a GPU
         # present must NOT turn CUDA on (Linux keeps the explicit-flag UX).
         e = self._env_for("linux", cuda=True, gpus=[self._fake_gpu()])
-        self.assertNotIn("COLI_CUDA", e)
+        self.assertNotIn("LMA_CUDA", e)
         self.assertNotIn("CUDA_EXPERT_GB", e)
 
 
@@ -303,7 +303,7 @@ class Dsv4CudaDetectTest(unittest.TestCase):
     probe there rejected every valid `make deepseek-v4 CUDA=1` build (#1219)."""
 
     def _detect(self, platform, ldd_stdout=None, dll=False, engine_exists=True,
-                ldd_error=None, dll_name="coli_cuda_dsv4.dll"):
+                ldd_error=None, dll_name="lma_cuda_dsv4.dll"):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         eng = Path(tmp.name) / "deepseek"
@@ -314,9 +314,9 @@ class Dsv4CudaDetectTest(unittest.TestCase):
         fake_run = mock.Mock(return_value=types.SimpleNamespace(stdout=ldd_stdout or ""),
                              side_effect=ldd_error)
         with mock.patch.object(sys, "platform", platform), \
-             mock.patch.object(coli, "engine_for", return_value=str(eng)), \
-             mock.patch.object(coli.subprocess, "run", fake_run):
-            return coli.dsv4_cuda_available(str(_MODEL))
+             mock.patch.object(lmatomic, "engine_for", return_value=str(eng)), \
+             mock.patch.object(lmatomic.subprocess, "run", fake_run):
+            return lmatomic.dsv4_cuda_available(str(_MODEL))
 
     def test_linux_cuda_link_detected(self):
         out = "\tlibcudart.so.12 => /opt/cuda/lib64/libcudart.so.12 (0x00007f)\n"
@@ -351,14 +351,14 @@ class Dsv4CudaDetectTest(unittest.TestCase):
         self.assertTrue(self._detect("win32", dll=True))
 
     def test_win32_deepgemm_dll_alone_detected(self):
-        # backend_loader_dsv4.c tries coli_cuda_dsv4_dg.dll first and
-        # coli_cuda_dsv4.dll second, and `coli doctor` accepts either. --gpu
+        # backend_loader_dsv4.c tries lma_cuda_dsv4_dg.dll first and
+        # lma_cuda_dsv4.dll second, and `lmatomic doctor` accepts either. --gpu
         # refused an install that had only the DeepGEMM build next to it.
         self.assertTrue(self._detect("win32", dll=True,
-                                     dll_name="coli_cuda_dsv4_dg.dll"))
+                                     dll_name="lma_cuda_dsv4_dg.dll"))
 
     def test_win32_unrelated_dll_rejected(self):
-        self.assertFalse(self._detect("win32", dll=True, dll_name="coli_cuda.dll"))
+        self.assertFalse(self._detect("win32", dll=True, dll_name="lma_cuda.dll"))
 
     def test_win32_missing_dll_rejected(self):
         self.assertFalse(self._detect("win32", dll=False))
@@ -368,11 +368,11 @@ class Dsv4CudaDetectTest(unittest.TestCase):
 
     def test_build_hint_names_the_right_build(self):
         with mock.patch.object(sys, "platform", "linux"):
-            self.assertIn("make deepseek-v4 CUDA=1", coli.dsv4_cuda_build_hint())
+            self.assertIn("make deepseek-v4 CUDA=1", lmatomic.dsv4_cuda_build_hint())
         with mock.patch.object(sys, "platform", "win32"):
-            self.assertIn("coli_cuda_dsv4.dll", coli.dsv4_cuda_build_hint())
+            self.assertIn("lma_cuda_dsv4.dll", lmatomic.dsv4_cuda_build_hint())
         with mock.patch.object(sys, "platform", "darwin"):
-            hint = coli.dsv4_cuda_build_hint()
+            hint = lmatomic.dsv4_cuda_build_hint()
             self.assertIn("only on Linux and Windows", hint)
             self.assertNotIn("CUDA=1", hint)
 
@@ -382,7 +382,7 @@ if __name__ == "__main__":
 
 
 class ClusterWorkerCapTest(unittest.TestCase):
-    """`coli cluster worker` must hand the engine a number, never "None".
+    """`lmatomic cluster worker` must hand the engine a number, never "None".
 
     --cap comes from the shared parser and defaults to None, meaning "auto".
     The worker used to stringify it straight into argv, so a launch without an
@@ -401,9 +401,9 @@ class ClusterWorkerCapTest(unittest.TestCase):
 
         a = args(cap=cap, ebits=8, dbits=8, port=9100, layers="0-1",
                  coordinator=None, advertise_host=None, node_id=None)
-        with mock.patch.object(coli, "need_worker_model", return_value="/tmp/engine"), \
-             mock.patch.object(coli.subprocess, "call", fake_call):
-            coli.cmd_cluster_worker(a)
+        with mock.patch.object(lmatomic, "need_worker_model", return_value="/tmp/engine"), \
+             mock.patch.object(lmatomic.subprocess, "call", fake_call):
+            lmatomic.cmd_cluster_worker(a)
         return captured["cmd"]
 
     def test_auto_cap_becomes_a_number(self):

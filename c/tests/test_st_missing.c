@@ -68,7 +68,7 @@ int main(void) {
     CHECK(put(D, "model.safetensors.index.json", "{\"weight_map\":{\"a\":\"model-00001-of-00002.safetensors\",\"b\":\"model-00002-of-00002.safetensors\"}}") == 0);
     CHECK(run_case(D, "model.embed_tokens.weight", err, sizeof err) == 1);
     CHECK(strstr(err, "never had a") != NULL && strstr(err, "not this") != NULL);
-    CHECK(strstr(err, "coli info --model") != NULL);
+    CHECK(strstr(err, "lmatomic info --model") != NULL);
 
     /* 3. index maps the name to a shard that is not here */
     CHECK(put(D, "model.safetensors.index.json", "{\"weight_map\":{\"a\":\"model-00001-of-00002.safetensors\",\"c\":\"model-00003-of-00003.safetensors\"}}") == 0);

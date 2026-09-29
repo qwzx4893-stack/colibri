@@ -3,11 +3,11 @@
 Two invariants from the field report in #1689:
 
 - the launcher derives its libexec directory from its own path, so it must
-  resolve symlinks first: a merged-/usr system exposes /bin/coli as a link to
-  /usr/bin/coli, and abspath() kept the alias, deriving /libexec/colibri;
+  resolve symlinks first: a merged-/usr system exposes /bin/lmatomic as a link to
+  /usr/bin/lmatomic, and abspath() kept the alias, deriving /libexec/lmatomic;
 - every root-level Python module the launcher reaches (tools/pack_python.py
   computes that closure for the release archive) must be in the handwritten
-  `make install` list, or installed `coli serve` fails on an import the
+  `make install` list, or installed `lmatomic serve` fails on an import the
   source tree satisfied (v41_dsml.py in 1.12.0).
 """
 import os
@@ -51,20 +51,20 @@ class InstallClosure(unittest.TestCase):
             root = Path(tmp)
             (root / "usr" / "bin").mkdir(parents=True)
             (root / "usr" / "libexec").mkdir()
-            launcher = root / "usr" / "bin" / "coli"
-            launcher.write_bytes((HERE / "coli").read_bytes())
+            launcher = root / "usr" / "bin" / "lmatomic"
+            launcher.write_bytes((HERE / "lmatomic").read_bytes())
             launcher.chmod(0o755)
             # the support modules of this checkout stand in for the installed ones
-            os.symlink(HERE, root / "usr" / "libexec" / "colibri")
+            os.symlink(HERE, root / "usr" / "libexec" / "lmatomic")
             os.symlink(root / "usr" / "bin", root / "bin")
-            env = {k: v for k, v in os.environ.items() if k not in ("COLI_ENGINE", "PYTHONPATH")}
-            for alias in (root / "bin" / "coli", root / "usr" / "bin" / "coli"):
+            env = {k: v for k, v in os.environ.items() if k not in ("LMA_ENGINE", "PYTHONPATH")}
+            for alias in (root / "bin" / "lmatomic", root / "usr" / "bin" / "lmatomic"):
                 with self.subTest(alias=str(alias.relative_to(root))):
                     result = subprocess.run([sys.executable, str(alias), "--version"],
                                             capture_output=True, text=True, env=env,
                                             cwd=tmp, timeout=60)
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn("colibri", result.stdout)
+                    self.assertIn("lmatomic", result.stdout)
                     self.assertNotIn("ModuleNotFoundError", result.stderr)
 
 

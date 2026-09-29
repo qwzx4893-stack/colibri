@@ -12,8 +12,8 @@
  * with quant.h's) can still take the integer path for its dense trunk.
  * quant.h includes this file at the top, so its other consumers see the
  * same declarations in the same place as before. */
-#ifndef COLIBRI_IDOT_H
-#define COLIBRI_IDOT_H
+#ifndef LMA_IDOT_H
+#define LMA_IDOT_H
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -526,35 +526,35 @@ static void planarize_i4(uint8_t *q4, int O, int I){
  * Coda I%64: nibble a coppie letti come unsigned, stessa identita'. */
 #if defined(__AVXVNNI__) || (defined(__AVX512VNNI__) && defined(__AVX512VL__))
 #if defined(__AVXVNNI__) && !defined(__AVX512VNNI__)
-#define coli_dpbusd256 _mm256_dpbusd_avx_epi32
+#define lma_dpbusd256 _mm256_dpbusd_avx_epi32
 #else
-#define coli_dpbusd256 _mm256_dpbusd_epi32
+#define lma_dpbusd256 _mm256_dpbusd_epi32
 #endif
 #endif
 static inline int32_t dot_i4p_u(const uint8_t *w4, const int8_t *x, int I){
     int32_t sum=0; int i=0;
-#if defined(coli_dpbusd256)
+#if defined(lma_dpbusd256)
     const __m256i m4=_mm256_set1_epi8(0x0F);
     __m256i a0=_mm256_setzero_si256(),a1=_mm256_setzero_si256();
     __m256i a2=_mm256_setzero_si256(),a3=_mm256_setzero_si256();
     for(;i+128<=I;i+=128){
         __m256i b0=_mm256_loadu_si256((const __m256i*)(w4+(i>>1)));
         __m256i b1=_mm256_loadu_si256((const __m256i*)(w4+(i>>1)+32));
-        a0=coli_dpbusd256(a0,_mm256_and_si256(b0,m4),
+        a0=lma_dpbusd256(a0,_mm256_and_si256(b0,m4),
                           _mm256_loadu_si256((const __m256i*)(x+i)));
-        a1=coli_dpbusd256(a1,_mm256_and_si256(_mm256_srli_epi16(b0,4),m4),
+        a1=lma_dpbusd256(a1,_mm256_and_si256(_mm256_srli_epi16(b0,4),m4),
                           _mm256_loadu_si256((const __m256i*)(x+i+32)));
-        a2=coli_dpbusd256(a2,_mm256_and_si256(b1,m4),
+        a2=lma_dpbusd256(a2,_mm256_and_si256(b1,m4),
                           _mm256_loadu_si256((const __m256i*)(x+i+64)));
-        a3=coli_dpbusd256(a3,_mm256_and_si256(_mm256_srli_epi16(b1,4),m4),
+        a3=lma_dpbusd256(a3,_mm256_and_si256(_mm256_srli_epi16(b1,4),m4),
                           _mm256_loadu_si256((const __m256i*)(x+i+96)));
     }
     __m256i acc=_mm256_add_epi32(_mm256_add_epi32(a0,a1),_mm256_add_epi32(a2,a3));
     for(;i+64<=I;i+=64){
         __m256i b0=_mm256_loadu_si256((const __m256i*)(w4+(i>>1)));
-        acc=coli_dpbusd256(acc,_mm256_and_si256(b0,m4),
+        acc=lma_dpbusd256(acc,_mm256_and_si256(b0,m4),
                            _mm256_loadu_si256((const __m256i*)(x+i)));
-        acc=coli_dpbusd256(acc,_mm256_and_si256(_mm256_srli_epi16(b0,4),m4),
+        acc=lma_dpbusd256(acc,_mm256_and_si256(_mm256_srli_epi16(b0,4),m4),
                            _mm256_loadu_si256((const __m256i*)(x+i+32)));
     }
     sum=hsum256_i32(acc);
@@ -637,7 +637,7 @@ static inline int32_t dot_i4p_u(const uint8_t *w4, const int8_t *x, int I){
 
 /* one planar 64-element block, unpacked once and shared across a row tile:
  * lo nibbles = elements base..base+31 in order, hi = base+32..base+63. */
-#if defined(coli_dpbusd256)
+#if defined(lma_dpbusd256)
 static inline void i4p_blk256(const uint8_t *blk, __m256i *lo, __m256i *hi){
     const __m256i m4=_mm256_set1_epi8(0x0F);
     __m256i b=_mm256_loadu_si256((const __m256i*)blk);
@@ -666,7 +666,7 @@ static inline __m512i i4p_blk512(const uint8_t *blk){
  * every activation row — the multi-row reuse the pair-layout kernels lack.
  * Linux-only arming: tile data needs an ARCH_REQ_XCOMP_PERM handshake. */
 #if defined(__AMX_INT8__) && defined(__AMX_TILE__) && defined(__AVX512F__)
-#define COLI_HAVE_AMX_I4P 1
+#define LMA_HAVE_AMX_I4P 1
 #if defined(__linux__)
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -676,41 +676,41 @@ static inline __m512i i4p_blk512(const uint8_t *blk){
 #endif
 #include <windows.h>
 #endif
-static int coli_amx_state=-1;
-static int coli_amx_s_min=8;
-static int coli_amx_ok(void){
-    if(coli_amx_state<0){
+static int lma_amx_state=-1;
+static int lma_amx_s_min=8;
+static int lma_amx_ok(void){
+    if(lma_amx_state<0){
         const char *e=getenv("AMX");
-        const char *sm=getenv("AMX_S_MIN"); if(sm&&atoi(sm)>0) coli_amx_s_min=atoi(sm);
+        const char *sm=getenv("AMX_S_MIN"); if(sm&&atoi(sm)>0) lma_amx_s_min=atoi(sm);
 #if defined(__linux__)
         /* ARCH_REQ_XCOMP_PERM(XFEATURE_XTILEDATA): kernel >= 5.16 grants tile
          * state per-process; without it the first tile op SIGILLs. */
-        coli_amx_state=(e&&*e=='0')?0:(syscall(SYS_arch_prctl,0x1023,18)==0);
+        lma_amx_state=(e&&*e=='0')?0:(syscall(SYS_arch_prctl,0x1023,18)==0);
 #elif defined(_WIN32)
         /* Windows 11: tile data is an opt-in per-process XState feature.
          * Dynamic lookup keeps older kernels building/running (arming just
          * fails closed there). XSTATE_AMX_TILE_DATA = 18. */
-        if(e&&*e=='0') coli_amx_state=0;
+        if(e&&*e=='0') lma_amx_state=0;
         else {
             HMODULE k32=GetModuleHandleA("kernel32.dll");
-            typedef BOOL (WINAPI *coli_xstate_fn)(ULONG64);
-            coli_xstate_fn f=k32?(coli_xstate_fn)(void*)GetProcAddress(k32,"EnableProcessOptionalXStateFeatures"):NULL;
-            coli_amx_state=(f && f(1ull<<18))?1:0;
+            typedef BOOL (WINAPI *lma_xstate_fn)(ULONG64);
+            lma_xstate_fn f=k32?(lma_xstate_fn)(void*)GetProcAddress(k32,"EnableProcessOptionalXStateFeatures"):NULL;
+            lma_amx_state=(f && f(1ull<<18))?1:0;
         }
 #else
-        (void)e; coli_amx_state=0;
+        (void)e; lma_amx_state=0;
 #endif
-        if(coli_amx_state)
+        if(lma_amx_state)
             fprintf(stderr,"[K1c] AMX int8 tile kernel armed for gs64 tensors "
-                           "(AMX=0 disables, engages at S>=%d)\n",coli_amx_s_min);
+                           "(AMX=0 disables, engages at S>=%d)\n",lma_amx_s_min);
     }
-    return coli_amx_state;
+    return lma_amx_state;
 }
 /* ldtilecfg layout (palette 1): tmm0=C [rows x 16 i32], tmm1=A [rows x 64 i8],
  * tmm2=B [16 x 64 i8 VNNI]. rows<16 reconfigures for the last partial s-tile. */
-struct coli_tilecfg { uint8_t palette,start_row,rsvd[14]; uint16_t colsb[16]; uint8_t rows[16]; };
-static void coli_amx_cfg(int arows){
-    struct coli_tilecfg c; memset(&c,0,sizeof c); c.palette=1;
+struct lma_tilecfg { uint8_t palette,start_row,rsvd[14]; uint16_t colsb[16]; uint8_t rows[16]; };
+static void lma_amx_cfg(int arows){
+    struct lma_tilecfg c; memset(&c,0,sizeof c); c.palette=1;
     c.rows[0]=(uint8_t)arows; c.colsb[0]=64;
     c.rows[1]=(uint8_t)arows; c.colsb[1]=64;
     c.rows[2]=16;             c.colsb[2]=64;
@@ -727,7 +727,7 @@ static void matmul_i4p_gidot_amx(float *y, const int8_t *xq, const float *sx,
         int8_t  bstage[4*1024] __attribute__((aligned(64)));   /* bpg<=4 gated below */
         int32_t cbuf[16*16]    __attribute__((aligned(64)));
         float   sclT[16];
-        int cur=16; coli_amx_cfg(16);
+        int cur=16; lma_amx_cfg(16);
         #pragma omp for schedule(static)
         for(int ot=0; ot<O16; ot+=16){
             memset(acc,0,(size_t)S*16*sizeof(float));
@@ -748,7 +748,7 @@ static void matmul_i4p_gidot_amx(float *y, const int8_t *xq, const float *sx,
                 }
                 for(int st=0; st<S; st+=16){
                     int rows=S-st<16?S-st:16;
-                    if(rows!=cur){ coli_amx_cfg(rows); cur=rows; }
+                    if(rows!=cur){ lma_amx_cfg(rows); cur=rows; }
                     _tile_zero(0);
                     for(int b=0;b<bpg;b++){
                         _tile_loadd(1, xq+(int64_t)st*I+(int64_t)g*gs+b*64, (size_t)I);
@@ -812,20 +812,20 @@ static void i4p_gidot_rows(float *y, const int8_t *xq, const float *sx,
                 }
                 d0=_mm512_reduce_add_epi32(A0); d1=_mm512_reduce_add_epi32(A1);
                 d2=_mm512_reduce_add_epi32(A2); d3=_mm512_reduce_add_epi32(A3);
-#elif defined(coli_dpbusd256)
+#elif defined(lma_dpbusd256)
                 __m256i A0=_mm256_setzero_si256(),A1=_mm256_setzero_si256();
                 __m256i A2=_mm256_setzero_si256(),A3=_mm256_setzero_si256();
                 for(int b=0;b<bpg;b++){
                     int base=g*gs+b*64; __m256i lo,hi;
                     i4p_blk256(w+(base>>1),&lo,&hi);
-                    A0=coli_dpbusd256(A0,lo,_mm256_loadu_si256((const __m256i*)(x0+base)));
-                    A0=coli_dpbusd256(A0,hi,_mm256_loadu_si256((const __m256i*)(x0+base+32)));
-                    A1=coli_dpbusd256(A1,lo,_mm256_loadu_si256((const __m256i*)(x1+base)));
-                    A1=coli_dpbusd256(A1,hi,_mm256_loadu_si256((const __m256i*)(x1+base+32)));
-                    A2=coli_dpbusd256(A2,lo,_mm256_loadu_si256((const __m256i*)(x2+base)));
-                    A2=coli_dpbusd256(A2,hi,_mm256_loadu_si256((const __m256i*)(x2+base+32)));
-                    A3=coli_dpbusd256(A3,lo,_mm256_loadu_si256((const __m256i*)(x3+base)));
-                    A3=coli_dpbusd256(A3,hi,_mm256_loadu_si256((const __m256i*)(x3+base+32)));
+                    A0=lma_dpbusd256(A0,lo,_mm256_loadu_si256((const __m256i*)(x0+base)));
+                    A0=lma_dpbusd256(A0,hi,_mm256_loadu_si256((const __m256i*)(x0+base+32)));
+                    A1=lma_dpbusd256(A1,lo,_mm256_loadu_si256((const __m256i*)(x1+base)));
+                    A1=lma_dpbusd256(A1,hi,_mm256_loadu_si256((const __m256i*)(x1+base+32)));
+                    A2=lma_dpbusd256(A2,lo,_mm256_loadu_si256((const __m256i*)(x2+base)));
+                    A2=lma_dpbusd256(A2,hi,_mm256_loadu_si256((const __m256i*)(x2+base+32)));
+                    A3=lma_dpbusd256(A3,lo,_mm256_loadu_si256((const __m256i*)(x3+base)));
+                    A3=lma_dpbusd256(A3,hi,_mm256_loadu_si256((const __m256i*)(x3+base+32)));
                 }
                 d0=hsum256_i32(A0); d1=hsum256_i32(A1);
                 d2=hsum256_i32(A2); d3=hsum256_i32(A3);
@@ -906,11 +906,11 @@ static void i4p_gidot_rows(float *y, const int8_t *xq, const float *sx,
                     int base=g*gs+b*64;
                     const uint8_t *blk=w+(base>>1);
                     const int8_t *xb=xr+base;
-#if defined(coli_dpbusd256)
+#if defined(lma_dpbusd256)
                     __m256i lo,hi; i4p_blk256(blk,&lo,&hi);
                     __m256i acc=_mm256_setzero_si256();
-                    acc=coli_dpbusd256(acc,lo,_mm256_loadu_si256((const __m256i*)xb));
-                    acc=coli_dpbusd256(acc,hi,_mm256_loadu_si256((const __m256i*)(xb+32)));
+                    acc=lma_dpbusd256(acc,lo,_mm256_loadu_si256((const __m256i*)xb));
+                    acc=lma_dpbusd256(acc,hi,_mm256_loadu_si256((const __m256i*)(xb+32)));
                     d+=hsum256_i32(acc);
 #elif defined(__AVX2__)
                     const __m256i m4=_mm256_set1_epi8(0x0F);
@@ -949,12 +949,12 @@ static void i4p_gidot_rows(float *y, const int8_t *xq, const float *sx,
 static void matmul_i4p_grouped_idot(float *y, const int8_t *xq, const float *sx,
                                     const int32_t *xsg, const uint8_t *q4,
                                     const float *scale, int S, int I, int O, int gs){
-#if defined(COLI_HAVE_AMX_I4P)
+#if defined(LMA_HAVE_AMX_I4P)
     /* AMX takes the aligned bulk (full 16-output tiles, full groups only —
      * the real gs64 checkpoints have I%gs==0); the vector path finishes any
      * output remainder. Below the row threshold the B-tile unpack does not
      * amortize and the vector tile is the better kernel. */
-    if(coli_amx_ok() && S>=coli_amx_s_min && gs%64==0 && gs<=256 && I%gs==0 && O>=16){
+    if(lma_amx_ok() && S>=lma_amx_s_min && gs%64==0 && gs<=256 && I%gs==0 && O>=16){
         int O16=O&~15;
         matmul_i4p_gidot_amx(y,xq,sx,q4,scale,S,I,O16,O,gs);
         if(O16<O) i4p_gidot_rows(y,xq,sx,xsg,q4,scale,S,I,O,gs,O16,O);
@@ -972,7 +972,7 @@ static void matmul_i4p_idot(float *y, const int8_t *xq, const float *sx, const i
     #pragma omp parallel for schedule(static)
     for(int o=0;o<O;o++){ const uint8_t *w=q4+(int64_t)o*rb; float sc=scale[o];
         int s=0;
-#if defined(coli_dpbusd256)
+#if defined(lma_dpbusd256)
         /* K2: tile 1x4 sulla union — il blocco pesi (load + 2 and + srli) si
          * paga UNA volta per 4 righe di attivazione invece che per riga. La
          * union del prefill consegna nr=2..16 righe per expert: e' esattamente
@@ -991,14 +991,14 @@ static void matmul_i4p_idot(float *y, const int8_t *xq, const float *sx, const i
                 __m256i b =_mm256_loadu_si256((const __m256i*)(w+(i>>1)));
                 __m256i lo=_mm256_and_si256(b,m4t);
                 __m256i hi=_mm256_and_si256(_mm256_srli_epi16(b,4),m4t);
-                a0=coli_dpbusd256(a0,lo,_mm256_loadu_si256((const __m256i*)(x0+i)));
-                a0=coli_dpbusd256(a0,hi,_mm256_loadu_si256((const __m256i*)(x0+i+32)));
-                a1=coli_dpbusd256(a1,lo,_mm256_loadu_si256((const __m256i*)(x1+i)));
-                a1=coli_dpbusd256(a1,hi,_mm256_loadu_si256((const __m256i*)(x1+i+32)));
-                a2=coli_dpbusd256(a2,lo,_mm256_loadu_si256((const __m256i*)(x2+i)));
-                a2=coli_dpbusd256(a2,hi,_mm256_loadu_si256((const __m256i*)(x2+i+32)));
-                a3=coli_dpbusd256(a3,lo,_mm256_loadu_si256((const __m256i*)(x3+i)));
-                a3=coli_dpbusd256(a3,hi,_mm256_loadu_si256((const __m256i*)(x3+i+32)));
+                a0=lma_dpbusd256(a0,lo,_mm256_loadu_si256((const __m256i*)(x0+i)));
+                a0=lma_dpbusd256(a0,hi,_mm256_loadu_si256((const __m256i*)(x0+i+32)));
+                a1=lma_dpbusd256(a1,lo,_mm256_loadu_si256((const __m256i*)(x1+i)));
+                a1=lma_dpbusd256(a1,hi,_mm256_loadu_si256((const __m256i*)(x1+i+32)));
+                a2=lma_dpbusd256(a2,lo,_mm256_loadu_si256((const __m256i*)(x2+i)));
+                a2=lma_dpbusd256(a2,hi,_mm256_loadu_si256((const __m256i*)(x2+i+32)));
+                a3=lma_dpbusd256(a3,lo,_mm256_loadu_si256((const __m256i*)(x3+i)));
+                a3=lma_dpbusd256(a3,hi,_mm256_loadu_si256((const __m256i*)(x3+i+32)));
             }
             int32_t d0=hsum256_i32(a0), d1=hsum256_i32(a1);
             int32_t d2=hsum256_i32(a2), d3=hsum256_i32(a3);
@@ -1025,4 +1025,4 @@ static void matmul_i4p_idot(float *y, const int8_t *xq, const float *sx, const i
     }
 }
 
-#endif /* COLIBRI_IDOT_H */
+#endif /* LMA_IDOT_H */

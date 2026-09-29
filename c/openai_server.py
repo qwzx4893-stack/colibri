@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dependency-free OpenAI-compatible HTTP gateway for the colibri engine."""
+"""Dependency-free OpenAI-compatible HTTP gateway for the lmatomic engine."""
 
 import argparse
 import codecs
@@ -85,7 +85,7 @@ def _engine_error(fields, message):
     know how to compact a conversation actually get the chance to (previously the engine
     silently truncated the prompt instead, which is #401)."""
     if fields and fields[0] == "CONTEXT_EXCEEDED":
-        # Two spellings of the same frame. colibri and deepseek_v4 write the
+        # Two spellings of the same frame. lmatomic and deepseek_v4 write the
         # original `CONTEXT_EXCEEDED <used> <limit>`; qwen36 and qwen38 write
         # `prompt_tokens=N requested=M capacity=C`. Reading the second by
         # position took "requested=M" (the completion budget) as the limit and
@@ -245,7 +245,7 @@ class GenerationScheduler:
         with self.condition:
             for kind, fields in (("gauge", gauges), ("counter", counters)):
                 for field, help_text in fields.items():
-                    name = "colibri_scheduler_" + field + ("_total" if kind == "counter" else "")
+                    name = "lmatomic_scheduler_" + field + ("_total" if kind == "counter" else "")
                     value = len(self.queue) if field == "queued" else getattr(self, field)
                     lines.extend((f"# HELP {name} {help_text}", f"# TYPE {name} {kind}",
                                   f"{name} {value}"))
@@ -254,7 +254,7 @@ class GenerationScheduler:
                     ("slot_duration_seconds", "Slot occupancy of finished admitted requests, including errors and cancellation."),
                     ("first_output_seconds", "Engine-call start to first nonempty text or tool callback, excluding queue wait."),
                     ("engine_call_seconds", "Duration of finished engine generation calls, including errors and cancellation.")):
-                name = "colibri_scheduler_" + field
+                name = "lmatomic_scheduler_" + field
                 timing = self.timings[field]
                 lines.extend((f"# HELP {name} {help_text}", f"# TYPE {name} histogram"))
                 for bound, count in zip(self._buckets, timing["buckets"]):
@@ -278,7 +278,7 @@ def content_text(content, param):
     parts = []
     for index, part in enumerate(content):
         if not isinstance(part, dict) or part.get("type") not in ("text", "input_text"):
-            raise APIError(400, "Colibri currently supports text message content only.",
+            raise APIError(400, "LM Atomic currently supports text message content only.",
                            f"{param}.{index}", "unsupported_content_type")
         if not isinstance(part.get("text"), str):
             raise APIError(400, "Text content parts require a string `text` field.",
@@ -364,16 +364,16 @@ _PARTIAL_END_RE = re.compile(r"<(?:/(?:t(?:o(?:o(?:l(?:_(?:c(?:a(?:l)?)?)?)?)?)?
 
 # De-mangler: opt-in recovery for heavily-quantized models that drop the
 # <arg_key>K</arg_key><arg_value> structure. Default OFF (never rewrites well-formed output).
-_SALVAGE = os.environ.get("COLI_TOOL_SALVAGE", "0") == "1"
+_SALVAGE = os.environ.get("LMA_TOOL_SALVAGE", "0") == "1"
 
 # Families whose chat template has no tool syntax at all (OLMoE, Qwen3.6) refuse
-# tools[] and role:"tool" rather than invent a format. COLI_TOOL_FALLBACK=1 opts
+# tools[] and role:"tool" rather than invent a format. LMA_TOOL_FALLBACK=1 opts
 # into a prompt-injected translation for them: the declaration block, the prior
 # assistant calls and the tool results are written as ordinary turns, in the
 # same wire format parse_tool_calls() already reads back (#1378). Default OFF --
 # these models were never trained on tool syntax, so this trades a clean 400 for
 # output the parser may or may not recognise.
-_TOOL_FALLBACK = os.environ.get("COLI_TOOL_FALLBACK", "0") == "1"
+_TOOL_FALLBACK = os.environ.get("LMA_TOOL_FALLBACK", "0") == "1"
 
 
 def _tool_choice_name(tool_choice):
@@ -383,7 +383,7 @@ def _tool_choice_name(tool_choice):
     {"type": "function", "function": "search"} instead of
     {"function": {"name": "search"}} -- raised AttributeError in the five
     renderers that read this and in generation_options() itself, and do_POST
-    answered HTTP 500 "The colibri engine failed to process the request." for a
+    answered HTTP 500 "The lmatomic engine failed to process the request." for a
     payload generation_options() already has a 400 for. Same shape as the
     json_schema fix (#1587): read the member, then check it.
     """
@@ -398,7 +398,7 @@ def _tool_function(tool):
     OpenAI dual spelling: {"function": {"name": ...}} or a bare function object.
     .items() is taken only from a dict. Writing the name where the object goes
     ({"type": "function", "function": "search"}) raised AttributeError in the GLM
-    and DeepSeek declaration blocks, and do_POST answered HTTP 500 "The colibri
+    and DeepSeek declaration blocks, and do_POST answered HTTP 500 "The lmatomic
     engine failed to process the request." for a payload generation_options()
     already has a 400 for. Same shape as the tool_choice fix (#1598): read the
     member, then check it.
@@ -483,7 +483,7 @@ def _unclosed_tail(reply, tools):
 
 
 def parse_tool_calls(reply, tools=None):
-    """Return (content, tool_calls). Strict GLM parse; optional de-mangler (COLI_TOOL_SALVAGE=1)
+    """Return (content, tool_calls). Strict GLM parse; optional de-mangler (LMA_TOOL_SALVAGE=1)
     rescues malformed int4 output by mapping a lone payload onto the tool's primary parameter."""
     param_order = _tool_param_order(tools)
     param_types = _tool_param_types(tools)
@@ -525,7 +525,7 @@ def parse_tool_calls(reply, tools=None):
         # EN: #401 field diagnosis: tools were declared and the model attempted the syntax,
         # EN: but the strict parse matched nothing (typically quantization-mangled output).
         sys.stderr.write("[api] tools declared and tool-call markers present, but no call "
-                         "parsed -- output may be quantization-mangled; try COLI_TOOL_SALVAGE=1\n")
+                         "parsed -- output may be quantization-mangled; try LMA_TOOL_SALVAGE=1\n")
         sys.stderr.flush()
     text = _BOX_RE.sub("", reply)
     if tail is not None:                       # drop the recovered tail from the visible content
@@ -1363,7 +1363,7 @@ def render_chat_olmoe(messages, enable_thinking=False, reasoning_effort=None, to
         tools = None
     if (tools or tool_choice not in (None, "none")) and not _TOOL_FALLBACK:
         raise APIError(400, "Tool use is not wired up for the OLMoE engine yet. "
-                       "Set COLI_TOOL_FALLBACK=1 to opt into prompt-injected "
+                       "Set LMA_TOOL_FALLBACK=1 to opt into prompt-injected "
                        "tool translation.", "tools", "unsupported_parameter")
     boundary = "|||IP_ADDRESS|||"   # bos_token == eos_token in this tokenizer
     parts = [boundary]
@@ -1422,7 +1422,7 @@ def render_chat_qwen(messages, enable_thinking=False, reasoning_effort=None, too
         tools = None
     if (tools or tool_choice not in (None, "none")) and not _TOOL_FALLBACK:
         raise APIError(400, "Tool use is not wired up for the qwen36 engine yet. "
-                       "Set COLI_TOOL_FALLBACK=1 to opt into prompt-injected "
+                       "Set LMA_TOOL_FALLBACK=1 to opt into prompt-injected "
                        "tool translation.", "tools", "unsupported_parameter")
     parts = []
     if tools and _TOOL_FALLBACK:
@@ -1897,13 +1897,13 @@ def _image_bytes_from_url(url):
     A local path is read with the server process's own permissions, and an
     inference client is not the operator: with the API key it could read any
     file the process can reach ("file:///etc/passwd", or a bare "/etc/passwd").
-    #1354 refused '..' and confined reads to COLI_IMAGE_ROOT when set, which
+    #1354 refused '..' and confined reads to LMA_IMAGE_ROOT when set, which
     left every absolute path readable on the default install (the variable is
     unset out of the box). So local paths are now denied unless the operator
-    sets COLI_IMAGE_ROOT, and then only inside it (resolve() follows symlinks
+    sets LMA_IMAGE_ROOT, and then only inside it (resolve() follows symlinks
     before the relative_to() check, the same one serve_static uses). The
     clients that used to send paths read the file themselves with the user's
-    own rights and send a data: URI: `coli chat` since this change, `coli web`
+    own rights and send a data: URI: `lmatomic chat` since this change, `lmatomic web`
     always did. Errors stay generic so a reply never confirms a path or its
     permissions."""
     if not isinstance(url, str) or not url:
@@ -1924,18 +1924,18 @@ def _image_bytes_from_url(url):
                             "as a base64 data: URI or a path on this machine.",
                        "messages")
     raw = url[7:] if url.startswith("file://") else url
-    image_root = os.environ.get("COLI_IMAGE_ROOT")
+    image_root = os.environ.get("LMA_IMAGE_ROOT")
     if not image_root:
         raise APIError(400, "local image paths are disabled on this server: send the image "
-                            "as a base64 data: URI (coli chat and coli web do), or start the "
-                            "server with COLI_IMAGE_ROOT=<dir> to allow files under that "
+                            "as a base64 data: URI (lmatomic chat and lmatomic web do), or start the "
+                            "server with LMA_IMAGE_ROOT=<dir> to allow files under that "
                             "directory.", "messages")
     if ".." in Path(raw).parts:
         raise APIError(400, "image path is not allowed.", "messages")
     try:
         root = Path(image_root).resolve(strict=True)
         if not root.is_dir():
-            raise ValueError("COLI_IMAGE_ROOT is not a directory")
+            raise ValueError("LMA_IMAGE_ROOT is not a directory")
         target = Path(raw).resolve()
         target.relative_to(root)
     except (ValueError, OSError):
@@ -2468,7 +2468,7 @@ def render_chat_dsv41(messages, enable_thinking=False, reasoning_effort=None, to
     return "".join(prompt)
 
 
-# ---- continuing an unfinished assistant turn (COLI_CONTINUE_ASSISTANT) ----------------
+# ---- continuing an unfinished assistant turn (LMA_CONTINUE_ASSISTANT) ----------------
 # A trailing `assistant` message means "continue writing this turn", not "here is a turn I
 # already finished". The official template says exactly that, and says it in one place --
 #     {%- if add_generation_prompt -%}<|assistant|>{{- '<think>' -}}{%- endif -%}
@@ -2509,11 +2509,11 @@ def resolve_generation_prompt(messages, body):
     Continuation is ON by default. A message list ending in a non-empty assistant turn already
     says "continue me" -- the same contract as Anthropic's API -- and no OpenAI-compatible
     client sends a trailing assistant turn by accident. It is deliberately NOT a request field:
-    a client would have to know colibri specifically to send one, and the clients that most
+    a client would have to know lmatomic specifically to send one, and the clients that most
     want this -- anything pointed at an OpenAI- or Anthropic-compatible URL -- send a message
     list and nothing else.
 
-    COLI_CONTINUE_ASSISTANT=0 is the off-switch, for a deployment that wants the old behaviour
+    LMA_CONTINUE_ASSISTANT=0 is the off-switch, for a deployment that wants the old behaviour
     (fold the trailing turn into a completed one and append a fresh cue). It is the only value
     that turns this off; anything else, including unset, leaves it on.
 
@@ -2523,7 +2523,7 @@ def resolve_generation_prompt(messages, body):
     requests that worked before. Every shipped family is in the set today, Kimi K3 included --
     its open turn is framed in kimi_k3.c (a `C` record), not derived in the renderer here.
     """
-    continuing = os.environ.get("COLI_CONTINUE_ASSISTANT", "1") != "0"
+    continuing = os.environ.get("LMA_CONTINUE_ASSISTANT", "1") != "0"
     last = messages[-1] if isinstance(messages, list) and messages else None
     if not (isinstance(last, dict) and last.get("role") == "assistant"):
         return True
@@ -2617,7 +2617,7 @@ def render_chat_for_arch(messages, enable_thinking=False, reasoning_effort=None,
 # rendering, scheduling, generation and tool parsing stay single-sourced. Only the request
 # translation and the response/SSE shapes are new. Claude Code is the reference client.
 
-ANTHROPIC_LOCAL_SIGNATURE = "colibri-local"  # opaque compatibility metadata, not a crypto proof
+ANTHROPIC_LOCAL_SIGNATURE = "lmatomic-local"  # opaque compatibility metadata, not a crypto proof
 
 
 def starts_in_reasoning(enable_thinking, add_generation_prompt=True):
@@ -2719,7 +2719,7 @@ def _anthropic_block_text(blocks, param):
     parts = []
     for index, block in enumerate(blocks):
         if not isinstance(block, dict) or block.get("type") != "text":
-            raise APIError(400, "Colibri currently supports text blocks only here.",
+            raise APIError(400, "LM Atomic currently supports text blocks only here.",
                            f"{param}.{index}", "unsupported_content_type")
         if not isinstance(block.get("text"), str):
             raise APIError(400, "Text blocks require a string `text` field.", f"{param}.{index}.text")
@@ -2799,7 +2799,7 @@ def anthropic_to_openai(body):
                                 "content": _anthropic_block_text(block.get("content", ""),
                                                                  f"{where}.content")})
             else:
-                raise APIError(400, "Colibri supports `text`, `tool_use` and `tool_result` "
+                raise APIError(400, "LM Atomic supports `text`, `tool_use` and `tool_result` "
                                "content blocks only.", f"{where}.type", "unsupported_content_type")
         # tool results precede the user's own text: they answer the previous assistant turn
         messages.extend(results)
@@ -2883,7 +2883,7 @@ DEFAULT_CHAT_STOP_SEQUENCES = ("<|user|>", "<|observation|>")
 # Seconds to wait for the engine to exit on its own after stdin EOF (its
 # atexit teardown writes HEAT_FILE). EOF is only observed between turns,
 # so an in-flight generation delays exit; override for impatient scripts.
-_ENGINE_DRAIN_S = float(os.environ.get("COLI_ENGINE_DRAIN_S", "30"))
+_ENGINE_DRAIN_S = float(os.environ.get("LMA_ENGINE_DRAIN_S", "30"))
 
 
 def parse_stop_sequences(body):
@@ -2940,10 +2940,10 @@ def conversation_cache_slot(messages, kv_slots):
 
 def stop_policy(body, chat):
     sequences = parse_stop_sequences(body)
-    ignore_leading = body.get("x_colibri_ignore_leading_stop", False)
+    ignore_leading = body.get("x_lmatomic_ignore_leading_stop", False)
     if not isinstance(ignore_leading, bool):
-        raise APIError(400, "`x_colibri_ignore_leading_stop` must be a boolean.",
-                       "x_colibri_ignore_leading_stop", "invalid_value")
+        raise APIError(400, "`x_lmatomic_ignore_leading_stop` must be a boolean.",
+                       "x_lmatomic_ignore_leading_stop", "invalid_value")
     if chat and ARCH == "glm" and not sequences:
         # The GLM chat template owns these role boundaries, so generic OpenAI
         # clients should not need model-specific stop knowledge. Inkling has a
@@ -3043,7 +3043,7 @@ class ToolSideband:
 
 def generation_options(body, limit):
     if body.get("n", 1) != 1:
-        raise APIError(400, "Colibri currently supports `n=1` only.", "n", "unsupported_value")
+        raise APIError(400, "LM Atomic currently supports `n=1` only.", "n", "unsupported_value")
     # `tools`/`functions` are handled by render_chat (declaration) + parse_tool_calls (output).
     # Validate tools/functions structure early so malformed input fails with a clear error.
     tools_raw = body.get("tools") or body.get("functions")
@@ -3135,17 +3135,17 @@ def generation_options(body, limit):
         maximum_param = "max_tokens"
     if maximum is None:
         # Client omitted max_tokens: honor the operator's configured budget (--max-tokens /
-        # --ngen), not an arbitrary 256 — `coli serve --ngen 32768` must mean 32768 (#382).
+        # --ngen), not an arbitrary 256 — `lmatomic serve --ngen 32768` must mean 32768 (#382).
         # Generation still ends at EOS, so this is a cap, not a target.
         maximum = limit
     temperature = body.get("temperature")
     top_p = body.get("top_p")
     if temperature is None:
-        # The launcher publishes --temp through COLI_TEMP (#509, #968). The
+        # The launcher publishes --temp through LMA_TEMP (#509, #968). The
         # gateway must use that value as its request default or the SERVE frame
         # replaces it with 0.7 before any engine can honor the setting.
         try:
-            temperature = float(os.environ.get("COLI_TEMP", "0.7"))
+            temperature = float(os.environ.get("LMA_TEMP", "0.7"))
             if not math.isfinite(temperature) or not 0 <= temperature <= 2:
                 temperature = 0.7
         except ValueError:
@@ -3170,7 +3170,7 @@ def read_engine_turn(stream, sentinel, on_bytes):
     while True:
         byte = stream.read(1)
         if byte == b"":
-            raise RuntimeError("colibri engine exited unexpectedly")
+            raise RuntimeError("lmatomic engine exited unexpectedly")
         pending += byte
         if pending.endswith(sentinel):
             data = pending[:-len(sentinel)]
@@ -3203,9 +3203,9 @@ def cap_for_arch(arch, cap, env=None, model=None):
     """Cap-sentinel shim (#379): CURRENT-STATE CALIBRATION, not durable core.
 
     An absent cap (None) means different things across today's engines --
-    platform-auto in colibri.c (coli_resolve_cap resolves the 0 sentinel
+    platform-auto in glm52.c (lma_resolve_cap resolves the 0 sentinel
     Metal/darwin/SSD-aware), RAM-auto in inkling.c (cap <= 0 fits the expert
-    LRU to available RAM), while the coli wrapper historically forced 8 on
+    LRU to available RAM), while the lmatomic wrapper historically forced 8 on
     every engine. This shim INTERNALIZES that external inconsistency at the
     one funnel every engine launch passes through: with no explicit cap, a
     glm-arch model's engine receives the 0 sentinel to resolve platform-aware
@@ -3213,8 +3213,8 @@ def cap_for_arch(arch, cap, env=None, model=None):
     verbatim to any engine -- including an explicit 0, which for inkling means
     upstream's RAM-auto (people who ask for upstream semantics get them).
     Keyed on the MODEL's arch (config.json model_type), not the engine
-    binary's file name: COLI_ENGINE users package the glm engine under
-    arbitrary names (glm52, colibri-1.2, ...), and basename keying silently
+    binary's file name: LMA_ENGINE users package the glm engine under
+    arbitrary names (glm52, lmatomic-1.2, ...), and basename keying silently
     disabled the platform default for exactly them.
 
     MOOTING TRIGGER: upstream unifies cap-sentinel semantics across engines
@@ -3227,13 +3227,13 @@ def cap_for_arch(arch, cap, env=None, model=None):
     # in the precedence chain and is removed before the engine starts.
     if env is not None:
         try:
-            measured = int(env.get("COLI_PROFILE_CAP", ""))
+            measured = int(env.get("LMA_PROFILE_CAP", ""))
         except (TypeError, ValueError):
             measured = 0
         if measured >= 1:
             return measured
         try:
-            planned = int(env.get("COLI_PLAN_CAP", ""))
+            planned = int(env.get("LMA_PLAN_CAP", ""))
         except (TypeError, ValueError):
             planned = 0
         if planned >= 1:
@@ -3260,12 +3260,12 @@ def cap_for_arch(arch, cap, env=None, model=None):
 def tune_child_env(env, arch):
     """Apply the engine-local defaults that a direct server launch otherwise misses.
 
-    ``coli chat`` already supplies these values, but users also launch this file
+    ``lmatomic chat`` already supplies these values, but users also launch this file
     directly.  Keep setdefault semantics so every explicit operator setting wins.
     """
     if arch != "deepseek_v4":
         return env
-    if not env.get("COLI_NO_OMP_TUNE"):
+    if not env.get("LMA_NO_OMP_TUNE"):
         # The V4 runtime owns OMP_NUM_THREADS: it reserves logical CPUs for its
         # expert-loader workers. Supplying a physical-core default here makes
         # that runtime policy treat the launcher value as a user override.
@@ -3284,7 +3284,7 @@ def tune_child_env(env, arch):
     env.setdefault("V4_MTP_MISS", "96")
     env.setdefault("V4_MTP_MIN", "3")
     env.setdefault("V4_MTP_CONF", "0.55")
-    # CUDA-driven MTP drafting stays opt-in (mirrors GLM's COLI_CUDA_MTP): the
+    # CUDA-driven MTP drafting stays opt-in (mirrors GLM's LMA_CUDA_MTP): the
     # GPU fp4 kernels accumulate fp32 differently from the CPU refs, and a
     # speculative draft must match the target bit-for-bit to be accepted.
     env.setdefault("V4_MTP_GPU", "0")
@@ -3403,9 +3403,9 @@ def _write_all(stream, data, frame):
 
 class Engine:
     # cap=None = "not explicitly set": a glm-arch model's engine resolves the
-    # 0 sentinel (8 historically, 1 on Metal+darwin+fast SSD -- colibri.c
-    # coli_resolve_cap, #379), non-glm arches get the legacy 8, via
-    # cap_for_arch above. Same convention as the --cap flags in coli and
+    # 0 sentinel (8 historically, 1 on Metal+darwin+fast SSD -- glm52.c
+    # lma_resolve_cap, #379), non-glm arches get the legacy 8, via
+    # cap_for_arch above. Same convention as the --cap flags in lmatomic and
     # main() below, so programmatic callers that never pass cap get the same
     # auto behavior as the CLI; an explicit int (0 included) is verbatim.
     def __init__(self, executable, model, cap=None, max_tokens=1024, env=None, kv_slots=1,
@@ -3424,8 +3424,8 @@ class Engine:
                          NGEN=str(max_tokens), KV_SLOTS=str(kv_slots))
         tune_child_env(child_env, arch)
         resolved_cap = cap_for_arch(arch, cap, child_env, model=model)
-        child_env.pop("COLI_PROFILE_CAP", None)
-        child_env.pop("COLI_PLAN_CAP", None)
+        child_env.pop("LMA_PROFILE_CAP", None)
+        child_env.pop("LMA_PLAN_CAP", None)
         # Own process group on Windows: a CTRL_BREAK sent to the serve
         # process group (the graceful stop, handled as SIGBREAK above) must
         # not reach the engine — the C runtime's default would kill it
@@ -3460,7 +3460,7 @@ class Engine:
         self.profile_seq = 0
         read_engine_turn(self.process.stdout, READY, lambda _: None)
         self.dispatcher = threading.Thread(target=self._dispatch_stdout,
-                                           name="colibri-stdout", daemon=True)
+                                           name="lmatomic-stdout", daemon=True)
         self.dispatcher.start()
 
     @staticmethod
@@ -3525,7 +3525,7 @@ class Engine:
             while True:
                 line = self.process.stdout.readline()
                 if line == b"":
-                    raise RuntimeError("colibri engine exited unexpectedly")
+                    raise RuntimeError("lmatomic engine exited unexpectedly")
                 fields = line.decode("utf-8", "replace").strip().split()
                 if not fields:
                     continue
@@ -3684,11 +3684,11 @@ class Engine:
         events = queue.Queue()
         with self.pending_lock:
             if self.closed:
-                raise RuntimeError("colibri engine is shutting down")
+                raise RuntimeError("lmatomic engine is shutting down")
             if self.dispatcher_error is not None:
-                raise RuntimeError("colibri engine dispatcher stopped") from self.dispatcher_error
+                raise RuntimeError("lmatomic engine dispatcher stopped") from self.dispatcher_error
             if self.process.poll() is not None:
-                raise RuntimeError("colibri engine is not running")
+                raise RuntimeError("lmatomic engine is not running")
             request_id = str(self.next_request_id)
             self.next_request_id += 1
             self.pending[request_id] = events
@@ -3724,7 +3724,7 @@ class Engine:
         try:
             with self.write_lock:
                 if self.process.poll() is not None:
-                    raise RuntimeError("colibri engine is not running")
+                    raise RuntimeError("lmatomic engine is not running")
                 # Le patch sono binarie e grosse: viaggiano in un frame loro,
                 # annunciato subito prima del SUBMIT a cui appartengono. Deve
                 # partire dentro lo stesso lock, o un'altra richiesta potrebbe
@@ -3844,7 +3844,7 @@ class Engine:
             if self.closed:
                 return
             self.closed = True
-        self._fail_pending(RuntimeError("colibri engine is shutting down"))
+        self._fail_pending(RuntimeError("lmatomic engine is shutting down"))
         if self.process.poll() is None:
             # Graceful drain first: the engine's serve loop reads requests
             # from stdin, and EOF there is the one portable path to its
@@ -3883,7 +3883,7 @@ class Engine:
 
 
 def model_object(model_id, created):
-    return {"id": model_id, "object": "model", "created": created, "owned_by": "colibri"}
+    return {"id": model_id, "object": "model", "created": created, "owned_by": "lmatomic"}
 
 
 def _positive_env(name, default):
@@ -3908,7 +3908,7 @@ class APIServer(ThreadingHTTPServer):
     # nothing a dashboard plus a handful of clients does not already have. Over
     # the cap we close immediately rather than queue, so the cost of a flood is
     # paid by the attacker's socket and not by our address space.
-    MAX_CONNECTIONS = _positive_env("COLI_MAX_CONNECTIONS", 64)
+    MAX_CONNECTIONS = _positive_env("LMA_MAX_CONNECTIONS", 64)
 
     # A global cap alone turns memory exhaustion into connection starvation: one
     # attacker holding all 64 slots still locks every real client out. Measured
@@ -3916,7 +3916,7 @@ class APIServer(ThreadingHTTPServer):
     # hold, and keep it well under the global cap: a browser opens a handful of
     # parallel connections, an SDK fewer, so 8 is generous for any one client and
     # leaves 56 slots that one address cannot touch.
-    MAX_CONNECTIONS_PER_IP = _positive_env("COLI_MAX_CONNECTIONS_PER_IP", 8)
+    MAX_CONNECTIONS_PER_IP = _positive_env("LMA_MAX_CONNECTIONS_PER_IP", 8)
 
     def __init__(self, address, engine, model_id, api_key=None, max_tokens=1024,
                  cors_origins=DEFAULT_CORS_ORIGINS, max_queue=8, queue_timeout=300,
@@ -4045,8 +4045,8 @@ class APIHandler(BaseHTTPRequestHandler):
     timeout = 30   # per socket OPERATION. On its own this does not stop a slowloris:
                    # it restarts on every byte received, so a drip renews it forever.
                    # READ_DEADLINE below is the cumulative bound that actually does.
-    READ_DEADLINE = _positive_env("COLI_READ_DEADLINE", 30)  # accept -> request read
-    server_version = "colibri"
+    READ_DEADLINE = _positive_env("LMA_READ_DEADLINE", 30)  # accept -> request read
+    server_version = "lmatomic"
     _committed = False    # status line already on the wire; reset per request below
     _body_read = False    # request body fully consumed, so nothing is left to drain
 
@@ -4090,10 +4090,10 @@ class APIHandler(BaseHTTPRequestHandler):
             # POSIX spellings and let the Windows one through. #854's log is pages of
             # `ConnectionAbortedError: [WinError 10053] An established connection was
             # aborted by the software in your host machine` escaping to socketserver,
-            # from a `coli web` start that was otherwise healthy.
+            # from a `lmatomic web` start that was otherwise healthy.
             #
             # The client hung up mid-response. That is not an error here, it is
-            # how HTTP clients behave: `coli chat` polls /health while the model
+            # how HTTP clients behave: `lmatomic chat` polls /health while the model
             # loads and drops each connection as soon as it has its answer, and
             # Ctrl-C during a stream closes the socket by design -- the banner
             # tells the user to do exactly that. Without this, socketserver's
@@ -4168,7 +4168,7 @@ class APIHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key, anthropic-version")
         self.send_header("Access-Control-Expose-Headers",
-                         "x-request-id, x-colibri-queue-wait-ms, Retry-After")
+                         "x-request-id, x-lmatomic-queue-wait-ms, Retry-After")
         self.send_header("Access-Control-Max-Age", "600")
         if "*" not in self.server.cors_origins:
             self.send_header("Vary", "Origin")
@@ -4222,7 +4222,7 @@ class APIHandler(BaseHTTPRequestHandler):
             raise APIError(
                 403,
                 "Host header %r not allowed. Add it with --allowed-host %s "
-                "(or COLI_ALLOWED_HOSTS), or --allowed-host '*' to accept any "
+                "(or LMA_ALLOWED_HOSTS), or --allowed-host '*' to accept any "
                 "host when the bind is already public." % (name or "(empty)", name or "<host>"),
                 None, "forbidden")
 
@@ -4270,7 +4270,7 @@ class APIHandler(BaseHTTPRequestHandler):
         Path(__file__).resolve().parent.parent / "web" / "dist")
 
     def serve_static(self, path):
-        """Serve the built web UI (web/dist) so `coli web` is one process.
+        """Serve the built web UI (web/dist) so `lmatomic web` is one process.
         Read-only, no auth (same trust level as /health), traversal-safe."""
         if path.startswith("/v1/") or path == "/health":
             return False
@@ -4323,7 +4323,7 @@ class APIHandler(BaseHTTPRequestHandler):
                 if self._is_authed():
                     payload["scheduler"] = self.server.scheduler.snapshot()
                     payload["kv_slots"] = self.server.kv_slots
-                    payload["continue_assistant"] = os.environ.get("COLI_CONTINUE_ASSISTANT", "1") != "0" and ARCH in CONTINUATION_FAMILIES
+                    payload["continue_assistant"] = os.environ.get("LMA_CONTINUE_ASSISTANT", "1") != "0" and ARCH in CONTINUATION_FAMILIES
                     tiers = getattr(self.server.engine, "tiers", None) if self.server.engine else None
                     if tiers: payload["tiers"] = tiers
                     hwinfo = getattr(self.server.engine, "hwinfo", None) if self.server.engine else None
@@ -4412,7 +4412,7 @@ class APIHandler(BaseHTTPRequestHandler):
         except Exception as error:
             self.log_error("request failed: %s", error)
             try:
-                self._fail(APIError(500, "The colibri engine failed to process the request.",
+                self._fail(APIError(500, "The lmatomic engine failed to process the request.",
                                     None, "engine_error", "server_error"), request_id)
             except OSError:
                 pass
@@ -4682,8 +4682,8 @@ class APIHandler(BaseHTTPRequestHandler):
                       "read_tokens": read_total,
                       "total_tokens": prompt_max + read_total},
         })
-        headers = {"x-colibri-queue-wait-ms": str(round(queue_wait * 1000)),
-                   "x-colibri-elapsed-ms": str(round((time.time() - started) * 1000))}
+        headers = {"x-lmatomic-queue-wait-ms": str(round(queue_wait * 1000)),
+                   "x-lmatomic-elapsed-ms": str(round((time.time() - started) * 1000))}
         if not send:
             result["_headers"] = headers
             return result
@@ -4692,7 +4692,7 @@ class APIHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------ Jev-compatible
     #
     # POST /v1/systemone speaks the request and the reply of TypeSafe's Jev
-    # API (docs.typesafe.ai/api): a client written for it points at colibri
+    # API (docs.typesafe.ai/api): a client written for it points at lmatomic
     # and changes the base URL, nothing else. The three primitives map onto
     # the `questions` form of /v1/brio, the same channel: the state is
     # photographed once and every question pays only its own tokens.
@@ -4839,11 +4839,11 @@ class APIHandler(BaseHTTPRequestHandler):
     def generation(self, body, prompt, request_id, chat, tools=None, tool_choice=None,
                    enable_thinking=False, audio=None, image=None,
                    add_generation_prompt=True):
-        # COLI_DEBUG tees the engine transaction to stderr: 1 = decoded output stream only,
+        # LMA_DEBUG tees the engine transaction to stderr: 1 = decoded output stream only,
         # 2 = both sides (rendered prompt + output). render_chat already folds prior turns and
         # tool results into `prompt`, so level 2 is the full conversation the engine saw.
         try:
-            dbg = int(os.environ.get("COLI_DEBUG", "0"))
+            dbg = int(os.environ.get("LMA_DEBUG", "0"))
         except ValueError:
             dbg = 0
         if dbg >= 2:
@@ -4889,7 +4889,7 @@ class APIHandler(BaseHTTPRequestHandler):
         with self.server.scheduler.admit(self.client_disconnected, cache_slot) as admission, \
                 contextlib.ExitStack() as stream_cleanup:
             queue_wait, cache_slot = admission
-            queue_headers = {"x-colibri-queue-wait-ms": str(round(queue_wait * 1000))}
+            queue_headers = {"x-lmatomic-queue-wait-ms": str(round(queue_wait * 1000))}
             if not stream:
                 output = []
                 stop_filter = StopFilter(stop_sequences, output.append, ignore_leading_stop)
@@ -4957,7 +4957,7 @@ class APIHandler(BaseHTTPRequestHandler):
             last_write = [time.time()]
             ka_stop = threading.Event()
             KA_GAP = 10.0
-            dbg_echo = dbg >= 1   # tee decoded tokens to stderr (COLI_DEBUG level parsed in generation())
+            dbg_echo = dbg >= 1   # tee decoded tokens to stderr (LMA_DEBUG level parsed in generation())
 
             def event(choices, usage_marker=False):
                 nonlocal connected
@@ -4979,9 +4979,9 @@ class APIHandler(BaseHTTPRequestHandler):
             def _keepalive():
                 # #597: an empty delta already resets the client's idle timer without
                 # painting hundreds of dots in the reasoning panel during a minutes-long
-                # cold prefill. COLI_VISIBLE_KEEPALIVE=1 restores the old visible "." for
+                # cold prefill. LMA_VISIBLE_KEEPALIVE=1 restores the old visible "." for
                 # diagnosing whether keepalives are being delivered at all.
-                visible = os.environ.get("COLI_VISIBLE_KEEPALIVE") == "1"
+                visible = os.environ.get("LMA_VISIBLE_KEEPALIVE") == "1"
                 ping = [{"index": 0,
                          "delta": ({"reasoning_content": "." if visible else ""} if chat
                                    else {"content": ""}),
@@ -5172,7 +5172,7 @@ class APIHandler(BaseHTTPRequestHandler):
         if reasoning_effort not in efforts:
             raise APIError(400, "`reasoning_effort` must be none, minimal, low, medium, high, or xhigh.",
                            "reasoning_effort")
-        # COLI_THINK=1 makes thinking the default when the client sends NEITHER reasoning_effort
+        # LMA_THINK=1 makes thinking the default when the client sends NEITHER reasoning_effort
         # nor enable_thinking (a global switch, like the old server's --think). An explicit
         # client value always wins. Default off => exact OpenAI-standard behavior.
         if reasoning_effort is None and "enable_thinking" not in body:
@@ -5180,7 +5180,7 @@ class APIHandler(BaseHTTPRequestHandler):
             # preserve the older opt-in default for the other families.
             if ARCH == "qwen38":
                 reasoning_effort = "xhigh"
-            elif os.environ.get("COLI_THINK", "0") == "1":
+            elif os.environ.get("LMA_THINK", "0") == "1":
                 reasoning_effort = "high"
         enable_thinking = body.get("enable_thinking", reasoning_effort not in (None, "none"))
         if not isinstance(enable_thinking, bool):
@@ -5244,7 +5244,7 @@ class APIHandler(BaseHTTPRequestHandler):
         for unsupported, why in (("stop_sequences", "custom stop sequences"),
                                  ("top_k", "top-k sampling")):
             if body.get(unsupported) not in (None, [], ""):
-                raise APIError(400, f"Colibri does not support `{unsupported}` ({why}) yet.",
+                raise APIError(400, f"LM Atomic does not support `{unsupported}` ({why}) yet.",
                                unsupported, "unsupported_value")
         messages = anthropic_to_openai(body)
         tools, tool_choice = anthropic_tools(body)
@@ -5255,7 +5255,7 @@ class APIHandler(BaseHTTPRequestHandler):
         if not enable_thinking and thinking is None:
             if ARCH == "qwen38":
                 enable_thinking = True
-            elif os.environ.get("COLI_THINK", "0") == "1":
+            elif os.environ.get("LMA_THINK", "0") == "1":
                 enable_thinking = True
         if ARCH == "olmoe":
             enable_thinking = False   # #984: OLMoE has no thinking mode (see the OpenAI path)
@@ -5337,7 +5337,7 @@ class APIHandler(BaseHTTPRequestHandler):
         with self.server.scheduler.admit(self.client_disconnected, cache_slot) as admission, \
                 contextlib.ExitStack() as stream_cleanup:
             queue_wait, cache_slot = admission
-            queue_headers = {"x-colibri-queue-wait-ms": str(round(queue_wait * 1000))}
+            queue_headers = {"x-lmatomic-queue-wait-ms": str(round(queue_wait * 1000))}
             if not stream:
                 output = []
                 stop_filter = StopFilter(stop_sequences, output.append, ignore_leading_stop)
@@ -5531,7 +5531,7 @@ class APIHandler(BaseHTTPRequestHandler):
     def completion(self, body, request_id):
         prompt = body.get("prompt")
         if not isinstance(prompt, str):
-            raise APIError(400, "Colibri currently requires `prompt` to be a string.", "prompt")
+            raise APIError(400, "LM Atomic currently requires `prompt` to be a string.", "prompt")
         if not prompt:
             raise APIError(400, "`prompt` must not be empty.", "prompt")
         self.generation(body, prompt, request_id, False)
@@ -5556,12 +5556,12 @@ def serve(model, host="127.0.0.1", port=8000, model_id=None, api_key=None,
     if host not in ("127.0.0.1", "localhost", "::1") and not api_key:
         # (#SEC-6) Fail closed: an unauthenticated engine on a non-loopback bind exposes
         # a compute-heavy API to the network. Refuse unless explicitly overridden.
-        if os.environ.get("COLI_ALLOW_INSECURE_BIND") == "1":
-            print("WARNING: binding %s beyond localhost with NO auth (COLI_ALLOW_INSECURE_BIND=1)" % host,
+        if os.environ.get("LMA_ALLOW_INSECURE_BIND") == "1":
+            print("WARNING: binding %s beyond localhost with NO auth (LMA_ALLOW_INSECURE_BIND=1)" % host,
                   file=sys.stderr)
         else:
-            print("refusing to bind %s beyond localhost without COLI_API_KEY set "
-                  "(set COLI_ALLOW_INSECURE_BIND=1 to override)" % host, file=sys.stderr)
+            print("refusing to bind %s beyond localhost without LMA_API_KEY set "
+                  "(set LMA_ALLOW_INSECURE_BIND=1 to override)" % host, file=sys.stderr)
             sys.exit(1)
     if allowed_hosts and "*" in allowed_hosts:
         print("WARNING: --allowed-host '*' accepts ANY Host header "
@@ -5611,30 +5611,30 @@ def serve(model, host="127.0.0.1", port=8000, model_id=None, api_key=None,
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default=os.environ.get("COLI_MODEL"), required=not os.environ.get("COLI_MODEL"))
+    parser.add_argument("--model", default=os.environ.get("LMA_MODEL"), required=not os.environ.get("LMA_MODEL"))
     parser.add_argument("--engine")
     parser.add_argument("--arch", choices=("auto", *family_ids()), default="auto",
                         help="chat-template family; auto reads model_type from the model's config.json")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--model-id", default=os.environ.get("COLI_MODEL_ID"))
-    parser.add_argument("--api-key", default=os.environ.get("COLI_API_KEY"))
+    parser.add_argument("--model-id", default=os.environ.get("LMA_MODEL_ID"))
+    parser.add_argument("--api-key", default=os.environ.get("LMA_API_KEY"))
     parser.add_argument("--cors-origin", action="append", default=None,
                         help="allowed browser origin; repeat as needed (use '*' for any origin)")
-    # Absent = not explicitly set: mirrors coli's --cap (see cap_for_arch and issue
+    # Absent = not explicitly set: mirrors lmatomic's --cap (see cap_for_arch and issue
     # #379 -- glm arch resolves platform-aware, non-glm gets the legacy 8). An
     # explicit value, 0 included, reaches the engine verbatim.
     parser.add_argument("--cap", type=int, default=None, help="cache slots/layer (default: auto)")
     parser.add_argument("--max-tokens", type=int, default=1024)
-    parser.add_argument("--max-queue", type=int, default=int(os.environ.get("COLI_MAX_QUEUE", "8")))
+    parser.add_argument("--max-queue", type=int, default=int(os.environ.get("LMA_MAX_QUEUE", "8")))
     parser.add_argument("--queue-timeout", type=float,
-                        default=float(os.environ.get("COLI_QUEUE_TIMEOUT", "300")))
-    parser.add_argument("--kv-slots", type=int, default=int(os.environ.get("COLI_KV_SLOTS", "1")))
+                        default=float(os.environ.get("LMA_QUEUE_TIMEOUT", "300")))
+    parser.add_argument("--kv-slots", type=int, default=int(os.environ.get("LMA_KV_SLOTS", "1")))
     parser.add_argument("--allowed-host", action="append",
-        default=[h.strip() for h in os.environ.get("COLI_ALLOWED_HOSTS", "").split(",") if h.strip()],
+        default=[h.strip() for h in os.environ.get("LMA_ALLOWED_HOSTS", "").split(",") if h.strip()],
         help="additional Host header value accepted by the DNS-rebinding guard "
              "(reverse proxy / MagicDNS in front of the loopback bind); repeat as needed, "
-             "or set COLI_ALLOWED_HOSTS as a comma-separated list")
+             "or set LMA_ALLOWED_HOSTS as a comma-separated list")
     args = parser.parse_args()
     try:
         resolved = resolve_model(args.model)

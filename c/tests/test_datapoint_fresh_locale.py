@@ -1,6 +1,6 @@
 """`tools/datapoint.py --mode fresh-process` must speak UTF-8 to a legacy engine whatever the locale.
 
-run_fresh_engine drives olmoe, inkling and colibri through their stdin chat
+run_fresh_engine drives olmoe, inkling and lmatomic through their stdin chat
 loop and captured the pipes in text mode, i.e. in the locale's code page. The
 engines read and write UTF-8, so on a code page that is not UTF-8 (cp949,
 cp932, or the C locale with UTF-8 mode off):
@@ -8,7 +8,7 @@ cp932, or the C locale with UTF-8 mode off):
   * a prompt with a character the code page cannot encode died with
     UnicodeEncodeError before the engine started measuring, and one it can
     encode (é on cp1252) reached the engine as non-UTF-8 bytes;
-  * an engine line the code page cannot decode (colibri's "[prefill] layer
+  * an engine line the code page cannot decode (lmatomic's "[prefill] layer
     1/78 · 12 token" progress line) made the reader thread raise, proc.stdout
     came back None, and the datapoint died with a TypeError.
 

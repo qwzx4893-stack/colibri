@@ -6,8 +6,8 @@
 
 - **Hardware:** Apple M5 Max — 18 CPU cores (12 P + 6 E), 40-core GPU, 128 GB unified memory
 - **Model:** GLM-5.2 int4 (744B MoE), experts streamed from SSD
-- **Workload:** `./coli run "Compare the myths of Lucifer and Prometheus"`, 1024 tokens generated
-- **Constant flags:** `COLI_METAL=1 DIRECT=1 MTP=0 --ram 110`
+- **Workload:** `./lmatomic run "Compare the myths of Lucifer and Prometheus"`, 1024 tokens generated
+- **Constant flags:** `LMA_METAL=1 DIRECT=1 MTP=0 --ram 110`
 - Every run: identical working set — ~607 experts/token, ~74–75% hit rate, RSS ~97.9 GB, `fallback CPU 0` (all eligible blocks on GPU)
 
 ## Results
@@ -17,7 +17,7 @@
 | **A** — old base (pre-rebase branch) | 2.06 | 496 | 266 | 109 | 100 | 76 | 51 |
 | **B** — rebased, **defaults** | 1.25 | 819 | 285 | 215 | 290 | 223 | 106 |
 | **C** — rebased, defaults + `PIPE=1` | 1.30 | 788 | 297 | 190 | 272 | 212 | 89 |
-| **D** — rebased + `COLI_NO_OMP_TUNE=1` | 1.90 | 539 | 266 | 143 | 109 | 85 | 84 |
+| **D** — rebased + `LMA_NO_OMP_TUNE=1` | 1.90 | 539 | 266 | 143 | 109 | 85 | 84 |
 | **E** — rebased + `NO_OMP` + `PIPE=1` **(winner)** | **2.24** | **457** | **241** | **97** | **99** | **79** | **44** |
 
 \* *expert GPU overhead = expert gpu-wall − expert kernel time, i.e. GPU idle waiting to be fed. Expert kernel time itself was constant (~34–35 s) in every un-throttled run.*
@@ -25,8 +25,8 @@
 Winner (E) command:
 
 ```bash
-COLI_METAL=1 DIRECT=1 MTP=0 COLI_NO_OMP_TUNE=1 PIPE=1 PIPE_WORKERS=8 \
-  ./coli run --model /path/to/glm52_i4 \
+LMA_METAL=1 DIRECT=1 MTP=0 LMA_NO_OMP_TUNE=1 PIPE=1 PIPE_WORKERS=8 \
+  ./lmatomic run --model /path/to/glm52_i4 \
   "Compare the myths of Lucifer and Prometheus" --ram 110
 ```
 
@@ -34,7 +34,7 @@ COLI_METAL=1 DIRECT=1 MTP=0 COLI_NO_OMP_TUNE=1 PIPE=1 PIPE_WORKERS=8 \
 
 **The default regression (A→B) is not in the kernels' work — it's GPU throttling.** Same GPU dispatch counts (≈140k blocks, 79,794 attention layer-launches, 618k experts-on-GPU) in every run, yet the **attention GPU kernel time triples, 76 s → 223 s.** Kernel *execution* time can't triple for identical work unless the GPU is clocking down. The cause is the OMP hot-team (#77): with active spin, the CPU sits at ~97% busy-waiting on the GPU, and because the M-series CPU and GPU share one power/thermal envelope, that spin robs the GPU of clock headroom. Note B→C: adding `PIPE` while the spin is still on barely helps (1.25→1.30) — the CPU has no spare cycles to run PIPE's workers.
 
-**Fix 1 — kill the spin (A→D).** `COLI_NO_OMP_TUNE=1` (passive waits) gives the GPU its power back: attention kernel falls 223 s → 85 s, near the old 76 s, and throughput jumps to 1.90. But a residual gap remains, and it is entirely in **expert-matmul (+33 s vs A)** — specifically the *GPU overhead*, which grew 51 s → 84 s while the expert kernel stayed at ~34 s. Passive waits stop stealing power but make the CPU slower to hand the next expert batch to the GPU, so the GPU idles between dispatches.
+**Fix 1 — kill the spin (A→D).** `LMA_NO_OMP_TUNE=1` (passive waits) gives the GPU its power back: attention kernel falls 223 s → 85 s, near the old 76 s, and throughput jumps to 1.90. But a residual gap remains, and it is entirely in **expert-matmul (+33 s vs A)** — specifically the *GPU overhead*, which grew 51 s → 84 s while the expert kernel stayed at ~34 s. Passive waits stop stealing power but make the CPU slower to hand the next expert batch to the GPU, so the GPU idles between dispatches.
 
 **Fix 2 — hide the dispatch latency (D→E).** `PIPE=1 PIPE_WORKERS=8` keeps experts prefetched and streaming, so the GPU stops waiting: expert overhead 84 s → **44 s** (below even the old base's 51 s), and `PIPE`'s I/O overlap also trims the disk wall 266 s → **241 s**. Net **2.24 tok/s** — past the pre-rebase 2.06, because `PIPE` did not exist on the old base.
 
@@ -42,7 +42,7 @@ The two levers are complementary, not additive coincidences: **`NO_OMP` restores
 
 ## Recommendations
 
-1. **On Apple Silicon Metal builds, default OMP to a passive wait** (e.g. auto-set `OMP_WAIT_POLICY=passive`, or `COLI_NO_OMP_TUNE` behavior, when `COLI_METAL` is enabled). The #77 active-spin default is a −39% trap here: during Metal offload the CPU is mostly *waiting on the GPU*, and spinning actively throttles it. This is the single highest-impact change.
+1. **On Apple Silicon Metal builds, default OMP to a passive wait** (e.g. auto-set `OMP_WAIT_POLICY=passive`, or `LMA_NO_OMP_TUNE` behavior, when `LMA_METAL` is enabled). The #77 active-spin default is a −39% trap here: during Metal offload the CPU is mostly *waiting on the GPU*, and spinning actively throttles it. This is the single highest-impact change.
 2. **Document `PIPE=1 PIPE_WORKERS=8` as recommended with Metal** — it recovers the dispatch-latency cost of the passive wait and overlaps expert I/O.
 3. **Memory ceiling (128 GB M5 Max):** `--ram 110` is safe (RSS ~97 GB, compressor quiet); `--ram 120` crosses into memory compression (double penalty — compressor CPU cost *and* SoC power stolen from the GPU); `--ram 115` untested/marginal. Metal's registered buffers share unified memory, so the knee is lower than a CPU-only build would suggest.
 

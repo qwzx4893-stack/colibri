@@ -78,8 +78,8 @@ static void *waiting_issue(void *arg) {
 
 int main(void) {
     enum { D = 64 };
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", "0", 1);
     setenv("QT_NO_WARMSTART", "1", 1);
     /* budget for one expert and a half, at the allocator's granularity (three
      * int4 matrices of D*32/2 bytes plus three scale tables, each charged

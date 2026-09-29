@@ -7,12 +7,12 @@ site
 docs
 **/*.o
 **/*.exe
-c/colibri
+c/glm52
 c/glm
 c/olmoe
 c/glm_tiny
-**/.coli_usage
-**/.coli_kv*
+**/.lma_usage
+**/.lma_kv*
 **/__pycache__
 *.safetensors
 *.log

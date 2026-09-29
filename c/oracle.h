@@ -1,6 +1,6 @@
 /* Validation for the GLM reference file; no model or Python dependency. */
-#ifndef COLI_ORACLE_H
-#define COLI_ORACLE_H
+#ifndef LMA_ORACLE_H
+#define LMA_ORACLE_H
 #include <errno.h>
 #include <math.h>
 #include "json.h"

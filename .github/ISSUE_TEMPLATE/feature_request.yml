@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose a focused improvement to Colibri.
+description: Propose a focused improvement to LM Atomic.
 title: "[Feature]: "
 body:
   - type: textarea

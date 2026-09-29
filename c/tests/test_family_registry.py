@@ -75,7 +75,7 @@ QWEN36_FIXTURE = FamilyDescriptor(
     internal_arch="qwen36",
     build_target="qwen36",
     process_names=("qwen36",),
-    default_model_id="qwen3.6-colibri",
+    default_model_id="qwen3.6-lmatomic",
     cli_adapter="qwen36",
     gateway_adapter="qwen36",
     planner_id="qwen36_hybrid",
@@ -91,13 +91,13 @@ MINIMAX_M3_FIXTURE = FamilyDescriptor(
     model_types=("minimax_m3",),
     display_name="MiniMax M3",
     display_scale="",
-    engine_artifact="colibri",
+    engine_artifact="glm52",
     engine_aliases=(),
-    engine_group="colibri-core",
+    engine_group="glm52-core",
     internal_arch="minimax_m3",
-    build_target="colibri",
-    process_names=("colibri",),
-    default_model_id="minimax-m3-colibri",
+    build_target="glm52",
+    process_names=("glm52",),
+    default_model_id="minimax-m3-lmatomic",
     cli_adapter="minimax_m3",
     gateway_adapter="minimax_m3",
     planner_id="minimax_m3_gqa",
@@ -328,7 +328,7 @@ class FamilyRegistryTest(unittest.TestCase):
             "model.language_model.layers.1.ple.ple_embedding.layer_multipliers",
             24), 0)
 
-    def test_minimax_fixture_can_share_colibri_without_becoming_glm(self):
+    def test_minimax_fixture_can_share_lmatomic_without_becoming_glm(self):
         config = {
             "model_type": "minimax_m3",
             "num_hidden_layers": 2,
@@ -978,7 +978,7 @@ class FamilyRegistryTest(unittest.TestCase):
         from importlib.machinery import SourceFileLoader
         import importlib.util
 
-        cli_path = Path(__file__).resolve().parent.parent / "coli"
+        cli_path = Path(__file__).resolve().parent.parent / "lmatomic"
         loader = SourceFileLoader("family_registry_cli_test", str(cli_path))
         spec = importlib.util.spec_from_loader(loader.name, loader)
         cli = importlib.util.module_from_spec(spec)
@@ -1002,7 +1002,7 @@ class FamilyRegistryTest(unittest.TestCase):
              mock.patch.object(cli, "resolve_model", return_value=resolved), \
              mock.patch.object(cli, "engine_for", return_value="engine"), \
              mock.patch.object(cli, "banner"):
-            with self.assertRaisesRegex(SystemExit, "coli run is not wired"):
+            with self.assertRaisesRegex(SystemExit, "lmatomic run is not wired"):
                 cli.cmd_run(args)
             with self.assertRaisesRegex(SystemExit, "gateway adapter is not wired"):
                 cli.cmd_chat(args)
@@ -1060,7 +1060,7 @@ class FamilyRegistryTest(unittest.TestCase):
             (root / "config.json").write_text(
                 json.dumps({"model_type": "qwen3_moe"}), encoding="utf-8")
             (root / "tokenizer.json").write_text("{}", encoding="utf-8")
-            report = run_doctor(root, engine_path=root / "colibri",
+            report = run_doctor(root, engine_path=root / "lmatomic",
                                 available_memory=16_000_000_000,
                                 available_disk=1, gpus=[],
                                 linkage={"linked": False, "missing": False})
@@ -1078,7 +1078,7 @@ class FamilyRegistryTest(unittest.TestCase):
                 json.dumps({"model_type": "kimi_k3"}), encoding="utf-8")
             (root / "tokenizer.json").write_text("{}", encoding="utf-8")
             report = run_doctor(
-                root, engine_path=root / "colibri",
+                root, engine_path=root / "lmatomic",
                 engine_error=UnknownFamilyError("this image contains only GLM"),
                 available_memory=16_000_000_000, available_disk=1, gpus=[],
                 linkage={"linked": False, "missing": False})
@@ -1179,8 +1179,8 @@ class FamilyRegistryTest(unittest.TestCase):
                                 f"({family.id}); a reader in that language cannot "
                                 f"tell the family is supported")
 
-    def test_release_ships_everything_coli_reaches(self):
-        """L'archivio deve contenere ogni file Python che coli raggiunge.
+    def test_release_ships_everything_lma_reaches(self):
+        """L'archivio deve contenere ogni file Python che lmatomic raggiunge.
 
         #1296: il pacchetto v1.10.0 aveva quattro comandi rotti. release.yml
         copiava sette .py scelti a mano piu' un solo file in tools/, e il
@@ -1302,7 +1302,7 @@ class FamilyRegistryTest(unittest.TestCase):
         version = declared.group(1)
         seen = 0
         for path in _readmes(repo):
-            for banner in re.findall(r"colibri v(\d+\.\d+\.\d+)",
+            for banner in re.findall(r"lmatomic v(\d+\.\d+\.\d+)",
                                      path.read_text(encoding="utf-8")):
                 seen += 1
                 self.assertEqual(
@@ -1313,7 +1313,7 @@ class FamilyRegistryTest(unittest.TestCase):
         # Se un giorno il banner cambia forma questo test smetterebbe di
         # guardare qualcosa senza mai fallire: meglio che lo dica.
         self.assertGreater(seen, 0,
-                           "nessun banner 'colibri vX.Y.Z' trovato in alcun "
+                           "nessun banner 'lmatomic vX.Y.Z' trovato in alcun "
                            "README: il test non sta piu' controllando niente")
 
     def test_the_site_shows_the_version_and_every_family(self):
@@ -1407,7 +1407,7 @@ class FamilyRegistryTest(unittest.TestCase):
         for text in (makefile, docker):
             self.assertIn("family_registry.py", text)
         # release.yml non nomina piu' i singoli .py: da #1296 la lista la
-        # calcola pack_python.py seguendo gli import a partire da coli. Il
+        # calcola pack_python.py seguendo gli import a partire da lmatomic. Il
         # contratto qui e' sempre lo stesso -- family_registry.py deve finire
         # nell'archivio -- ma va verificato alla fonte nuova, se no si
         # controlla che esista una riga invece che il file venga spedito.
@@ -1452,7 +1452,7 @@ class GlmFamilyNamesBothModelsTest(unittest.TestCase):
         v53 = dict(self.BASE, transformers_version="5.15.0",
                    moe_router_dtype="float32")
         self.assertEqual(family_for_config(v52).id, family_for_config(v53).id)
-        self.assertEqual(family_for_config(v53).engine_artifact, "colibri")
+        self.assertEqual(family_for_config(v53).engine_artifact, "glm52")
 
     def test_the_only_differences_are_not_discriminators(self):
         """Neither key can carry the decision, so neither may be read as if it

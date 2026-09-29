@@ -6,16 +6,16 @@ A start-to-finish, reproducible path from a fresh Windows 11 machine to GLM-5.2 
 
 ## If you downloaded a release archive, start here
 
-The archive contains **`coli.cmd`**: that is the program to run. Double-click it
+The archive contains **`lmatomic.cmd`**: that is the program to run. Double-click it
 for the quick start, or from cmd/PowerShell:
 
 ```
-coli.cmd chat   --model D:\models\glm52_i4
-coli.cmd serve  --model D:\models\glm52_i4
-coli.cmd doctor --model D:\models\glm52_i4
+lmatomic.cmd chat   --model D:\models\glm52_i4
+lmatomic.cmd serve  --model D:\models\glm52_i4
+lmatomic.cmd doctor --model D:\models\glm52_i4
 ```
 
-`colibri.exe`, `kimi_k3.exe` and the other `.exe` files are the **engines**.
+`glm52.exe`, `kimi_k3.exe` and the other `.exe` files are the **engines**.
 They are selected by the launcher from the model's `config.json`; started on
 their own they have no model to load, print how to launch and exit, which from
 Explorer looks like a window that flashes and disappears (#1241). The launcher
@@ -48,7 +48,7 @@ To see which code optimizations are active in gcc compiler with the native flag 
 `gcc -march=native -dM -Q --help=target | grep -E "m(avx|ssw|aes|fma|sha|mmx)"`\
 For guidance about gcc optimizations, a good source cab be: `https://wiki.gentoo.org/wiki/GCC_optimization`\
 \
-**colibri.exe and coli_cuda.*** build from MS Visual Studio and Nvidia CUDA Toolkit:\
+**glm52.exe and lma_cuda.*** build from MS Visual Studio and Nvidia CUDA Toolkit:\
 \
 > **Build from a git clone, inside `c/`.** The release zip ships the engines and the Python only, no `Makefile` and no `backend_cuda.cu`: `make cuda-dll` in the unzipped release folder answers `No rule to make target 'cuda-dll'` (#1405). `git clone https://github.com/JustVugg/colibri`, then every `make` below runs in `colibri\c`.\
 Microsoft Visual Studio tools includes a `vcvars64.bat` batch file that appropriately sets all the paths. \
@@ -60,9 +60,9 @@ Open a command prompt shell (`cmd`, not powershell), cd to subfolder `c\` of the
 \
 `%comspec% /k "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"`
 `set PATH=%PATH%;C:\msys64\usr\bin`\
-`cd C:\Users\YOUR_USER\COLIBRI_REPO_FOLDER\c`\
+`cd C:\Users\YOUR_USER\LMA_REPO_FOLDER\c`\
 `make cuda-dll CUDA_ARCH=sm_89`\
-`make colibri.exe CUDA_DLL=1 ARCH=native`\
+`make glm52.exe CUDA_DLL=1 ARCH=native`\
 `make iobench.exe`\
 \
 Replace `sm_89` with your Nvidia GPU architecture according to this table
@@ -78,12 +78,12 @@ Replace `sm_89` with your Nvidia GPU architecture according to this table
 | **Pascal** | P100, GTX 1080 Ti, P40 | 6.0, 6.1, 6.2 | `sm_60`, `sm_61`, `sm_62` |
 | **Maxwell** | M60, GTX 980, GTX TITAN X | 5.0, 5.2, 5.3 | `sm_50`, `sm_52`, `sm_53` |
 
-> The last make links `colibri.exe` with the newly built `coli_cuda.dll`\
-to just build `colibri.exe` with no nvidia CUDA support omit `CUDA_DLL=1`\
-`ARCH=native` ensures that colibri is build with optimizations specific for your CPU.\
+> The last make links `glm52.exe` with the newly built `lma_cuda.dll`\
+to just build `glm52.exe` with no nvidia CUDA support omit `CUDA_DLL=1`\
+`ARCH=native` ensures that LM Atomic is build with optimizations specific for your CPU.\
 \
 **caveat**: to be sure the correct `make` is used, run `where.exe make` after path extension.\
-after compilation you should have `colibri.exe coli_cuda.lib, coli_cuda.exp, coli_cuda.dll` files.
+after compilation you should have `glm52.exe lma_cuda.lib, lma_cuda.exp, lma_cuda.dll` files.
 ---
 
 
@@ -93,7 +93,7 @@ after compilation you should have `colibri.exe coli_cuda.lib, coli_cuda.exp, col
 
 | Piece | Why | Get it |
 |---|---|---|
-| git, Python 3 | clone + `coli` launcher | winget / python.org |
+| git, Python 3 | clone + `lmatomic` launcher | winget / python.org |
 | MinGW-w64 gcc + make | builds the engine (MSVC can't) | `scoop install mingw-winlibs`, MSYS2, or portable **w64devkit** (no admin, unzip and go) |
 
 > **scoop MinGW caveat (#478):** `scoop install mingw-winlibs` ships `gcc` + `make` but **no `sh.exe`** — the Makefile's recipes use POSIX shell idioms (`command -v`, `{ ...; }`, redirect to `/dev/null`) that GNU make runs through `/bin/sh`. Without sh.exe on PATH, make falls back to `cmd.exe` and the build fails with `'printf' is not recognized` / `The system cannot find the path specified`. Two fixes: install **MSYS2** (recommended — it's what the recipes target), or `set PATH=%PATH%;C:\msys64\usr\bin` in any shell you build from. The portable **w64devkit** bundle includes sh.exe and works as-is.
@@ -118,7 +118,7 @@ Use the container recommended in the README (with **int8 MTP heads** — int4 he
 From a normal PowerShell, in the repo's `c\` directory:
 
 ```powershell
-make colibri.exe ARCH=native      # ARCH=native unlocks AVX-VNNI on Alder Lake+/Arrow Lake
+make glm52.exe ARCH=native      # ARCH=native unlocks AVX-VNNI on Alder Lake+/Arrow Lake
 make iobench.exe              # disk benchmark, useful before committing to the download
 ```
 
@@ -126,10 +126,10 @@ Warnings about `#pragma comment` and unused variables are normal (MSVC-isms gcc 
 
 ### ⚠️ Smart App Control will block your fresh binary
 
-On Windows 11 machines with **Smart App Control** enforced (`VerifiedAndReputablePolicyState = 1`), running your self-compiled `colibri.exe` fails with:
+On Windows 11 machines with **Smart App Control** enforced (`VerifiedAndReputablePolicyState = 1`), running your self-compiled `glm52.exe` fails with:
 
 ```
-Program 'colibri.exe' failed to run: An Application Control policy has blocked this file
+Program 'glm52.exe' failed to run: An Application Control policy has blocked this file
 ```
 
 This is not Defender and not Mark-of-the-Web — SAC blocks *all* unsigned, unknown binaries, which includes anything you compile yourself. **Fix:** Windows Security → App & browser control → Smart App Control settings → **Off**, then **reboot** (the policy only reloads on restart). Note SAC is one-way: re-enabling later requires resetting Windows. If the settings page is missing, the registry equivalent is setting `HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy\VerifiedAndReputablePolicyState` to `0` (admin PowerShell), then rebooting. Check your current state before touching anything:
@@ -151,13 +151,13 @@ nvcc needs MSVC as host compiler, so this one step must run from a shell with th
 
 ```cmd
 make cuda-dll CUDA_ARCH=sm_120        # match your GPU: sm_120 Blackwell, sm_89 Ada, ...
-make colibri.exe CUDA_DLL=1 ARCH=native   # relink host with the runtime loader
+make glm52.exe CUDA_DLL=1 ARCH=native   # relink host with the runtime loader
 ```
 
 Two pitfalls, both fixed on current `dev` (#314) but worth knowing on older checkouts:
 
 - **Spaces in `CUDA_HOME`** (`C:\Program Files\...`) used to break the recipe → fixed; nvcc now comes from PATH and `"$(NVCC)"` is quoted.
-- **`make colibri.exe CUDA_DLL=1` after a CPU-only build** used to report `up to date` and silently keep the CPU-only binary (GPU tier never engages, no error). Current `dev` has a build-config stamp that forces the relink. On older trees: delete the binary (`colibri.exe`; `glm.exe` pre-rename) first.
+- **`make glm52.exe CUDA_DLL=1` after a CPU-only build** used to report `up to date` and silently keep the CPU-only binary (GPU tier never engages, no error). Current `dev` has a build-config stamp that forces the relink. On older trees: delete the binary (`glm52.exe`; `glm.exe` pre-rename) first.
 
 Sanity check: first GPU run should print `[CUDA] device 0: <your GPU>, ... sm_XX` and `[CUDA] mode: routed experts + resident dense tensors`.
 
@@ -166,17 +166,17 @@ Sanity check: first GPU run should print `[CUDA] device 0: <your GPU>, ... sm_XX
 ```powershell
 cd <repo>\c
 $env:OMP_NUM_THREADS = "<physical cores>"
-python coli run "Explain what a mixture-of-experts model is." --model D:\glm52_i4 --ngen 48
+python lmatomic run "Explain what a mixture-of-experts model is." --model D:\glm52_i4 --ngen 48
 ```
 
 The first run is cold — expect the profile to be dominated by `expert-disk` while the cache warms; hit rate climbs run over run. GPU tier on top:
 
 ```powershell
-$env:COLI_CUDA="1"; $env:COLI_GPU="0"; $env:CUDA_DENSE="1"; $env:CUDA_EXPERT_GB="4"
-python coli run "..." --model D:\glm52_i4 --ngen 64
+$env:LMA_CUDA="1"; $env:LMA_GPU="0"; $env:CUDA_DENSE="1"; $env:CUDA_EXPERT_GB="4"
+python lmatomic run "..." --model D:\glm52_i4 --ngen 64
 ```
 
-Size `CUDA_EXPERT_GB` so dense (~10 GB) + experts + working set stays under your VRAM. Note MTP speculation is off by default under CUDA (#293, float-accumulation divergence between draft and verify) — `COLI_CUDA_MTP=1` opts back in.
+Size `CUDA_EXPERT_GB` so dense (~10 GB) + experts + working set stays under your VRAM. Note MTP speculation is off by default under CUDA (#293, float-accumulation divergence between draft and verify) — `LMA_CUDA_MTP=1` opts back in.
 
 ## 5. Reference numbers from this walkthrough's hardware
 
@@ -186,14 +186,14 @@ Size `CUDA_EXPERT_GB` so dense (~10 GB) + experts + working set stays under your
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `'printf' is not recognized` / `The system cannot find the path specified` during `make colibri.exe` | scoop MinGW has no `sh.exe`; make fell back to cmd.exe (#478) | §0 — use MSYS2/w64devkit, or `set PATH=%PATH%;C:\msys64\usr\bin` |
+| `'printf' is not recognized` / `The system cannot find the path specified` during `make glm52.exe` | scoop MinGW has no `sh.exe`; make fell back to cmd.exe (#478) | §0 — use MSYS2/w64devkit, or `set PATH=%PATH%;C:\msys64\usr\bin` |
 | `An Application Control policy has blocked this file` | Smart App Control | §2 — turn SAC off + **reboot** |
 | `cuda-dll ... Error 1` immediately | old tree: spaced CUDA_HOME / MSVC rejects `-Wextra` | update to current `dev` (#314) |
-| `colibri.exe is up to date` but GPU never engages | old tree: stale CPU-only binary | update to `dev`, or delete the binary and rebuild |
+| `glm52.exe is up to date` but GPU never engages | old tree: stale CPU-only binary | update to `dev`, or delete the binary and rebuild |
 | `cl.exe (MSVC) not in PATH` | built from plain PowerShell | use the x64 Native Tools prompt |
 | `nvcc fatal: unsupported gpu architecture 'sm_120'` | CUDA < 12.8 | install CUDA 12.8+ |
 | MTP `0% (0/0)` on CPU path | int4 MTP heads in the container | use the int8-MTP container |
-| MTP `draft=0` under CUDA | intended default since #293 | `COLI_CUDA_MTP=1` to opt in |
+| MTP `draft=0` under CUDA | intended default since #293 | `LMA_CUDA_MTP=1` to opt in |
 
 ---
 
@@ -204,17 +204,17 @@ Size `CUDA_EXPERT_GB` so dense (~10 GB) + experts + working set stays under your
 # dot-product instruction (VPDPBUSD) the engine can use for ~1.3x faster
 # quantized matmul. The x86-64-v3 default (portable AVX2) compiles it out;
 # build for THIS machine to enable it:
-make colibri.exe ARCH=native                       # banner prints "idot: avx-vnni"
+make glm52.exe ARCH=native                       # banner prints "idot: avx-vnni"
 
 # Verify (tiny model, 2.4 MB):
 pip install torch transformers safetensors huggingface_hub
 python tools/make_glm_oracle.py                # generate tiny oracle
-SNAP=./glm_tiny TF=1 ./colibri.exe 64 16 16        # expect "~30-32/32 positions"
+SNAP=./glm_tiny TF=1 ./glm52.exe 64 16 16        # expect "~30-32/32 positions"
 
 # Run with real model:
-SNAP=D:\glm52_i4 ./colibri.exe 64 4 16            # batch inference
-python coli chat --model D:\glm52_i4            # interactive chat
-python coli serve --model D:\glm52_i4            # OpenAI-compatible API
+SNAP=D:\glm52_i4 ./glm52.exe 64 4 16            # batch inference
+python lmatomic chat --model D:\glm52_i4            # interactive chat
+python lmatomic serve --model D:\glm52_i4            # OpenAI-compatible API
 ```
 
 > Windows Store's `python` alias stub is the single most common native-Windows
@@ -224,8 +224,8 @@ python coli serve --model D:\glm52_i4            # OpenAI-compatible API
 ## Warmup (overnight cache priming)
 
 The engine's expert cache learns from your workload. The included `warmup.ps1`
-script runs `coli run` in a loop with diverse prompts to build the
-`.coli_usage` histogram unattended, so the next real session starts with a
+script runs `lmatomic run` in a loop with diverse prompts to build the
+`.lma_usage` histogram unattended, so the next real session starts with a
 large, accurate hot-expert pin. Each run saves usage atomically on clean
 completion.
 
@@ -237,7 +237,7 @@ completion.
 
 On Windows the engine is built with MinGW gcc but CUDA kernels require MSVC +
 nvcc. The split is clean: build the CUDA backend into a standalone
-`coli_cuda.dll` (nvcc + MSVC), then the host `colibri.exe` loads it at runtime via
+`lma_cuda.dll` (nvcc + MSVC), then the host `glm52.exe` loads it at runtime via
 `LoadLibrary` (`c/backend_loader.c`). The host never links cudart directly; if
 the DLL is absent the engine falls back to CPU without error.
 
@@ -247,18 +247,18 @@ the DLL is absent the engine falls back to CPU without error.
 # "x64 Native Tools Command Prompt for VS"):
 make cuda-dll CUDA_HOME="C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8" CUDA_ARCH=sm_120
 
-# Build the host with the runtime loader (CUDA_DLL=1 adds -DCOLI_CUDA and
+# Build the host with the runtime loader (CUDA_DLL=1 adds -DLMA_CUDA and
 # links backend_loader.o instead of cudart):
-make colibri.exe CUDA_DLL=1 ARCH=native
+make glm52.exe CUDA_DLL=1 ARCH=native
 
 # Run with the GPU expert tier (8 GB VRAM budget here; scale to your free VRAM):
-$env:COLI_CUDA="1"; $env:COLI_GPU="0"; $env:CUDA_EXPERT_GB="8"
-python coli chat --model D:\glm52_i4 --topp 0.7
+$env:LMA_CUDA="1"; $env:LMA_GPU="0"; $env:CUDA_EXPERT_GB="8"
+python lmatomic chat --model D:\glm52_i4 --topp 0.7
 ```
 
 The DLL exports the full `extern "C"` surface (including the #111 pipeline ABI);
 `backend_loader.c` resolves symbols via `GetProcAddress` on first use.
-`ColiCudaTensor*` is opaque to the host (stored, never dereferenced), so the
+`LmaCudaTensor*` is opaque to the host (stored, never dereferenced), so the
 MSVC-allocated struct is safe across the ABI boundary. `CUDA_ARCH` must match
 your GPU's compute capability (e.g. `sm_120` for Blackwell / RTX 50-series,
 `sm_89` for Ada / RTX 40-series). A one-shot `build_cuda.bat` wrapper is also
@@ -272,12 +272,12 @@ decode ([#273](https://github.com/JustVugg/colibri/issues/273), merged in #274).
 
 The AMD sibling of the CUDA split above, and the same reasoning: MinGW gcc
 cannot compile `.cu`, and Windows hipcc targets the MSVC ABI, so the backend is
-built into a standalone `coli_hip.dll` rather than linked into the host. The
-same `c/backend_cuda.cu` and the same `coli_cuda_*` ABI the Linux HIP path
+built into a standalone `lma_hip.dll` rather than linked into the host. The
+same `c/backend_cuda.cu` and the same `lma_cuda_*` ABI the Linux HIP path
 already reuses are used unchanged — see [GPU_BACKENDS.md](../GPU_BACKENDS.md).
 
 > **Validated end to end on one configuration.** The host resolves and loads
-> `coli_hip.dll`, enforces which HIP runtime that DLL binds to, and has been
+> `lma_hip.dll`, enforces which HIP runtime that DLL binds to, and has been
 > exercised on real hardware: an AMD Radeon(TM) 8060S Graphics reporting
 > `gfx1151`. Teacher forcing and a fixed-length free decode both produced the
 > same token IDs on CPU and on the hybrid HIP path.
@@ -300,12 +300,12 @@ MinGW-w64 `make` and `gcc` from §0 are still what build the host.
 ### Build
 
 Two halves, built separately. The host build needs **no HIP SDK at all** — it
-only compiles `c/backend_loader.c` and links `colibri.exe`, and never links
+only compiles `c/backend_loader.c` and links `glm52.exe`, and never links
 `amdhip64`:
 
 ```powershell
 # 1. Host build mode (no SDK, no HIP_ARCH needed):
-make -C c colibri.exe HIP_DLL=1
+make -C c glm52.exe HIP_DLL=1
 
 # 2. The backend DLL, from a shell with the MSVC environment set:
 make -C c hip-dll HIP_DLL=1 HIP_SDK_ROOT=<sdk-root> HIP_ARCH=gfxNNNN
@@ -319,7 +319,7 @@ your machine-wide `HIP_PATH`. Each component (`HIP_BIN_DIR`, `HIP_INCLUDE_DIR`,
 split layouts; the full list is in
 [GPU_BACKENDS.md](../GPU_BACKENDS.md#sdk-selection-variables).
 
-Generated artifacts: `c/coli_hip.dll`, plus `c/coli_hip.lib` if the linker emits
+Generated artifacts: `c/lma_hip.dll`, plus `c/lma_hip.lib` if the linker emits
 an import library (and `.exp`/`.pdb` on toolchains that produce them). All are
 git-ignored and removed by `make -C c clean`.
 
@@ -353,7 +353,7 @@ than one ROCm/HIP install it can point somewhere you did not intend. Override it
 ```powershell
 $env:HIP_PATH = $sdk          # the SDK you actually want, for this shell only
 # ROCM_PATH / ROCM_HOME / HIP_DEVICE_LIB_PATH are read by the ROCm toolchain, not
-# by Colibri; clear them so a second install cannot redirect headers or bitcode:
+# by LM Atomic; clear them so a second install cannot redirect headers or bitcode:
 Remove-Item env:ROCM_PATH, env:ROCM_HOME, env:HIP_DEVICE_LIB_PATH -EA SilentlyContinue
 ```
 
@@ -368,18 +368,18 @@ Running a HIP host needs two things in place. Both are checked before any GPU
 work starts, and anything that cannot be proven disables the GPU tier rather
 than guessing — the engine continues on the CPU path.
 
-**1. `coli_hip.dll` next to `colibri.exe`.** The HIP host loads *only* that
+**1. `lma_hip.dll` next to `glm52.exe`.** The HIP host loads *only* that
 exact absolute path. There is deliberately no bare-name fallback and no
-System32 search: a fallback could let some other `coli_hip.dll` satisfy the
+System32 search: a fallback could let some other `lma_hip.dll` satisfy the
 load and quietly undo the runtime check below.
 
-**2. `COLI_HIP_RUNTIME_DIR` naming the HIP runtime.** An absolute path to the
+**2. `LMA_HIP_RUNTIME_DIR` naming the HIP runtime.** An absolute path to the
 directory containing `amdhip64_7.dll`:
 
 ```powershell
-$env:COLI_HIP_RUNTIME_DIR = "C:\path\to\hip\bin"
-$env:COLI_CUDA = "1"
-.\colibri.exe
+$env:LMA_HIP_RUNTIME_DIR = "C:\path\to\hip\bin"
+$env:LMA_CUDA = "1"
+.\glm52.exe
 ```
 
 Relative, drive-relative (`C:runtime`) and rooted-without-drive (`\runtime`)
@@ -410,10 +410,10 @@ beyond `MAX_PATH` no longer hit a fixed buffer in the loader, but whether they
 work still depends on your process manifest and Windows policy, and that has
 not been validated on hardware here.
 
-**CUDA is unaffected.** A `CUDA_DLL=1` host ignores `COLI_HIP_RUNTIME_DIR`
-entirely and keeps its existing `coli_cuda.dll` search behaviour unchanged.
+**CUDA is unaffected.** A `CUDA_DLL=1` host ignores `LMA_HIP_RUNTIME_DIR`
+entirely and keeps its existing `lma_cuda.dll` search behaviour unchanged.
 
-### How `coli plan` and `coli doctor` see an AMD GPU here
+### How `lmatomic plan` and `lmatomic doctor` see an AMD GPU here
 
 `rocm-smi` is a Linux tool. Neither the Windows HIP SDK installer nor a source
 build ships it, so the ROCm discovery path used everywhere else finds nothing on
@@ -424,9 +424,9 @@ shipped SDKs do provide, in the same directory as `amdhip64_7.dll`. It comes
 from the HIP environment you already installed to build the backend — no extra
 Python package, no third-party dependency.
 
-Colibri looks for it in this order, and stops at the first hit:
+LM Atomic looks for it in this order, and stops at the first hit:
 
-1. **`COLI_HIP_RUNTIME_DIR`** — the directory you already point at the HIP
+1. **`LMA_HIP_RUNTIME_DIR`** — the directory you already point at the HIP
    runtime. `hipInfo.exe` sits beside `amdhip64_7.dll` there, so its answer
    describes *the runtime the engine will actually bind*.
 2. **`%HIP_PATH%\bin`** — the SDK root the HIP SDK installer sets, and the same
@@ -445,7 +445,7 @@ measurement.
 #### Reported, but not planned against — and why
 
 `hipInfo` reports the device name, `gcnArchName`, `isIntegrated`, and **both**
-`memInfo.total` and `memInfo.free`. Colibri records the identity, marks
+`memInfo.total` and `memInfo.free`. LM Atomic records the identity, marks
 `isIntegrated: 1` as unified memory, and takes the total.
 
 It deliberately does **not** use `memInfo.free` as a placement budget, because
@@ -475,12 +475,12 @@ not been measured. Sizing an expert tier from it would be a guess.
 
 Such a device is therefore carried as **identity only**: free memory is
 *unknown for planning*, which is not the same claim as "zero bytes are free".
-`coli plan`
+`lmatomic plan`
 shows it, marked `(identity only)`, with a warning naming it, and:
 
 - the VRAM tier stays at 0
-- no `CUDA_EXPERT_GB`, `PIN_GB`, `COLI_GPU` or `COLI_CUDA` is recommended
-- `COLI_CUDA_PIPE` is not switched on
+- no `CUDA_EXPERT_GB`, `PIN_GB`, `LMA_GPU` or `LMA_CUDA` is recommended
+- `LMA_CUDA_PIPE` is not switched on
 - the bottleneck is classified exactly as it would be on a CPU-only host
 
 No system-RAM figure is substituted for the missing value either; nothing is
@@ -488,7 +488,7 @@ fabricated in place of a measurement.
 
 None of this prevents you from running on the GPU. Every environment variable
 in this document still works exactly as documented — this governs only what
-Colibri will turn on *by itself*. Qualifying a safe automatic budget on shared
+LM Atomic will turn on *by itself*. Qualifying a safe automatic budget on shared
 memory needs allocation measurements on real hardware, and that is deliberately
 left to a later change rather than guessed at here.
 
@@ -499,15 +499,15 @@ just as unqualified there.
 
 ### Putting model tensors on the GPU — and checking that it happened
 
-`COLI_CUDA=1` initialises the backend. It does **not**, on its own, put a single
+`LMA_CUDA=1` initialises the backend. It does **not**, on its own, put a single
 model tensor on the GPU. Add `CUDA_DENSE=1` to make the dense tensors eligible:
 
 ```powershell
-$env:COLI_CUDA  = "1"
-$env:COLI_GPU   = "0"
+$env:LMA_CUDA  = "1"
+$env:LMA_GPU   = "0"
 $env:CUDA_DENSE = "1"
-$env:COLI_HIP_RUNTIME_DIR = "$sdk\bin"
-.\colibri.exe 64 16 16
+$env:LMA_HIP_RUNTIME_DIR = "$sdk\bin"
+.\glm52.exe 64 16 16
 ```
 
 Routed experts stay on **CPU** in this configuration. They become GPU-eligible
@@ -546,7 +546,7 @@ few, an escalation notice once several have failed, and a final count:
 Read those together with the resident set — a run can be *partly* on the GPU.
 
 **Lifecycle.** Normal one-shot model exits rely on **Windows process teardown**
-to release the backend and the HIP runtime; `coli_cuda_shutdown` is not called
+to release the backend and the HIP runtime; `lma_cuda_shutdown` is not called
 on the ordinary teacher-forcing or decode exit paths. This matches the existing
 Windows CUDA host behaviour and is safe for one-shot CLI use — it is process
 teardown, not an explicit backend shutdown.
@@ -555,7 +555,7 @@ teardown, not an explicit backend shutdown.
 ### Tested and untested
 
 **Tested**, on the configuration named above: the native Windows HIP build; the
-host loading `coli_hip.dll` from its own directory; exact runtime binding with
+host loading `lma_hip.dll` from its own directory; exact runtime binding with
 fail-closed identity and duplicate-runtime checks; device discovery reporting
 `gfx1151`; a real GPU kernel returning results identical to the CPU reference;
 teacher forcing against the bundled synthetic oracle; and a fixed-length free
@@ -587,7 +587,7 @@ binary and needs no Python once the model files exist.
 **1. Create an isolated environment.** Nothing is installed system-wide:
 
 ```powershell
-$tooling = "$env:USERPROFILE\colibri-oracle-tooling"   # anywhere outside the repo
+$tooling = "$env:USERPROFILE\lmatomic-oracle-tooling"   # anywhere outside the repo
 uv venv --python "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe" "$tooling\venv"
 
 # CPU-only Torch from the official PyTorch CPU index; the rest from PyPI
@@ -618,7 +618,7 @@ current directory. `c/ref_glm.json` is a tracked file, so generating inside `c/`
 would overwrite it. Run it from outside the repository instead:
 
 ```powershell
-$repo = "<your colibri checkout>"       # e.g. "$env:USERPROFILE\src\colibri"
+$repo = "<your LM Atomic checkout>"       # e.g. "$env:USERPROFILE\src\LM Atomic"
 $out  = "$tooling\model"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 Push-Location $out
@@ -637,7 +637,7 @@ so the generated files never need to enter the repository:
 $env:SNAP = "$out\glm_tiny"
 $env:REF  = "$out\ref_glm.json"
 $env:TF   = "1"
-.\colibri.exe 64 16 16
+.\glm52.exe 64 16 16
 ```
 
 `TF=1` is the teacher-forcing self-test: it prints
@@ -669,8 +669,8 @@ Remove-Item -Recurse -Force $tooling
 | `Windows HIP build: set an explicit HIP_ARCH=gfxNNNN` | `HIP_ARCH=native` on Windows; `rocm_agent_enumerator` does not exist there, so there is nothing to resolve `native` against | name the arch, e.g. `HIP_ARCH=gfx1151` |
 | `hipcc not found at "..."` / `HIP include dir not found` / `amdhip64.lib missing under "..."` / `device bitcode dir not found` | the selected SDK root does not have the expected layout | fix `HIP_SDK_ROOT`, or override just the component named in the message (`HIP_INCLUDE_DIR`, `HIP_LIB_DIR`, `HIP_DEVICE_LIB_PATH`, `HIPCC`) |
 | `rocwmma/rocwmma.hpp missing under "..."` | the SDK lacks the rocWMMA component | install it, or point `HIP_INCLUDE_DIR` at a tree that has it |
-| A no-SDK error from a **host-only** build | none — the host build is SDK-independent by design | `make -C c colibri.exe HIP_DLL=1` needs no SDK and no `HIP_ARCH`; if you see an SDK error here, you asked for the `hip-dll` target |
-| Built the DLL but the GPU never engages | expected today | runtime loading of `coli_hip.dll` is not implemented yet; the engine stays on the CPU path |
+| A no-SDK error from a **host-only** build | none — the host build is SDK-independent by design | `make -C c glm52.exe HIP_DLL=1` needs no SDK and no `HIP_ARCH`; if you see an SDK error here, you asked for the `hip-dll` target |
+| Built the DLL but the GPU never engages | expected today | runtime loading of `lma_hip.dll` is not implemented yet; the engine stays on the CPU path |
 
 SDK paths containing spaces are supported — every SDK-derived path the recipe
 passes to the compiler is quoted. If you supply one yourself, quote it:

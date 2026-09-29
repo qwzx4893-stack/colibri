@@ -1,5 +1,5 @@
 {
-  "schema": "colibri.serving-baseline/v1",
+  "schema": "lmatomic.serving-baseline/v1",
   "experiment": "REPLACE-experiment-id",
   "comparison": "deployment",
   "residency": "fully_resident",
@@ -39,7 +39,7 @@
     "slo_duration": 120
   },
   "engines": {
-    "colibri": {
+    "lmatomic": {
       "base_url": "http://127.0.0.1:8000/v1",
       "served_model": "REPLACE-model-alias",
       "revision": "REPLACE-commit-or-image-digest",

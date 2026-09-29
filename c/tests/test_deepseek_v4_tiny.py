@@ -252,7 +252,7 @@ def check_cli_uses_engine_context(binary: Path, model: Path, temporary: Path) ->
         ],
         env=dict(os.environ, CTX="768"),
     )
-    # `coli tune` compares candidates from tokens-and-elapsed, and before #898
+    # `lmatomic tune` compares candidates from tokens-and-elapsed, and before #898
     # only the GLM engine emitted a parseable line -- so the tuner ran GLM at
     # every checkpoint. Assert the line here rather than trusting a one-off
     # manual check: the first placement of it compiled fine and sat in a branch
@@ -351,7 +351,7 @@ def main() -> int:
         raise AssertionError("tiny oracle must come from independent Transformers")
     cases = reference["cases"]
 
-    with tempfile.TemporaryDirectory(prefix="colibri-v4-tiny-") as directory:
+    with tempfile.TemporaryDirectory(prefix="lmatomic-v4-tiny-") as directory:
         temporary = Path(directory)
         check_target(binary, fixture, "short", cases["short"], temporary)
         check_prefix_is_rejected(binary, fixture, cases["short"], temporary)

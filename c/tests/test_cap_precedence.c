@@ -1,14 +1,14 @@
 /* test_cap_precedence.c -- #379 expert-cache-cap precedence contract.
- * coli_resolve_cap() (colibri.c) must implement exactly: explicit CLI positional >
+ * lma_resolve_cap() (glm52.c) must implement exactly: explicit CLI positional >
  * explicit CAP env > platform default (Metal+darwin+fast SSD, cap=1) >
  * historic default. The historic default depends on how the engine was
  * invoked: a bare `./glm` (no positional at all) keeps the engine's old 64,
- * the coli wrapper's "0 = auto" sentinel keeps the 8 coli always forced.
+ * the lmatomic wrapper's "0 = auto" sentinel keeps the 8 lmatomic always forced.
  * It is a pure function (no I/O, no globals), so this exercises it directly
  * with fabricated inputs -- no model, no probe, no Metal hardware needed.
  * Portable: builds and runs on every platform, same as test_idot.c. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 static int failures = 0;
@@ -16,7 +16,7 @@ static int failures = 0;
 static void check(const char *label, int cli_given, int cli, int env, int platform_fast,
                    int want_cap, int want_explicit){
     int got_explicit = -1;
-    int got_cap = coli_resolve_cap(cli_given, cli, env, platform_fast, &got_explicit);
+    int got_cap = lma_resolve_cap(cli_given, cli, env, platform_fast, &got_explicit);
     if(got_cap != want_cap || got_explicit != want_explicit){
         fprintf(stderr, "FAIL %-36s given=%d cli=%d env=%d fast=%d -> cap=%d explicit=%d "
                 "(want cap=%d explicit=%d)\n",
@@ -53,7 +53,7 @@ int main(void){
     check("bare, fast SSD",                   0, 0, 0, 1,  1, 0);
     check("bare + CAP env, slow",             0, 0, 4, 0,  4, 1);
     check("bare + CAP env, fast",             0, 0, 4, 1,  4, 1);
-    /* wrapper sentinel (coli passes 0 = "auto"): coli's historic 8, or the
+    /* wrapper sentinel (lmatomic passes 0 = "auto"): lmatomic's historic 8, or the
      * platform default when it engages. */
     check("sentinel, slow/no-metal",          1, 0, 0, 0,  8, 0);
     check("sentinel, fast SSD",               1, 0, 0, 1,  1, 0);

@@ -5,8 +5,8 @@
  * The full run uses 11 seeds and 2,000 repetitions per cell. Each cell also
  * checks that both selectors return the same ordered expert ids before timing.
  */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <stdint.h>

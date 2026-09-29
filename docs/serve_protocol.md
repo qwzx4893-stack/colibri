@@ -8,8 +8,8 @@ stalls byte-counted reads (#195).
 
 | protocol | entry | selected by | used by |
 |---|---|---|---|
-| **mux** (continuous batching, up to 16 KV slots) | `run_serve_mux` | `SERVE_BATCH=1` | `openai_server.py`, `coli web` |
-| **legacy** (single slot, interactive) | `run_serve` | `SERVE=1` (without `SERVE_BATCH`) | `coli chat` |
+| **mux** (continuous batching, up to 16 KV slots) | `run_serve_mux` | `SERVE_BATCH=1` | `openai_server.py`, `lmatomic web` |
+| **legacy** (single slot, interactive) | `run_serve` | `SERVE=1` (without `SERVE_BATCH`) | `lmatomic chat` |
 
 This document is the reference for the **mux** protocol; the legacy protocol is
 summarized at the end. Line formats below are quoted from the emitting `printf`s in
@@ -90,7 +90,7 @@ is persisted.
 
 Immediately before each `DONE` the engine emits a telemetry block for the finished
 turn: `HWINFO`, `PERF`, `ENTROPY`, `GPUS`, `TIERS`, `EMAP`, `HITS` (formats below).
-`.coli_usage` is persisted at every turn end, not only at exit.
+`.lma_usage` is persisted at every turn end, not only at exit.
 
 ## Telemetry lines
 
@@ -111,15 +111,15 @@ All telemetry is advisory: servers render what they know and skip the rest.
 ## HTTP surface (`openai_server.py`)
 
 - `POST /v1/chat/completions` — OpenAI-compatible; streaming responses emit one extra
-  SSE frame `data: {"colibri": {stats, perf, topk, entropy, gpus, repin}}` immediately
+  SSE frame `data: {"LM Atomic": {stats, perf, topk, entropy, gpus, repin}}` immediately
   before `data: [DONE]`; non-streaming responses attach the same object as a
-  `"colibri"` field.
+  `"LM Atomic"` field.
 - `GET /experts` — the latest `EMAP`/`HITS` state: `{rows, cols, map, hits, seq,
   gpus, entropy, repin}`.
 - `GET /*` — static hosting of `web/dist` (SPA fallback, path-traversal-safe), plus
   `experts.json` if published there (the measured expert atlas, #175/#218).
 
-## Legacy protocol (`run_serve`, `coli chat`)
+## Legacy protocol (`run_serve`, `lmatomic chat`)
 
 Interactive lines are prompts; control frames: `\x02RESET` (clear history),
 `\x02MORE` (continue an NGEN-truncated answer), and

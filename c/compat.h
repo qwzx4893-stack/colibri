@@ -3,7 +3,7 @@
  * Regola: ogni differenza di piattaforma vive QUI; i .c restano puliti.
  *
  * Storicamente su Linux questo header era un NO-OP totale (solo shim per le altre
- * piattaforme). Non lo e' piu': coli_stdin_readable() definisce anche il ramo POSIX,
+ * piattaforme). Non lo e' piu': lma_stdin_readable() definisce anche il ramo POSIX,
  * perche' un helper *portabile* deve esistere su tutte le piattaforme -- altrimenti i
  * .c dovrebbero avere il proprio #ifdef, che e' esattamente cio' che la regola vieta.
  * Resta vero che il percorso Linux non e' alterato: nulla viene ridefinito, e la
@@ -363,7 +363,7 @@ static inline int compat_unsetenv(const char *name){
  * Plain getenv()/_environ are populated by the CRT from the ANSI-codepage view
  * of the process environment block, not UTF-8. A parent that hands the child a
  * Unicode value via CreateProcessW's wide env block (e.g. Python's subprocess
- * module, which coli uses to pass the chat prompt) round-trips correctly only
+ * module, which lmatomic uses to pass the chat prompt) round-trips correctly only
  * through GetEnvironmentVariableW; going through narrow getenv() re-encodes it
  * via CP_ACP first, so any non-ASCII prompt text (Cyrillic, CJK, ...) comes out
  * corrupted before the byte-level tokenizer ever sees it. Read the wide value
@@ -490,7 +490,7 @@ static inline void compat_unmap_readonly(compat_ro_map *map)
     memset(map, 0, sizeof(*map));
 }
 
-/* --- coli_stdin_readable: "c'e' input su stdin adesso?", senza bloccare ---
+/* --- lma_stdin_readable: "c'e' input su stdin adesso?", senza bloccare ---
  *
  * I serve loop di inkling.c e kimi_k3.c usavano select() su fd_set direttamente.
  * Su Windows quei simboli non esistono in quella forma e le due build FALLIVANO
@@ -513,7 +513,7 @@ static inline void compat_unmap_readonly(compat_ro_map *map)
 #endif
 
 #ifdef _WIN32
-static inline int coli_stdin_readable(void)
+static inline int lma_stdin_readable(void)
 {
     HANDLE ih = (HANDLE)_get_osfhandle(_fileno(stdin));
     DWORD avail = 0;
@@ -522,7 +522,7 @@ static inline int coli_stdin_readable(void)
     return 0;   /* console/file: nessun poll non bloccante, meglio "niente" che bloccare */
 }
 #else
-static inline int coli_stdin_readable(void)
+static inline int lma_stdin_readable(void)
 {
     /* fd 0 letterale, non STDIN_FILENO: quella macro vive in <unistd.h>, che questo
      * header non include su tutte le piattaforme, e stdin e' 0 ovunque per POSIX. */
@@ -532,9 +532,9 @@ static inline int coli_stdin_readable(void)
 }
 #endif
 
-/* --- coli_serve_binary_mode: stdin/stdout in BINARY per il protocollo di serve ---
+/* --- lma_serve_binary_mode: stdin/stdout in BINARY per il protocollo di serve ---
  *
- * I motori parlano un protocollo a BYTE con `coli`:
+ * I motori parlano un protocollo a BYTE con `lmatomic`:
  *   stdout  \x01\x01READY\x01\x01\n, righe STAT, \x01\x01END\x01\x01\n
  *   stdin   righe di testo piu' i byte di controllo \x02RESET / \x02MORE
  * Il gateway confronta i sentinella con endswith() e una regex "^STAT ...", quindi
@@ -545,14 +545,14 @@ static inline int coli_stdin_readable(void)
  * errore), e stdin traduce '\r\n' -> '\n' e rifiuta la scrittura di byte grezzi con
  * EINVAL, rompendo il protocollo di controllo. (#195)
  *
- * colibri.c lo fa da sempre; inkling.c e kimi_k3.c sono nati senza, e nessuno se n'e'
+ * glm52.c lo fa da sempre; inkling.c e kimi_k3.c sono nati senza, e nessuno se n'e'
  * accorto finche' le release binarie non hanno iniziato a contenere quei motori
  * (#720 -> #748: Kimi K3 su Windows caricava 93 layer in 42 minuti e poi restava
  * fermo per sempre, perche' il gateway aspettava un byte gia' storpiato).
  * Sta QUI e non copiato in ogni motore: e' esattamente cosi' che era sparito.
  *
  * No-op su Linux/macOS. */
-static inline void coli_serve_binary_mode(void)
+static inline void lma_serve_binary_mode(void)
 {
 #ifdef _WIN32
     _setmode(_fileno(stdin),  _O_BINARY);
@@ -562,7 +562,7 @@ static inline void coli_serve_binary_mode(void)
 }
 
 /* A release archive ships the ENGINES next to the launcher, so on Windows the
- * first thing a new user does is double-click `colibri.exe` from Explorer. The
+ * first thing a new user does is double-click `glm52.exe` from Explorer. The
  * engine has no model to load, prints one line and exits -- the console window
  * appears and vanishes, which reads as "the program does not start" (#1241).
  *
@@ -573,13 +573,13 @@ static inline void coli_serve_binary_mode(void)
  * where the message would otherwise be unreadable.
  *
  * No-op on Linux/macOS, and no-op on Windows whenever a shell, a script, the
- * `coli` launcher or CI is on the other end.
+ * `lmatomic` launcher or CI is on the other end.
  *
  * This is the belt, not the braces: an engine that re-execs itself for OpenMP
  * tuning can still be sharing the console with the exiting parent at the moment
- * we look, and then the message prints without the pause. `coli.cmd` -- shipped
+ * we look, and then the message prints without the pause. `lmatomic.cmd` -- shipped
  * in the Windows archive and always correct -- is the supported entry point. */
-static inline int coli_console_is_own(void)
+static inline int lma_console_is_own(void)
 {
 #ifdef _WIN32
     DWORD owners[2];
@@ -589,9 +589,9 @@ static inline int coli_console_is_own(void)
 #endif
 }
 
-static inline void coli_hold_console(void)
+static inline void lma_hold_console(void)
 {
-    if (!coli_console_is_own()) return;
+    if (!lma_console_is_own()) return;
     fprintf(stderr, "\nPress Enter to close this window. ");
     fflush(stderr);
     int c;
@@ -601,15 +601,15 @@ static inline void coli_hold_console(void)
 /* One wording for every engine: what this binary is, and the command that does
  * what the user was trying to do. Called on the "no model" exit path, which is
  * where a bare launch lands. `engine` is the family name for the message. */
-static inline void coli_print_launcher_help(const char *engine)
+static inline void lma_print_launcher_help(const char *engine)
 {
 #ifdef _WIN32
-    const char *run = "coli.cmd";
+    const char *run = "lmatomic.cmd";
 #else
-    const char *run = "./coli";
+    const char *run = "./lmatomic";
 #endif
     fprintf(stderr,
-        "colibri: this is the %s engine, and it was started without a model.\n"
+        "lmatomic: this is the %s engine, and it was started without a model.\n"
         "The engine is not the program you run directly -- the launcher is:\n"
         "\n"
         "    %s chat  --model <model directory>    interactive chat\n"
@@ -623,7 +623,7 @@ static inline void coli_print_launcher_help(const char *engine)
         "Getting a model, step by step: https://github.com/JustVugg/colibri"
         "/blob/main/docs/quickstart.md\n",
         engine, run, run, run, run, engine);
-    coli_hold_console();
+    lma_hold_console();
 }
 
 /* --- RAM disponibile ADESSO, in GB, per tutte le piattaforme ---------------
@@ -635,7 +635,7 @@ static inline void coli_print_launcher_help(const char *engine)
  *
  * #1375: glm53.c leggeva /proc/meminfo ovunque, e su Windows quel file non
  * esiste: la funzione tornava 0, il budget della cache esperti si clampava a
- * 1 GB, e Flash su Windows girava con uno slot per layer. colibri.c aveva la
+ * 1 GB, e Flash su Windows girava con uno slot per layer. glm52.c aveva la
  * versione giusta (macOS + Windows) da mesi, come funzione sua. Due copie di
  * cui una sbagliata: ora e' una, qui, e i motori la chiamano.
  * 0 = non misurabile; e' il chiamante a decidere il fallback. */

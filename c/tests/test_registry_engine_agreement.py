@@ -5,7 +5,7 @@ every engine (or the planner) adopted and one engine did not, with no error at
 the point of divergence.
 
   * `context_env` -- every family declares the environment variable that caps its
-    context, `coli --ctx` sets it, and resource_plan.py sizes the buffers it
+    context, `lmatomic --ctx` sets it, and resource_plan.py sizes the buffers it
     implies from that number. deepseek_v41 read none of them, so the planner
     budgeted 0.02 GiB of compressed KV and index keys where the engine allocated
     6.25 GiB for the checkpoint's own 1,048,576-position ceiling.
@@ -13,7 +13,7 @@ the point of divergence.
   * `supports_accelerator` -- resource_plan.py refuses a VRAM budget and drops
     the GPUs for a CPU-only engine, with a comment saying that announcing a tier
     nobody can execute is worse than saying nothing. The flag defaults to True,
-    so an engine has to opt out, and the two CPU-only engines did not: `coli
+    so an engine has to opt out, and the two CPU-only engines did not: `lmatomic
     plan` offered DeepSeek V4.1 a "296.0 GB hot tier ... 100% projected expert
     residency" on eight H200s it cannot address.
 
@@ -55,7 +55,7 @@ class RegistryEngineAgreementTest(unittest.TestCase):
                 self.assertTrue(
                     f'getenv("{env}")' in source,
                     f"{family.id} declares context_env={env!r} but "
-                    f"{family.engine_artifact}.c never reads it, so `coli --ctx` "
+                    f"{family.engine_artifact}.c never reads it, so `lmatomic --ctx` "
                     f"is silently ignored and the planner and the engine disagree "
                     f"about how much state the context costs")
 

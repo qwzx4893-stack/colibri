@@ -1,8 +1,8 @@
 """--auto-tier must apply the VRAM tier it printed, or say why it cannot.
 
-`coli plan` and `coli doctor` print a VRAM tier. --auto-tier is documented as
+`lmatomic plan` and `lmatomic doctor` print a VRAM tier. --auto-tier is documented as
 applying the plan those commands print. On the sibling-engine path it then
-dropped the tier whenever COLI_CUDA was not already "1", which --auto-tier on
+dropped the tier whenever LMA_CUDA was not already "1", which --auto-tier on
 its own never sets, and it dropped it in silence: no [PLAN] line, no [CUDA]
 banner, just half the throughput. On the box in #1581, 11.8 tok/s against 21.
 
@@ -32,10 +32,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 
-_loader = importlib.machinery.SourceFileLoader("coli_cli_vram", str(HERE / "coli"))
-_spec = importlib.util.spec_from_loader("coli_cli_vram", _loader)
-coli = importlib.util.module_from_spec(_spec)
-_loader.exec_module(coli)
+_loader = importlib.machinery.SourceFileLoader("lma_cli_vram", str(HERE / "lmatomic"))
+_spec = importlib.util.spec_from_loader("lma_cli_vram", _loader)
+lmatomic = importlib.util.module_from_spec(_spec)
+_loader.exec_module(lmatomic)
 
 
 class Args:
@@ -50,7 +50,7 @@ def plan(devices, budget_bytes):
 def notice_for(p, gpu_off_by_request=False):
     err = io.StringIO()
     with contextlib.redirect_stderr(err):
-        coli.report_unapplied_vram_tier(p, gpu_off_by_request)
+        lmatomic.report_unapplied_vram_tier(p, gpu_off_by_request)
     return err.getvalue()
 
 
@@ -63,46 +63,46 @@ class PlanCudaEnabledTest(unittest.TestCase):
 
     def setUp(self):
         self.asked = []
-        self._cuda_binary = coli.cuda_binary
-        self._engine_for_gpu_check = coli.engine_for_gpu_check
-        self._dsv4 = coli.dsv4_cuda_available
-        coli.engine_for_gpu_check = lambda a: "/build/qwen36"
+        self._cuda_binary = lmatomic.cuda_binary
+        self._engine_for_gpu_check = lmatomic.engine_for_gpu_check
+        self._dsv4 = lmatomic.dsv4_cuda_available
+        lmatomic.engine_for_gpu_check = lambda a: "/build/qwen36"
 
     def tearDown(self):
-        coli.cuda_binary = self._cuda_binary
-        coli.engine_for_gpu_check = self._engine_for_gpu_check
-        coli.dsv4_cuda_available = self._dsv4
+        lmatomic.cuda_binary = self._cuda_binary
+        lmatomic.engine_for_gpu_check = self._engine_for_gpu_check
+        lmatomic.dsv4_cuda_available = self._dsv4
 
     def gpu_build(self, answer):
         def probe(engine=None):
             self.asked.append(engine)
             return answer
-        coli.cuda_binary = probe
+        lmatomic.cuda_binary = probe
 
     def test_a_gpu_build_gets_the_tier_without_a_flag(self):
         """The defect in #1581: this used to be False, so the plan the user had
         just read was not the plan that ran."""
         self.gpu_build(True)
-        self.assertTrue(coli.plan_cuda_enabled(Args(), "qwen36", {}))
+        self.assertTrue(lmatomic.plan_cuda_enabled(Args(), "qwen36", {}))
         self.assertEqual(self.asked, ["/build/qwen36"],
                          "the family's own binary must be the one inspected; "
-                         "asking colibri.exe about a qwen36 run is #1533")
+                         "asking glm52.exe about a qwen36 run is #1533")
 
     def test_a_cpu_only_build_still_does_not(self):
         self.gpu_build(False)
-        self.assertFalse(coli.plan_cuda_enabled(Args(), "qwen36", {}))
+        self.assertFalse(lmatomic.plan_cuda_enabled(Args(), "qwen36", {}))
 
     def test_gpu_none_wins_over_a_gpu_build(self):
-        """COLI_CUDA=0 is what --gpu none sets, and it is the off switch."""
+        """LMA_CUDA=0 is what --gpu none sets, and it is the off switch."""
         self.gpu_build(True)
-        self.assertFalse(coli.plan_cuda_enabled(Args(), "qwen36", {"COLI_CUDA": "0"}))
+        self.assertFalse(lmatomic.plan_cuda_enabled(Args(), "qwen36", {"LMA_CUDA": "0"}))
         self.assertEqual(self.asked, [], "an explicit off needs no probe")
 
     def test_an_explicit_gpu_flag_is_taken_at_its_word(self):
         """--gpu/--vram already validated the build and exited if it was not
         capable; probing again could only disagree with a decision made."""
         self.gpu_build(False)
-        self.assertTrue(coli.plan_cuda_enabled(Args(), "qwen36", {"COLI_CUDA": "1"}))
+        self.assertTrue(lmatomic.plan_cuda_enabled(Args(), "qwen36", {"LMA_CUDA": "1"}))
         self.assertEqual(self.asked, [])
 
     def test_deepseek_v4_uses_its_own_probe(self):
@@ -110,8 +110,8 @@ class PlanCudaEnabledTest(unittest.TestCase):
         reject valid V4 CUDA builds (#1219)."""
         self.gpu_build(False)
         seen = []
-        coli.dsv4_cuda_available = lambda model=None: (seen.append(model), True)[1]
-        self.assertTrue(coli.plan_cuda_enabled(Args("/models/v4"), "deepseek_v4", {}))
+        lmatomic.dsv4_cuda_available = lambda model=None: (seen.append(model), True)[1]
+        self.assertTrue(lmatomic.plan_cuda_enabled(Args("/models/v4"), "deepseek_v4", {}))
         self.assertEqual(seen, ["/models/v4"])
         self.assertEqual(self.asked, [], "the generic probe must not be used for V4")
 

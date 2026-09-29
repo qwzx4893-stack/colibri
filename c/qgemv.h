@@ -1,5 +1,5 @@
-#ifndef COLIBRI_QGEMV_H
-#define COLIBRI_QGEMV_H
+#ifndef LMA_QGEMV_H
+#define LMA_QGEMV_H
 /* Plain (non-group-scaled) int8 GEMV: one f32 scale per output row, q[O,I]
  * int8 row-major. Its own header so tests/test_qgemv.c can link the very
  * kernel the engine runs; qwen36.c carries a main and cannot be linked into
@@ -107,7 +107,7 @@ static void matmul_q(float *y, const float *x, const int8_t *q, const float *sca
      * SSE4.1 branch in gsgemv.h). 128-bit lanes instead of 256-bit: four
      * accumulators of 4 floats each, 16 weights per iteration where AVX2
      * manages 32. The multiply-add and the float loads route through
-     * sse41_kernels.h (COLIBRI_FMA / colibri_sse41_loadu_ps), the same
+     * sse41_kernels.h (LMA_FMA / lma_sse41_loadu_ps), the same
      * shared primitives olmoe.c's canary uses, instead of an inline copy of
      * the intrinsics. This tier is new code with no pre-existing
      * byte-identical output to match, so tests/test_qgemv.c checks it
@@ -121,10 +121,10 @@ static void matmul_q(float *y, const float *x, const int8_t *q, const float *sca
         int i = 0;
         for (; i + 16 <= I; i += 16) {
             __m128i b0 = _mm_loadu_si128((const __m128i*)(w + i));
-            a0 = COLIBRI_FMA(colibri_sse41_loadu_ps(x+i),    _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b0)), a0);
-            a1 = COLIBRI_FMA(colibri_sse41_loadu_ps(x+i+4),  _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b0,4))), a1);
-            a2 = COLIBRI_FMA(colibri_sse41_loadu_ps(x+i+8),  _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b0,8))), a2);
-            a3 = COLIBRI_FMA(colibri_sse41_loadu_ps(x+i+12), _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b0,12))), a3);
+            a0 = LMA_FMA(lma_sse41_loadu_ps(x+i),    _mm_cvtepi32_ps(_mm_cvtepi8_epi32(b0)), a0);
+            a1 = LMA_FMA(lma_sse41_loadu_ps(x+i+4),  _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b0,4))), a1);
+            a2 = LMA_FMA(lma_sse41_loadu_ps(x+i+8),  _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b0,8))), a2);
+            a3 = LMA_FMA(lma_sse41_loadu_ps(x+i+12), _mm_cvtepi32_ps(_mm_cvtepi8_epi32(_mm_srli_si128(b0,12))), a3);
         }
         a0 = _mm_add_ps(_mm_add_ps(a0,a1), _mm_add_ps(a2,a3));
         a0 = _mm_add_ps(a0, _mm_movehl_ps(a0,a0));
@@ -144,4 +144,4 @@ static void matmul_q(float *y, const float *x, const int8_t *q, const float *sca
 #endif
 }
 
-#endif /* COLIBRI_QGEMV_H */
+#endif /* LMA_QGEMV_H */

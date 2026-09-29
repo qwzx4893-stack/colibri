@@ -3,7 +3,7 @@
  * When the probe says the GPU loses, qt_trunk_withdraw() must put every offer
  * back on the CPU, lm_head included, and return the bytes the trunk had taken
  * to the expert budget, so the warmstart that follows fills that VRAM with
- * experts instead. A hand-written COLI_PLACE is the user's word: not auto, not
+ * experts instead. A hand-written LMA_PLACE is the user's word: not auto, not
  * withdrawn. Fake CUDA backend, no GPU, no toolkit. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,9 +20,9 @@ static void check(int ok, const char *what) { if (!ok) { printf("  FAIL: %s\n", 
 enum { NL = 2, NE = 8, D = 64, IH = 32, TOPK = 2 };
 
 int main(void) {
-    setenv("COLI_CUDA", "1", 1); setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1); setenv("LMA_GPUS", "0", 1);
     setenv("QT_NO_WARMSTART", "1", 1); setenv("HEAT_FILE", "", 1);
-    setenv("COLI_PLACE", "", 1);                    /* "" == unset == auto */
+    setenv("LMA_PLACE", "", 1);                    /* "" == unset == auto */
     fake_ndev = 1; fake_uploads = 0;
 
     /* room for 8 experts plus a little; each offer is 1 expert worth of bytes */
@@ -35,7 +35,7 @@ int main(void) {
     qt_trunk_offer("dnproj", 0, exp_bytes); qt_trunk_offer("dnout", 0, exp_bytes);
     qt_trunk_offer("attnproj", 1, exp_bytes); qt_trunk_offer("shexp", 1, exp_bytes);
     check(qt_init(NL, NE, D, IH, NE, TOPK, 0, 1), "tier starts (int4 mode, cap == n_experts)");
-    check(qt_place_is_auto(), "COLI_PLACE unset: the placement is automatic");
+    check(qt_place_is_auto(), "LMA_PLACE unset: the placement is automatic");
     check(qt_place_of("lmhead", 0) == 0 && qt_place_of("dnproj", 0) == 0 && qt_place_of("dnout", 0) == 0 &&
           qt_place_of("attnproj", 1) == 0 && qt_place_of("shexp", 1) == 0, "all five offers placed on the one device");
     check(G_lmh.dev_ok, "lm_head has a device before the withdrawal");
@@ -54,8 +54,8 @@ int main(void) {
     check(fake_uploads == 0, "nothing was uploaded: the withdrawal came before any trunk upload");
 
     /* a hand-written list is not automatic: nothing to withdraw, nothing changes */
-    setenv("COLI_PLACE", "lmhead=0", 1);
-    check(!qt_place_is_auto(), "an explicit COLI_PLACE list is not automatic");
+    setenv("LMA_PLACE", "lmhead=0", 1);
+    check(!qt_place_is_auto(), "an explicit LMA_PLACE list is not automatic");
     size_t held = G.budget[0];
     qt_trunk_withdraw("test again");
     check(G.budget[0] == held, "withdrawing an explicit placement is a no-op");

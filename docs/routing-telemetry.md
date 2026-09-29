@@ -1,16 +1,16 @@
 # Routing telemetry: the expert history and the trace stream
 
-*The canonical reference for `.coli_usage` and `ROUTE_TRACE=`, and for `route_trace.h`,
+*The canonical reference for `.lma_usage` and `ROUTE_TRACE=`, and for `route_trace.h`,
 the header both are implemented in. Background and design discussion in
 [#700](https://github.com/JustVugg/colibri/issues/700).*
 
 ## Why one header
 
-Seven of colibrì's eight engines use this header: `colibri.c` (GLM-5.2),
+Seven of LM Atomic's eight engines use this header: `glm52.c` (GLM-5.2),
 `kimi_k3.c`, `inkling.c`, `olmoe.c`, `deepseek_v4.c`, `qwen38.c`, and
 `glm53.c`. Qwen3.6 is the one existing exception. The learning cache described in
 [tuning.md](tuning.md) is only as good as the history it reads. Before
-`route_trace.h`, that history was per-engine: `colibri.c` wrote sparse text,
+`route_trace.h`, that history was per-engine: `glm52.c` wrote sparse text,
 `inkling.c` wrote a dense binary block with an `IKU1` magic, and the other
 engines wrote nothing at all, so `PIN=auto` had nothing to read on them. Both writers defaulted to the
 same filename, so a model directory shared between two engines ended up with one history
@@ -24,7 +24,7 @@ when the destination exists, so without its shim the history stops updating afte
 write, silently. An engine gets the history and the trace stream from a handful
 of calls — `qwen38.c` needs the same route calls as the other integrated MoE engines.
 
-## The history file (`.coli_usage`, `stats.txt`, `PIN=<file>`)
+## The history file (`.lma_usage`, `stats.txt`, `PIN=<file>`)
 
 Text, one record per line, sparse — only experts with a non-zero count appear:
 
@@ -40,7 +40,7 @@ The two leading records carry the dimensions and the writing engine's identity s
 history from another model is **refused by name** rather than misread:
 
 ```
-[USAGE] /models/glm/.coli_usage: written by kimi_k3, this engine is glm_moe_dsa
+[USAGE] /models/glm/.lma_usage: written by kimi_k3, this engine is glm_moe_dsa
         — refusing (pass PIN=<path> to use it anyway)
 ```
 
@@ -56,7 +56,7 @@ while(fscanf(f, "%d %d %u", &l, &e, &cnt) == 3)
 
 so a record with a negative layer is parsed, dropped, and the loop continues into the
 data. That is what lets a history written today still load in a binary built before the
-header existed — which matters, because a `.coli_usage` accumulated over weeks *is* the
+header existed — which matters, because a `.lma_usage` accumulated over weeks *is* the
 value of `PIN=auto`.
 
 Two consequences worth knowing before editing the format:
@@ -127,7 +127,7 @@ One line per (moe call, batch row), written as the layer routes:
 
 `call` increments once per `moe()` invocation, `row` is the position within the forward
 batch, and the gates are the values the layer actually applies (post-normalisation). This
-is the input to `tools/route_pairs.py`, which builds the `.coli_pairs` table used by
+is the input to `tools/route_pairs.py`, which builds the `.lma_pairs` table used by
 `COUPLE=` cross-layer prefetch. Measurement only: enabling it never changes what the model
 computes, and it does disable the device-side router (which would otherwise bypass the CPU
 ranking the trace records).
@@ -156,7 +156,7 @@ without MTP.
 This is the load admission rule, not housekeeping. Every reader treats a NULL row as "there
 is no expert here to attribute a count to". Skip the drop and a history record naming a
 dense layer is silently accumulated, added to the reported total, and written back out on
-the next save — a record no engine would ever emit. `colibri.c` drops its rows at the end
+the next save — a record no engine would ever emit. `glm52.c` drops its rows at the end
 of `model_init`, which is the first point where `L[i].sparse` and `has_mtp` are both final
 and still before any history is read.
 
@@ -180,13 +180,13 @@ first kind bends:
 What makes a read trusted is **how the path was reached, not what the file contains**.
 `PIN=<file>` was typed by the user, so it is trusted. `PIN=auto` and the `AUTOPIN` history
 are paths the engine found on its own — nobody vouched for those, so they get the full
-check. `colibri.c` passes that distinction into `pin_load` as an argument for this reason:
+check. `glm52.c` passes that distinction into `pin_load` as an argument for this reason:
 the same function reads both kinds of path, and the file cannot tell you which it was.
 
 The callback's own bounds always apply, so no read of any kind can write outside the
 counters.
 
-An engine whose router needs the two at different points (`colibri.c` counts before gate
+An engine whose router needs the two at different points (`glm52.c` counts before gate
 normalisation and traces after) can call `rt_count()` and `rt_trace()` separately, with
 `rt_trace_end()` once per `moe()` call to advance the call counter. `rt_load(path)` reads a
 history back into the counters, and `rt_read(path, cb, ud)` streams records to a callback for

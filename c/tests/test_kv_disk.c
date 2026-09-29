@@ -1,13 +1,13 @@
-/* .coli_kv round-trip: v1 (f32) and v2 (KV8 fp8+scale) records, the v1->v2
+/* .lma_kv round-trip: v1 (f32) and v2 (KV8 fp8+scale) records, the v1->v2
  * upgrade path (quantize-on-load; the v1 file survives until the first save rewrites it
  * as v2), the v2-under-f32 reject, and the format-mismatch self-heal in
  * kv_disk_append (magic differs -> file rewritten from record 0). No model
  * file needed: the disk paths only read c->n_layers/kv_lora/qk_rope/vocab. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
-#define PATH "tests/.coli_kv_test.tmp"
+#define PATH "tests/.lma_kv_test.tmp"
 static int fails=0;
 #define CHECK(cond, ...) do{ if(!(cond)){ fails++; \
     fprintf(stderr,"FAIL %s:%d: ",__FILE__,__LINE__); fprintf(stderr,__VA_ARGS__); fputc('\n',stderr);} }while(0)
@@ -50,7 +50,7 @@ int main(void){
     for(int i=0;i<m.c.n_layers;i++) for(int p=0;p<NP;p++){
         float sc=m.Lsc[i][p];
         for(int j=0;j<m.c.kv_lora;j++){
-            float want=fill(i,p,j), got=coli_fp8_lut[m.Lc8[i][(int64_t)p*m.c.kv_lora+j]]*sc;
+            float want=fill(i,p,j), got=lma_fp8_lut[m.Lc8[i][(int64_t)p*m.c.kv_lora+j]]*sc;
             CHECK(fabsf(got-want)<=fabsf(want)/16.f+sc*0x1p-10f+1e-7f,
                   "v1->kv8 Lc[%d] p%d j%d: %g vs %g", i,p,j,got,want);
         }
@@ -102,13 +102,13 @@ int main(void){
     remove(PATH);
     g_kv8=0; g_tq=1; g_tq_bits=4;
     kv_alloc(&m,16); m.kv->disk_nrec=0;
-    int lbb=coli_tq_row_bytes(m.c.kv_lora,g_tq_bits), rbb=coli_tq_row_bytes(m.c.qk_rope,g_tq_bits);
+    int lbb=lma_tq_row_bytes(m.c.kv_lora,g_tq_bits), rbb=lma_tq_row_bytes(m.c.qk_rope,g_tq_bits);
     for(int i=0;i<m.c.n_layers;i++) for(int p=0;p<NP;p++){       /* populate via the producer's PolarQuant */
         float lr[8], rr[4];
         for(int j=0;j<m.c.kv_lora;j++) lr[j]=fill(i,p,j);
         for(int j=0;j<m.c.qk_rope;j++) rr[j]=fill(i+9,p,j);
-        m.Lsc[i][p]=coli_tq_quant_row(lr, coli_kv_row8(m.Lc8[i],p,lbb), m.c.kv_lora, g_tq_bits);
-        m.Rsc[i][p]=coli_tq_quant_row(rr, coli_kv_row8(m.Rc8[i],p,rbb), m.c.qk_rope, g_tq_bits);
+        m.Lsc[i][p]=lma_tq_quant_row(lr, lma_kv_row8(m.Lc8[i],p,lbb), m.c.kv_lora, g_tq_bits);
+        m.Rsc[i][p]=lma_tq_quant_row(rr, lma_kv_row8(m.Rc8[i],p,rbb), m.c.qk_rope, g_tq_bits);
     }
     kv_disk_append(&m,hist,NP);
     CHECK(m.kv->disk_nrec==NP, "v3 append nrec=%d", m.kv->disk_nrec);
@@ -117,15 +117,15 @@ int main(void){
       if(f) fclose(f); }
     uint8_t keepL3[2][5*8], keepR3[2][5*4]; float keepLs3[2][5], keepRs3[2][5];
     for(int i=0;i<m.c.n_layers;i++) for(int p=0;p<NP;p++){
-        memcpy(keepL3[i]+(size_t)p*lbb, coli_kv_row8(m.Lc8[i],p,lbb), lbb);
-        memcpy(keepR3[i]+(size_t)p*rbb, coli_kv_row8(m.Rc8[i],p,rbb), rbb);
+        memcpy(keepL3[i]+(size_t)p*lbb, lma_kv_row8(m.Lc8[i],p,lbb), lbb);
+        memcpy(keepR3[i]+(size_t)p*rbb, lma_kv_row8(m.Rc8[i],p,rbb), rbb);
         keepLs3[i][p]=m.Lsc[i][p]; keepRs3[i][p]=m.Rsc[i][p];
     }
     kv_alloc(&m,16); m.kv->disk_nrec=0;
     CHECK(kv_disk_load(&m,hist2,16)==NP, "v3 load");
     for(int i=0;i<m.c.n_layers;i++) for(int p=0;p<NP;p++){
-        CHECK(!memcmp(coli_kv_row8(m.Lc8[i],p,lbb), keepL3[i]+(size_t)p*lbb, lbb), "v3 Lc8 bytes layer %d pos %d", i,p);
-        CHECK(!memcmp(coli_kv_row8(m.Rc8[i],p,rbb), keepR3[i]+(size_t)p*rbb, rbb), "v3 Rc8 bytes layer %d pos %d", i,p);
+        CHECK(!memcmp(lma_kv_row8(m.Lc8[i],p,lbb), keepL3[i]+(size_t)p*lbb, lbb), "v3 Lc8 bytes layer %d pos %d", i,p);
+        CHECK(!memcmp(lma_kv_row8(m.Rc8[i],p,rbb), keepR3[i]+(size_t)p*rbb, rbb), "v3 Rc8 bytes layer %d pos %d", i,p);
         CHECK(m.Lsc[i][p]==keepLs3[i][p], "v3 Lsc layer %d pos %d", i,p);
         CHECK(m.Rsc[i][p]==keepRs3[i][p], "v3 Rsc layer %d pos %d", i,p);
     }

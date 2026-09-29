@@ -3,8 +3,8 @@
  * call it again. A stale duplicate free block frees every Lc[i]/Rc[i] and both
  * arrays twice on the second call -> allocator abort. No model file needed:
  * the CPU path of kv_alloc only reads c->n_layers/kv_lora/qk_rope. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 int main(void){

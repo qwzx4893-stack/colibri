@@ -1,18 +1,18 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
-/* Amalgamated deepseek_v4.c — GLM-style source; compile with -DCOLI_V4_UNIT_* per object */
+/* Amalgamated deepseek_v4.c — GLM-style source; compile with -DLMA_V4_UNIT_* per object */
 /* Umbrella API: deepseek_v4.h (included by units) */
 
 /* n_routed_experts has no config.json upper bound (only >=1 is checked), so a
  * fixed-size stack buffer can't be the only path -- an unusually large/hostile
- * config must still work via heap, just slower. COLI_V4_ROUTE_STACK_EXPERTS
+ * config must still work via heap, just slower. LMA_V4_ROUTE_STACK_EXPERTS
  * covers every routed-MoE config seen in practice (typical: 64-256) so the
  * per-token/per-layer routing call in the hot decode path allocates nothing;
  * anything larger falls back to malloc exactly like before this change. */
-#define COLI_V4_ROUTE_STACK_EXPERTS 512
+#define LMA_V4_ROUTE_STACK_EXPERTS 512
 
-#ifdef COLI_V4_UNIT_ST
+#ifdef LMA_V4_UNIT_ST
 /* Shared st.h adapter and V4 tensor materialization helpers. */
 #include "deepseek_v4_internal.h"
 
@@ -33,7 +33,7 @@ static int set_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
-int coli_st_index_open(ColiSafetensorsIndex **out, const char *directory,
+int lma_st_index_open(LmaSafetensorsIndex **out, const char *directory,
                        char *error, size_t error_size) {
     if (!out || !directory)
         return set_error(error, error_size, "invalid safetensors index arguments");
@@ -42,20 +42,20 @@ int coli_st_index_open(ColiSafetensorsIndex **out, const char *directory,
     if (!probe)
         return set_error(error, error_size, "cannot open model directory: %s", directory);
     closedir(probe);
-    ColiSafetensorsIndex *index = calloc(1, sizeof(*index));
+    LmaSafetensorsIndex *index = calloc(1, sizeof(*index));
     if (!index)
         return set_error(error, error_size, "out of memory opening: %s", directory);
-    const char *extra_dirs = getenv("COLI_MODEL_DIRS"); /* SPLIT: shards spread across N drives */
+    const char *extra_dirs = getenv("LMA_MODEL_DIRS"); /* SPLIT: shards spread across N drives */
     st_init_multi(index, directory, (extra_dirs && *extra_dirs) ? extra_dirs : NULL);
     if (!index->nfd || !index->n) {
-        coli_st_index_close(index);
+        lma_st_index_close(index);
         return set_error(error, error_size, "no safetensors tensors in: %s", directory);
     }
     *out = index;
     return 0;
 }
 
-void coli_st_index_close(ColiSafetensorsIndex *index) {
+void lma_st_index_close(LmaSafetensorsIndex *index) {
     if (!index) return;
     st_mirror_reset(index);
     for (int i = 0; i < index->n; i++) free(index->t[i].name);
@@ -75,30 +75,30 @@ void coli_st_index_close(ColiSafetensorsIndex *index) {
     free(index);
 }
 
-size_t coli_st_tensor_count(const ColiSafetensorsIndex *index) {
+size_t lma_st_tensor_count(const LmaSafetensorsIndex *index) {
     return index ? (size_t)index->n : 0;
 }
 
-size_t coli_st_shard_count(const ColiSafetensorsIndex *index) {
+size_t lma_st_shard_count(const LmaSafetensorsIndex *index) {
     return index ? (size_t)index->nfd : 0;
 }
 
-const char *coli_st_shard_path(const ColiSafetensorsIndex *index, int shard) {
+const char *lma_st_shard_path(const LmaSafetensorsIndex *index, int shard) {
     return index && shard >= 0 && shard < index->nfd ? index->paths[shard] : NULL;
 }
 
-const ColiSafetensorsTensor *coli_st_find(const ColiSafetensorsIndex *index,
+const LmaSafetensorsTensor *lma_st_find(const LmaSafetensorsIndex *index,
                                          const char *name) {
-    return index && name ? st_find((ColiSafetensorsIndex *)index, name) : NULL;
+    return index && name ? st_find((LmaSafetensorsIndex *)index, name) : NULL;
 }
 
-int coli_st_tensor_shard(const ColiSafetensorsIndex *index,
-                         const ColiSafetensorsTensor *tensor) {
+int lma_st_tensor_shard(const LmaSafetensorsIndex *index,
+                         const LmaSafetensorsTensor *tensor) {
     return index && tensor
-        ? st_fidx((ColiSafetensorsIndex *)index, tensor->fd) : -1;
+        ? st_fidx((LmaSafetensorsIndex *)index, tensor->fd) : -1;
 }
 
-int coli_st_read_at(const ColiSafetensorsIndex *index, int shard,
+int lma_st_read_at(const LmaSafetensorsIndex *index, int shard,
                     uint64_t offset, size_t length, void *destination) {
     if (!index || !destination || shard < 0 || shard >= index->nfd ||
         index->sizes[shard] < 0 || offset > (uint64_t)index->sizes[shard] ||
@@ -116,27 +116,27 @@ int coli_st_read_at(const ColiSafetensorsIndex *index, int shard,
     return 0;
 }
 
-int coli_st_streaming_direct_available(const ColiSafetensorsIndex *index,
+int lma_st_streaming_direct_available(const LmaSafetensorsIndex *index,
                                        int shard) {
     if (!index || shard < 0 || shard >= index->nfd) return 0;
-    const char *setting = getenv("COLI_V4_DIRECT");
+    const char *setting = getenv("LMA_V4_DIRECT");
     if (setting && atoi(setting) == 0) return 0;
     return index->dfds[shard] >= 0;
 }
 
-/* Direct-I/O availability for the ROUTED replica: same COLI_V4_DIRECT gate,
+/* Direct-I/O availability for the ROUTED replica: same LMA_V4_DIRECT gate,
  * but checks the replica's own O_DIRECT twin — a mirror with a twin must not
  * lose direct reads just because the primary lacks one, and vice versa. */
-int coli_st_streaming_direct_available_rep(const ColiSafetensorsIndex *index,
+int lma_st_streaming_direct_available_rep(const LmaSafetensorsIndex *index,
                                            int shard, int rep) {
     if (!index || shard < 0 || shard >= index->nfd) return 0;
-    const char *setting = getenv("COLI_V4_DIRECT");
+    const char *setting = getenv("LMA_V4_DIRECT");
     if (setting && atoi(setting) == 0) return 0;
     int dfd = rep ? index->mdfds[rep - 1][shard] : index->dfds[shard];
     return dfd >= 0;
 }
 
-int coli_st_read_at_streaming(const ColiSafetensorsIndex *index, int shard,
+int lma_st_read_at_streaming(const LmaSafetensorsIndex *index, int shard,
                               uint64_t offset, size_t length,
                               void *destination) {
     if (!index || !destination || shard < 0 || shard >= index->nfd ||
@@ -144,8 +144,8 @@ int coli_st_read_at_streaming(const ColiSafetensorsIndex *index, int shard,
         length > (uint64_t)index->sizes[shard] - offset)
         return -1;
     if (!length) return 0;
-    if (!coli_st_streaming_direct_available(index, shard))
-        return coli_st_read_at(index, shard, offset, length, destination);
+    if (!lma_st_streaming_direct_available(index, shard))
+        return lma_st_read_at(index, shard, offset, length, destination);
 
     const uint64_t alignment = 4096;
     uint64_t base = offset & ~(alignment - 1);
@@ -165,7 +165,7 @@ int coli_st_read_at_streaming(const ColiSafetensorsIndex *index, int shard,
     unsigned char *bounce = NULL;
     if (posix_memalign((void **)&bounce, (size_t)alignment,
                        allocation_bytes) != 0)
-        return coli_st_read_at(index, shard, offset, length, destination);
+        return lma_st_read_at(index, shard, offset, length, destination);
 
     uint64_t file_bytes = (uint64_t)index->sizes[shard];
     uint64_t available = file_bytes - base;
@@ -184,7 +184,7 @@ int coli_st_read_at_streaming(const ColiSafetensorsIndex *index, int shard,
     }
     if (failed) {
         compat_aligned_free(bounce);
-        return coli_st_read_at(index, shard, offset, length, destination);
+        return lma_st_read_at(index, shard, offset, length, destination);
     }
     while ((uint64_t)done < needed) {
         ssize_t count = pread(index->fds[shard], bounce + done,
@@ -199,15 +199,15 @@ int coli_st_read_at_streaming(const ColiSafetensorsIndex *index, int shard,
     return 0;
 }
 
-int coli_st_read_tensor(const ColiSafetensorsIndex *index,
-                        const ColiSafetensorsTensor *tensor, void *destination) {
-    int shard = coli_st_tensor_shard(index, tensor);
+int lma_st_read_tensor(const LmaSafetensorsIndex *index,
+                        const LmaSafetensorsTensor *tensor, void *destination) {
+    int shard = lma_st_tensor_shard(index, tensor);
     return tensor && tensor->off >= 0
-        ? coli_st_read_at(index, shard, (uint64_t)tensor->off,
+        ? lma_st_read_at(index, shard, (uint64_t)tensor->off,
                           (size_t)tensor->nbytes, destination) : -1;
 }
 
-int coli_st_prefetch_at(const ColiSafetensorsIndex *index, int shard,
+int lma_st_prefetch_at(const LmaSafetensorsIndex *index, int shard,
                         uint64_t offset, size_t length) {
     if (!index || shard < 0 || shard >= index->nfd ||
         index->sizes[shard] < 0 || offset > (uint64_t)index->sizes[shard] ||
@@ -217,19 +217,19 @@ int coli_st_prefetch_at(const ColiSafetensorsIndex *index, int shard,
                          POSIX_FADV_WILLNEED);
 }
 
-const char *coli_st_dtype_name(ColiSafetensorsDType dtype) {
+const char *lma_st_dtype_name(LmaSafetensorsDType dtype) {
     return st_dtype_name(dtype);
 }
 
-void coli_owned_tensor_free(ColiOwnedTensor *tensor) {
+void lma_owned_tensor_free(LmaOwnedTensor *tensor) {
     if (!tensor) return;
     free(tensor->data_allocation);
     free(tensor->scale_allocation);
     memset(tensor, 0, sizeof(*tensor));
 }
 
-int coli_tensor_load_fp8(ColiOwnedTensor *output,
-                         const ColiSafetensorsIndex *index,
+int lma_tensor_load_fp8(LmaOwnedTensor *output,
+                         const LmaSafetensorsIndex *index,
                          const char *prefix, char *error, size_t error_size) {
     if (!output || !index || !prefix)
         return set_error(error, error_size, "invalid FP8 tensor arguments");
@@ -238,29 +238,29 @@ int coli_tensor_load_fp8(ColiOwnedTensor *output,
     char *name = malloc(length);
     if (!name) return set_error(error, error_size, "out of memory building tensor name");
     snprintf(name, length, "%s.weight", prefix);
-    const ColiSafetensorsTensor *weight = coli_st_find(index, name);
+    const LmaSafetensorsTensor *weight = lma_st_find(index, name);
     snprintf(name, length, "%s.scale", prefix);
-    const ColiSafetensorsTensor *scale = coli_st_find(index, name);
+    const LmaSafetensorsTensor *scale = lma_st_find(index, name);
     free(name);
-    if (!weight || !scale || weight->dtype != COLI_ST_F8_E4M3 ||
-        scale->dtype != COLI_ST_F8_E8M0 || weight->rank != 2 || scale->rank != 2 ||
+    if (!weight || !scale || weight->dtype != LMA_ST_F8_E4M3 ||
+        scale->dtype != LMA_ST_F8_E8M0 || weight->rank != 2 || scale->rank != 2 ||
         scale->shape[0] != (weight->shape[0] + 127) / 128 ||
         scale->shape[1] != (weight->shape[1] + 127) / 128)
         return set_error(error, error_size, "invalid native FP8 tensor: %s", prefix);
     output->data_allocation = malloc((size_t)weight->nbytes);
     output->scale_allocation = malloc((size_t)scale->numel * sizeof(float));
     if (!output->data_allocation || !output->scale_allocation) {
-        coli_owned_tensor_free(output);
+        lma_owned_tensor_free(output);
         return set_error(error, error_size, "out of memory loading FP8 tensor: %s", prefix);
     }
-    if (coli_st_read_tensor(index, weight, output->data_allocation) != 0 ||
-        st_read_scale_f32((ColiSafetensorsIndex *)index, scale->name,
+    if (lma_st_read_tensor(index, weight, output->data_allocation) != 0 ||
+        st_read_scale_f32((LmaSafetensorsIndex *)index, scale->name,
                           output->scale_allocation, scale->numel, 0) != scale->numel) {
-        coli_owned_tensor_free(output);
+        lma_owned_tensor_free(output);
         return set_error(error, error_size, "cannot read FP8 tensor: %s", prefix);
     }
-    output->view = (ColiTensorView){
-        COLI_TENSOR_FP8_E4M3_BLOCK, COLI_SCALE_F32,
+    output->view = (LmaTensorView){
+        LMA_TENSOR_FP8_E4M3_BLOCK, LMA_SCALE_F32,
         output->data_allocation, output->scale_allocation,
         (size_t)weight->nbytes, (size_t)scale->numel * sizeof(float),
         weight->shape[0], weight->shape[1], 128, 128, NULL
@@ -268,39 +268,39 @@ int coli_tensor_load_fp8(ColiOwnedTensor *output,
     return 0;
 }
 
-void coli_float_tensor_free(ColiFloatTensor *tensor) {
+void lma_float_tensor_free(LmaFloatTensor *tensor) {
     if (!tensor) return;
     free(tensor->data);
     memset(tensor, 0, sizeof(*tensor));
 }
 
-int coli_tensor_load_f32(ColiFloatTensor *output,
-                         const ColiSafetensorsIndex *index,
+int lma_tensor_load_f32(LmaFloatTensor *output,
+                         const LmaSafetensorsIndex *index,
                          const char *name, char *error, size_t error_size) {
     if (!output || !index || !name)
         return set_error(error, error_size, "invalid float tensor arguments");
     memset(output, 0, sizeof(*output));
-    const ColiSafetensorsTensor *tensor = coli_st_find(index, name);
-    if (!tensor || (tensor->dtype != COLI_ST_F32 && tensor->dtype != COLI_ST_BF16))
+    const LmaSafetensorsTensor *tensor = lma_st_find(index, name);
+    if (!tensor || (tensor->dtype != LMA_ST_F32 && tensor->dtype != LMA_ST_BF16))
         return set_error(error, error_size, "missing BF16/F32 tensor: %s", name);
     void *raw = malloc((size_t)tensor->nbytes);
     output->data = malloc((size_t)tensor->numel * sizeof(*output->data));
     if (!raw || !output->data) {
         free(raw);
-        coli_float_tensor_free(output);
+        lma_float_tensor_free(output);
         return set_error(error, error_size, "out of memory loading tensor: %s", name);
     }
-    if (coli_st_read_tensor(index, tensor, raw) != 0) {
+    if (lma_st_read_tensor(index, tensor, raw) != 0) {
         free(raw);
-        coli_float_tensor_free(output);
+        lma_float_tensor_free(output);
         return set_error(error, error_size, "cannot read tensor: %s", name);
     }
-    if (tensor->dtype == COLI_ST_F32)
+    if (tensor->dtype == LMA_ST_F32)
         memcpy(output->data, raw, (size_t)tensor->nbytes);
     else {
         const uint16_t *values = raw;
         for (uint64_t i = 0; i < (uint64_t)tensor->numel; i++)
-            output->data[i] = coli_bf16_decode(values[i]);
+            output->data[i] = lma_bf16_decode(values[i]);
     }
     free(raw);
     output->count = (uint64_t)tensor->numel;
@@ -309,10 +309,10 @@ int coli_tensor_load_f32(ColiFloatTensor *output,
     return 0;
 }
 
-/* ==== begin dual-SSD mirror (port of colibri.c COLI_MODEL_MIRROR) ====
- * COLI_MODEL_MIRROR=<dir>[;<dir>...] registers additional read-only copies of
+/* ==== begin dual-SSD mirror (port of glm52.c LMA_MODEL_MIRROR) ====
+ * LMA_MODEL_MIRROR=<dir>[;<dir>...] registers additional read-only copies of
  * the model on other drives; expert reads split across all copies according to
- * COLI_DISK_WEIGHTS=<primary>,<mirror>[,<mirror2>...] (relative bandwidth;
+ * LMA_DISK_WEIGHTS=<primary>,<mirror>[,<mirror2>...] (relative bandwidth;
  * without the env it is measured at startup with the engine's own access
  * pattern). The V4 engine streams FP4 experts off disk per token, so two NVMe
  * drives reading in parallel roughly halve the cold-decode disk wait. */
@@ -355,17 +355,17 @@ static inline int v4_expert_route(int layer, int eid) {
     return r;
 }
 
-int coli_st_expert_route(int layer, int eid) {
+int lma_st_expert_route(int layer, int eid) {
     return v4_expert_route(layer, eid);
 }
 
-int coli_st_mirror_active(void) { return g_v4_mirror; }
-int coli_st_mirror_nrep(void) { return g_v4_mir_nrep; }
+int lma_st_mirror_active(void) { return g_v4_mirror; }
+int lma_st_mirror_nrep(void) { return g_v4_mir_nrep; }
 
 /* DUAL-SSD: measure one replica's read bandwidth with the engine's own access
  * pattern (parallel ~19 MB reads, O_DIRECT twin when available). Reads the
  * largest shard at deterministic spread-out offsets; ~150 MB per drive. */
-static double v4_mirror_probe_bw(const ColiSafetensorsIndex *index, int rep) {
+static double v4_mirror_probe_bw(const LmaSafetensorsIndex *index, int rep) {
     int big = -1; int64_t bsz = 0;
     for (int i = 0; i < index->nfd; i++) {
         if (rep && index->mfds[rep - 1][i] < 0) continue;
@@ -378,7 +378,7 @@ static double v4_mirror_probe_bw(const ColiSafetensorsIndex *index, int rep) {
     int fd = dfd >= 0 ? dfd : (rep ? index->mfds[rep - 1][big] : index->fds[big]);
     if (dfd < 0)
         fprintf(stderr, "[MIRROR] no O_DIRECT on replica %d: the probe may read the "
-                        "page cache — set COLI_DISK_WEIGHTS for an accurate split\n", rep);
+                        "page cache — set LMA_DISK_WEIGHTS for an accurate split\n", rep);
     double t0 = v4_mirror_now_s(); int64_t tot = 0;
     #pragma omp parallel for schedule(dynamic,1) reduction(+:tot)
     for (int i = 0; i < NB; i++) {
@@ -394,15 +394,15 @@ static double v4_mirror_probe_bw(const ColiSafetensorsIndex *index, int rep) {
     return (dt > 0 && tot > 0) ? tot / 1e9 / dt : 0;
 }
 
-/* Register every mirror copy listed in COLI_MODEL_MIRROR (';' or ',' separated
- * dirs), derive the read split from COLI_DISK_WEIGHTS or a startup bandwidth
+/* Register every mirror copy listed in LMA_MODEL_MIRROR (';' or ',' separated
+ * dirs), derive the read split from LMA_DISK_WEIGHTS or a startup bandwidth
  * probe. Runs after the expert-store index is open and BEFORE any expert load,
  * so the OMP-parallel pin warmup streams from all drives. */
-int coli_st_mirror_setup(ColiSafetensorsIndex *index, const char *model_dir,
+int lma_st_mirror_setup(LmaSafetensorsIndex *index, const char *model_dir,
                          int experts_per_layer) {
     if (!index) return 0;
     if (experts_per_layer > 0) g_v4_mir_epl = experts_per_layer;
-    const char *mirror_dir = getenv("COLI_MODEL_MIRROR");
+    const char *mirror_dir = getenv("LMA_MODEL_MIRROR");
     if (!mirror_dir || !*mirror_dir) mirror_dir = getenv("SNAP_MIRROR");
     if (!mirror_dir || !*mirror_dir) return 0;
     st_mirror_reset(index);
@@ -438,7 +438,7 @@ int coli_st_mirror_setup(ColiSafetensorsIndex *index, const char *model_dir,
     }
     g_v4_mirror = 1; g_v4_mir_nrep = nrep;
     double wt[V4_MIR_REPS]; int have = 0;
-    const char *w = getenv("COLI_DISK_WEIGHTS"); const char *how = "COLI_DISK_WEIGHTS";
+    const char *w = getenv("LMA_DISK_WEIGHTS"); const char *how = "LMA_DISK_WEIGHTS";
     if (w && *w) {
         char wb[256]; snprintf(wb, sizeof(wb), "%s", w); int wn = 0, bad = 0;
         for (char *tok = strtok(wb, ", "); tok; tok = strtok(NULL, ", ")) {
@@ -447,7 +447,7 @@ int coli_st_mirror_setup(ColiSafetensorsIndex *index, const char *model_dir,
             wt[wn++] = v;
         }
         if (!bad && wn == nrep) have = 1;
-        else fprintf(stderr, "[MIRROR] invalid COLI_DISK_WEIGHTS '%s' (want %d positive "
+        else fprintf(stderr, "[MIRROR] invalid LMA_DISK_WEIGHTS '%s' (want %d positive "
                             "comma-separated weights, e.g. 9,3) — probing instead\n", w, nrep);
     }
     if (!have) {
@@ -478,14 +478,14 @@ int coli_st_mirror_setup(ColiSafetensorsIndex *index, const char *model_dir,
 }
 
 /* Buffered fd of the replica, falling back to the primary if not mirrored. */
-static inline int v4_rep_fd(const ColiSafetensorsIndex *index, int fd, int rep) {
+static inline int v4_rep_fd(const LmaSafetensorsIndex *index, int fd, int rep) {
     int r = st_fd_rep((shards *)index, fd, rep);
     return r < 0 ? fd : r;
 }
 
 /* pread on the chosen replica with fallback to the primary on error/short-read.
  * Accounts bytes per drive. Returns 0 = ok, -1 = real error/EOF. */
-static int v4_pread_rep(const ColiSafetensorsIndex *index, int fd, int rep,
+static int v4_pread_rep(const LmaSafetensorsIndex *index, int fd, int rep,
                         void *buf, size_t n, uint64_t off) {
     int rfd = st_fd_rep((shards *)index, fd, rep);
     int used = (rep && rfd >= 0) ? rep : 0;
@@ -506,7 +506,7 @@ static int v4_pread_rep(const ColiSafetensorsIndex *index, int fd, int rep,
     return 0;
 }
 
-int coli_st_read_at_rep(const ColiSafetensorsIndex *index, int shard, int rep,
+int lma_st_read_at_rep(const LmaSafetensorsIndex *index, int shard, int rep,
                         uint64_t offset, size_t length, void *destination) {
     if (!index || !destination || shard < 0 || shard >= index->nfd ||
         index->sizes[shard] < 0 || offset > (uint64_t)index->sizes[shard] ||
@@ -515,7 +515,7 @@ int coli_st_read_at_rep(const ColiSafetensorsIndex *index, int shard, int rep,
     return v4_pread_rep(index, index->fds[shard], rep, destination, length, offset);
 }
 
-int coli_st_read_at_streaming_rep(const ColiSafetensorsIndex *index, int shard,
+int lma_st_read_at_streaming_rep(const LmaSafetensorsIndex *index, int shard,
                                   int rep, uint64_t offset, size_t length,
                                   void *destination) {
     if (!index || !destination || shard < 0 || shard >= index->nfd ||
@@ -523,8 +523,8 @@ int coli_st_read_at_streaming_rep(const ColiSafetensorsIndex *index, int shard,
         length > (uint64_t)index->sizes[shard] - offset)
         return -1;
     if (!length) return 0;
-    if (!coli_st_streaming_direct_available_rep(index, shard, rep))
-        return coli_st_read_at_rep(index, shard, rep, offset, length, destination);
+    if (!lma_st_streaming_direct_available_rep(index, shard, rep))
+        return lma_st_read_at_rep(index, shard, rep, offset, length, destination);
 
     const uint64_t alignment = 4096;
     uint64_t base = offset & ~(alignment - 1);
@@ -536,7 +536,7 @@ int coli_st_read_at_streaming_rep(const ColiSafetensorsIndex *index, int shard,
     size_t allocation_bytes = (size_t)((needed + alignment - 1) & ~(alignment - 1));
     unsigned char *bounce = NULL;
     if (posix_memalign((void **)&bounce, (size_t)alignment, allocation_bytes) != 0)
-        return coli_st_read_at_rep(index, shard, rep, offset, length, destination);
+        return lma_st_read_at_rep(index, shard, rep, offset, length, destination);
 
     int rfd = st_fd_rep((shards *)index, index->fds[shard], rep);
     int used = (rep && rfd >= 0) ? rep : 0;
@@ -558,7 +558,7 @@ int coli_st_read_at_streaming_rep(const ColiSafetensorsIndex *index, int shard,
     }
     if (failed) {
         compat_aligned_free(bounce);
-        return coli_st_read_at_rep(index, shard, rep, offset, length, destination);
+        return lma_st_read_at_rep(index, shard, rep, offset, length, destination);
     }
     while ((uint64_t)done < needed) {
         ssize_t count = pread(rfd, bounce + done, (size_t)(needed - done),
@@ -574,7 +574,7 @@ int coli_st_read_at_streaming_rep(const ColiSafetensorsIndex *index, int shard,
     return 0;
 }
 
-int coli_st_prefetch_at_rep(const ColiSafetensorsIndex *index, int shard,
+int lma_st_prefetch_at_rep(const LmaSafetensorsIndex *index, int shard,
                             int rep, uint64_t offset, size_t length) {
     if (!index || shard < 0 || shard >= index->nfd ||
         index->sizes[shard] < 0 || offset > (uint64_t)index->sizes[shard] ||
@@ -585,13 +585,13 @@ int coli_st_prefetch_at_rep(const ColiSafetensorsIndex *index, int shard,
 }
 /* ==== end dual-SSD mirror ==== */
 
-#endif /* COLI_V4_UNIT_ST */
+#endif /* LMA_V4_UNIT_ST */
 
 
-#ifdef COLI_V4_UNIT_LAYER_RESIDENT
+#ifdef LMA_V4_UNIT_LAYER_RESIDENT
 /* ######## deepseek_v4_layer_resident.c ######## */
-#define coli_v4_layer_load coli_v4_layer_resident_reference_load
-#define coli_v4_layer_free coli_v4_layer_resident_reference_free
+#define lma_v4_layer_load lma_v4_layer_resident_reference_load
+#define lma_v4_layer_free lma_v4_layer_resident_reference_free
 /* ---- begin include deepseek_v4_layer.c ---- */
 #include "deepseek_v4_internal.h"
 #ifdef __AVX2__
@@ -613,12 +613,12 @@ static int set_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
-static int add_spec(ColiDeepSeekV4LayerPlan *plan, ColiSafetensorsDType dtype,
+static int add_spec(LmaDeepSeekV4LayerPlan *plan, LmaSafetensorsDType dtype,
                     int rank, const int64_t *shape, const char *suffix,
                     char *error, size_t error_size) {
-    if (plan->tensor_count >= COLI_V4_MAX_LAYER_TENSORS)
+    if (plan->tensor_count >= LMA_V4_MAX_LAYER_TENSORS)
         return set_error(error, error_size, "too many tensors in layer %d", plan->layer);
-    ColiDeepSeekV4TensorSpec *spec = &plan->tensors[plan->tensor_count++];
+    LmaDeepSeekV4TensorSpec *spec = &plan->tensors[plan->tensor_count++];
     int written = snprintf(spec->name, sizeof(spec->name), "layers.%d.%s",
                            plan->layer, suffix);
     if (written < 0 || (size_t)written >= sizeof(spec->name))
@@ -629,33 +629,33 @@ static int add_spec(ColiDeepSeekV4LayerPlan *plan, ColiSafetensorsDType dtype,
     return 0;
 }
 
-static int add_1d(ColiDeepSeekV4LayerPlan *plan, ColiSafetensorsDType dtype,
+static int add_1d(LmaDeepSeekV4LayerPlan *plan, LmaSafetensorsDType dtype,
                   int64_t d0, const char *name, char *error, size_t size) {
     int64_t shape[] = {d0};
     return add_spec(plan, dtype, 1, shape, name, error, size);
 }
 
-static int add_2d(ColiDeepSeekV4LayerPlan *plan, ColiSafetensorsDType dtype,
+static int add_2d(LmaDeepSeekV4LayerPlan *plan, LmaSafetensorsDType dtype,
                   int64_t d0, int64_t d1, const char *name,
                   char *error, size_t size) {
     int64_t shape[] = {d0, d1};
     return add_spec(plan, dtype, 2, shape, name, error, size);
 }
 
-static int add_fp8(ColiDeepSeekV4LayerPlan *plan, int64_t rows, int64_t columns,
+static int add_fp8(LmaDeepSeekV4LayerPlan *plan, int64_t rows, int64_t columns,
                    const char *prefix, char *error, size_t size) {
     char name[128];
     snprintf(name, sizeof(name), "%s.weight", prefix);
-    if (add_2d(plan, COLI_ST_F8_E4M3, rows, columns, name, error, size) != 0) return -1;
+    if (add_2d(plan, LMA_ST_F8_E4M3, rows, columns, name, error, size) != 0) return -1;
     snprintf(name, sizeof(name), "%s.scale", prefix);
-    return add_2d(plan, COLI_ST_F8_E8M0, (rows + 127) / 128,
+    return add_2d(plan, LMA_ST_F8_E8M0, (rows + 127) / 128,
                   (columns + 127) / 128, name, error, size);
 }
 
 #define ADD(call) do { if ((call) != 0) return -1; } while (0)
 
-int coli_v4_layer_plan(ColiDeepSeekV4LayerPlan *plan,
-                       const ColiDeepSeekV4Config *config, int layer,
+int lma_v4_layer_plan(LmaDeepSeekV4LayerPlan *plan,
+                       const LmaDeepSeekV4Config *config, int layer,
                        char *error, size_t error_size) {
     if (!plan || !config || layer < 0 || layer >= config->num_hidden_layers ||
         layer >= config->compress_ratio_count)
@@ -681,77 +681,77 @@ int coli_v4_layer_plan(ColiDeepSeekV4LayerPlan *plan,
     const int64_t hc = config->hc_mult;
     const int64_t hc_params = (2 + hc) * hc;
 
-    ADD(add_1d(plan, COLI_ST_F32, heads, "attn.attn_sink", error, error_size));
-    ADD(add_1d(plan, COLI_ST_BF16, head_dim, "attn.kv_norm.weight", error, error_size));
-    ADD(add_1d(plan, COLI_ST_BF16, q_rank, "attn.q_norm.weight", error, error_size));
+    ADD(add_1d(plan, LMA_ST_F32, heads, "attn.attn_sink", error, error_size));
+    ADD(add_1d(plan, LMA_ST_BF16, head_dim, "attn.kv_norm.weight", error, error_size));
+    ADD(add_1d(plan, LMA_ST_BF16, q_rank, "attn.q_norm.weight", error, error_size));
     ADD(add_fp8(plan, head_dim, hidden, "attn.wkv", error, error_size));
     ADD(add_fp8(plan, o_width, o_group_width, "attn.wo_a", error, error_size));
     ADD(add_fp8(plan, hidden, o_width, "attn.wo_b", error, error_size));
     ADD(add_fp8(plan, q_rank, hidden, "attn.wq_a", error, error_size));
     ADD(add_fp8(plan, heads * head_dim, q_rank, "attn.wq_b", error, error_size));
-    ADD(add_1d(plan, COLI_ST_BF16, hidden, "attn_norm.weight", error, error_size));
+    ADD(add_1d(plan, LMA_ST_BF16, hidden, "attn_norm.weight", error, error_size));
 
     if (plan->has_compressor) {
         int64_t ratio = plan->compression_ratio;
         int64_t coff = ratio == 4 ? 2 : 1;
-        ADD(add_2d(plan, COLI_ST_F32, ratio, coff * head_dim,
+        ADD(add_2d(plan, LMA_ST_F32, ratio, coff * head_dim,
                    "attn.compressor.ape", error, error_size));
-        ADD(add_1d(plan, COLI_ST_BF16, head_dim,
+        ADD(add_1d(plan, LMA_ST_BF16, head_dim,
                    "attn.compressor.norm.weight", error, error_size));
-        ADD(add_2d(plan, COLI_ST_BF16, coff * head_dim, hidden,
+        ADD(add_2d(plan, LMA_ST_BF16, coff * head_dim, hidden,
                    "attn.compressor.wgate.weight", error, error_size));
-        ADD(add_2d(plan, COLI_ST_BF16, coff * head_dim, hidden,
+        ADD(add_2d(plan, LMA_ST_BF16, coff * head_dim, hidden,
                    "attn.compressor.wkv.weight", error, error_size));
     }
     if (plan->has_indexer) {
         int64_t ih = config->index_head_dim;
         int64_t in = config->index_n_heads;
-        ADD(add_2d(plan, COLI_ST_F32, 4, 2 * ih,
+        ADD(add_2d(plan, LMA_ST_F32, 4, 2 * ih,
                    "attn.indexer.compressor.ape", error, error_size));
-        ADD(add_1d(plan, COLI_ST_BF16, ih,
+        ADD(add_1d(plan, LMA_ST_BF16, ih,
                    "attn.indexer.compressor.norm.weight", error, error_size));
-        ADD(add_2d(plan, COLI_ST_BF16, 2 * ih, hidden,
+        ADD(add_2d(plan, LMA_ST_BF16, 2 * ih, hidden,
                    "attn.indexer.compressor.wgate.weight", error, error_size));
-        ADD(add_2d(plan, COLI_ST_BF16, 2 * ih, hidden,
+        ADD(add_2d(plan, LMA_ST_BF16, 2 * ih, hidden,
                    "attn.indexer.compressor.wkv.weight", error, error_size));
-        ADD(add_2d(plan, COLI_ST_BF16, in, hidden,
+        ADD(add_2d(plan, LMA_ST_BF16, in, hidden,
                    "attn.indexer.weights_proj.weight", error, error_size));
         ADD(add_fp8(plan, in * ih, q_rank, "attn.indexer.wq_b", error, error_size));
     }
 
-    ADD(add_2d(plan, COLI_ST_BF16, experts, hidden,
+    ADD(add_2d(plan, LMA_ST_BF16, experts, hidden,
                "ffn.gate.weight", error, error_size));
     if (plan->uses_hash_router)
-        ADD(add_2d(plan, COLI_ST_I64, config->vocab_size,
+        ADD(add_2d(plan, LMA_ST_I64, config->vocab_size,
                    config->num_experts_per_tok, "ffn.gate.tid2eid", error, error_size));
     else
-        ADD(add_1d(plan, COLI_ST_F32, experts, "ffn.gate.bias", error, error_size));
+        ADD(add_1d(plan, LMA_ST_F32, experts, "ffn.gate.bias", error, error_size));
     ADD(add_fp8(plan, moe, hidden, "ffn.shared_experts.w1", error, error_size));
     ADD(add_fp8(plan, hidden, moe, "ffn.shared_experts.w2", error, error_size));
     ADD(add_fp8(plan, moe, hidden, "ffn.shared_experts.w3", error, error_size));
-    ADD(add_1d(plan, COLI_ST_BF16, hidden, "ffn_norm.weight", error, error_size));
+    ADD(add_1d(plan, LMA_ST_BF16, hidden, "ffn_norm.weight", error, error_size));
 
-    ADD(add_1d(plan, COLI_ST_F32, hc_params, "hc_attn_base", error, error_size));
-    ADD(add_2d(plan, COLI_ST_F32, hc_params, hc * hidden,
+    ADD(add_1d(plan, LMA_ST_F32, hc_params, "hc_attn_base", error, error_size));
+    ADD(add_2d(plan, LMA_ST_F32, hc_params, hc * hidden,
                "hc_attn_fn", error, error_size));
-    ADD(add_1d(plan, COLI_ST_F32, 3, "hc_attn_scale", error, error_size));
-    ADD(add_1d(plan, COLI_ST_F32, hc_params, "hc_ffn_base", error, error_size));
-    ADD(add_2d(plan, COLI_ST_F32, hc_params, hc * hidden,
+    ADD(add_1d(plan, LMA_ST_F32, 3, "hc_attn_scale", error, error_size));
+    ADD(add_1d(plan, LMA_ST_F32, hc_params, "hc_ffn_base", error, error_size));
+    ADD(add_2d(plan, LMA_ST_F32, hc_params, hc * hidden,
                "hc_ffn_fn", error, error_size));
-    ADD(add_1d(plan, COLI_ST_F32, 3, "hc_ffn_scale", error, error_size));
+    ADD(add_1d(plan, LMA_ST_F32, 3, "hc_ffn_scale", error, error_size));
     return 0;
 }
 
-int coli_v4_layer_validate(const ColiDeepSeekV4LayerPlan *plan,
-                           const ColiSafetensorsIndex *index,
-                           ColiDeepSeekV4LayerStats *stats,
+int lma_v4_layer_validate(const LmaDeepSeekV4LayerPlan *plan,
+                           const LmaSafetensorsIndex *index,
+                           LmaDeepSeekV4LayerStats *stats,
                            char *error, size_t error_size) {
     if (!plan || !index)
         return set_error(error, error_size, "invalid DeepSeek-V4 layer validation arguments");
-    ColiDeepSeekV4LayerStats local = {0};
+    LmaDeepSeekV4LayerStats local = {0};
     for (size_t i = 0; i < plan->tensor_count; i++) {
-        const ColiDeepSeekV4TensorSpec *spec = &plan->tensors[i];
-        const ColiSafetensorsTensor *tensor = coli_st_find(index, spec->name);
+        const LmaDeepSeekV4TensorSpec *spec = &plan->tensors[i];
+        const LmaSafetensorsTensor *tensor = lma_st_find(index, spec->name);
         if (!tensor)
             return set_error(error, error_size, "missing tensor: %s", spec->name);
         if (tensor->dtype != spec->dtype || tensor->rank != spec->rank)
@@ -760,15 +760,15 @@ int coli_v4_layer_validate(const ColiDeepSeekV4LayerPlan *plan,
             if (tensor->shape[dimension] != spec->shape[dimension])
                 return set_error(error, error_size, "shape mismatch: %s", spec->name);
         local.tensor_count++;
-        uint64_t resident_bytes = tensor->dtype == COLI_ST_F8_E8M0
+        uint64_t resident_bytes = tensor->dtype == LMA_ST_F8_E8M0
             ? (uint64_t)tensor->numel * sizeof(float) : (uint64_t)tensor->nbytes;
         local.total_bytes += resident_bytes;
         switch (tensor->dtype) {
-            case COLI_ST_BF16: local.bf16_bytes += tensor->nbytes; break;
-            case COLI_ST_F32: local.f32_bytes += tensor->nbytes; break;
-            case COLI_ST_F8_E4M3: local.fp8_weight_bytes += tensor->nbytes; break;
-            case COLI_ST_F8_E8M0: local.fp8_scale_bytes += resident_bytes; break;
-            case COLI_ST_I64: local.i64_bytes += tensor->nbytes; break;
+            case LMA_ST_BF16: local.bf16_bytes += tensor->nbytes; break;
+            case LMA_ST_F32: local.f32_bytes += tensor->nbytes; break;
+            case LMA_ST_F8_E4M3: local.fp8_weight_bytes += tensor->nbytes; break;
+            case LMA_ST_F8_E8M0: local.fp8_scale_bytes += resident_bytes; break;
+            case LMA_ST_I64: local.i64_bytes += tensor->nbytes; break;
             default: break;
         }
     }
@@ -776,8 +776,8 @@ int coli_v4_layer_validate(const ColiDeepSeekV4LayerPlan *plan,
     return 0;
 }
 
-void coli_v4_layer_free(ColiV4Engine *engine,
-                        ColiDeepSeekV4LayerWeights *weights) {
+void lma_v4_layer_free(LmaV4Engine *engine,
+                        LmaDeepSeekV4LayerWeights *weights) {
     (void)engine;
     if (!weights) return;
     for (size_t i = 0; i < weights->plan.tensor_count; i++) free(weights->data[i]);
@@ -841,41 +841,41 @@ static int v4_fp8_pack_rows8_inplace(unsigned char *data,
 #endif
 }
 
-int coli_v4_layer_load(ColiV4Engine *engine,
-                       ColiDeepSeekV4LayerWeights *weights,
-                       const ColiDeepSeekV4Config *config,
-                       const ColiSafetensorsIndex *index, int layer,
+int lma_v4_layer_load(LmaV4Engine *engine,
+                       LmaDeepSeekV4LayerWeights *weights,
+                       const LmaDeepSeekV4Config *config,
+                       const LmaSafetensorsIndex *index, int layer,
                        char *error, size_t error_size) {
     (void)engine;
     if (!weights) return set_error(error, error_size, "missing layer weights output");
     memset(weights, 0, sizeof(*weights));
-    if (coli_v4_layer_plan(&weights->plan, config, layer, error, error_size) != 0 ||
-        coli_v4_layer_validate(&weights->plan, index, &weights->stats,
+    if (lma_v4_layer_plan(&weights->plan, config, layer, error, error_size) != 0 ||
+        lma_v4_layer_validate(&weights->plan, index, &weights->stats,
                                error, error_size) != 0)
         return -1;
     for (size_t i = 0; i < weights->plan.tensor_count; i++) {
-        const ColiDeepSeekV4TensorSpec *spec = &weights->plan.tensors[i];
-        const ColiSafetensorsTensor *tensor = coli_st_find(index, spec->name);
-        size_t resident_bytes = tensor->dtype == COLI_ST_F8_E8M0
+        const LmaDeepSeekV4TensorSpec *spec = &weights->plan.tensors[i];
+        const LmaSafetensorsTensor *tensor = lma_st_find(index, spec->name);
+        size_t resident_bytes = tensor->dtype == LMA_ST_F8_E8M0
             ? (size_t)tensor->numel * sizeof(float) : (size_t)tensor->nbytes;
         weights->data[i] = malloc(resident_bytes);
         if (!weights->data[i]) {
-            coli_v4_layer_free(NULL, weights);
+            lma_v4_layer_free(NULL, weights);
             return set_error(error, error_size, "out of memory loading: %s", spec->name);
         }
-        int read_failed = tensor->dtype == COLI_ST_F8_E8M0
-            ? st_read_scale_f32((ColiSafetensorsIndex *)index, spec->name,
+        int read_failed = tensor->dtype == LMA_ST_F8_E8M0
+            ? st_read_scale_f32((LmaSafetensorsIndex *)index, spec->name,
                                 weights->data[i], tensor->numel, 0) != tensor->numel
-            : coli_st_read_tensor(index, tensor, weights->data[i]) != 0;
+            : lma_st_read_tensor(index, tensor, weights->data[i]) != 0;
         if (read_failed) {
-            coli_v4_layer_free(NULL, weights);
+            lma_v4_layer_free(NULL, weights);
             return set_error(error, error_size, "cannot read tensor: %s", spec->name);
         }
-        if (spec->dtype == COLI_ST_F8_E4M3 && spec->rank == 2) {
+        if (spec->dtype == LMA_ST_F8_E4M3 && spec->rank == 2) {
             int packed = v4_fp8_pack_rows8_inplace(
                 weights->data[i], spec->shape[0], spec->shape[1]);
             if (packed < 0) {
-                coli_v4_layer_free(NULL, weights);
+                lma_v4_layer_free(NULL, weights);
                 return set_error(error, error_size,
                                  "out of memory packing FP8 rows8: %s",
                                  spec->name);
@@ -886,9 +886,9 @@ int coli_v4_layer_load(ColiV4Engine *engine,
     return 0;
 }
 
-const void *coli_v4_layer_data(const ColiDeepSeekV4LayerWeights *weights,
+const void *lma_v4_layer_data(const LmaDeepSeekV4LayerWeights *weights,
                                const char *name,
-                               const ColiDeepSeekV4TensorSpec **spec) {
+                               const LmaDeepSeekV4TensorSpec **spec) {
     if (spec) *spec = NULL;
     if (!weights || !name) return NULL;
     for (size_t i = 0; i < weights->plan.tensor_count; i++) {
@@ -900,10 +900,10 @@ const void *coli_v4_layer_data(const ColiDeepSeekV4LayerWeights *weights,
     return NULL;
 }
 
-void *coli_v4_layer_gpu(const ColiDeepSeekV4LayerWeights *weights,
+void *lma_v4_layer_gpu(const LmaDeepSeekV4LayerWeights *weights,
                         const char *suffix) {
     if (!weights || !suffix) return NULL;
-    char name[COLI_V4_MAX_TENSOR_NAME];
+    char name[LMA_V4_MAX_TENSOR_NAME];
     /* Most resident tensors are "<suffix>.weight"; the ffn.gate.bias mirror is
      * attached to the bare "<suffix>" name, so fall back to the exact tensor. */
     snprintf(name, sizeof(name), "layers.%d.%s.weight", weights->plan.layer,
@@ -918,10 +918,10 @@ void *coli_v4_layer_gpu(const ColiDeepSeekV4LayerWeights *weights,
     return NULL;
 }
 
-int coli_v4_layer_gpu_set(ColiDeepSeekV4LayerWeights *weights,
+int lma_v4_layer_gpu_set(LmaDeepSeekV4LayerWeights *weights,
                           const char *suffix, void *handle) {
     if (!weights || !suffix) return -1;
-    char name[COLI_V4_MAX_TENSOR_NAME];
+    char name[LMA_V4_MAX_TENSOR_NAME];
     snprintf(name, sizeof(name), "layers.%d.%s.weight", weights->plan.layer,
              suffix);
     for (size_t i = 0; i < weights->plan.tensor_count; i++) {
@@ -941,29 +941,29 @@ int coli_v4_layer_gpu_set(ColiDeepSeekV4LayerWeights *weights,
 }
 /* ---- end include deepseek_v4_layer.c ---- */
 
-#undef coli_v4_layer_free
-#undef coli_v4_layer_load
+#undef lma_v4_layer_free
+#undef lma_v4_layer_load
 
 #include "deepseek_v4_internal.h"
 
-enum { COLI_V4_RESIDENT_MAX_LAYERS_V2 = COLI_V4_RESIDENT_MAX_LAYERS };
+enum { LMA_V4_RESIDENT_MAX_LAYERS_V2 = LMA_V4_RESIDENT_MAX_LAYERS };
 
-static int resident_enabled_v2(ColiV4Engine *engine) {
+static int resident_enabled_v2(LmaV4Engine *engine) {
     return engine && engine->runtime.dense_resident;
 }
 
-int coli_v4_layer_load(ColiV4Engine *engine,
-                       ColiDeepSeekV4LayerWeights *weights,
-                       const ColiDeepSeekV4Config *config,
-                       const ColiSafetensorsIndex *index, int layer,
+int lma_v4_layer_load(LmaV4Engine *engine,
+                       LmaDeepSeekV4LayerWeights *weights,
+                       const LmaDeepSeekV4Config *config,
+                       const LmaSafetensorsIndex *index, int layer,
                        char *error, size_t error_size) {
-    const ColiDeepSeekV4Config *effective_config =
+    const LmaDeepSeekV4Config *effective_config =
         engine ? &engine->config : config;
     if (!weights || !effective_config || !index || layer < 0 ||
         layer >= effective_config->num_hidden_layers ||
-        layer >= COLI_V4_RESIDENT_MAX_LAYERS_V2) return -1;
+        layer >= LMA_V4_RESIDENT_MAX_LAYERS_V2) return -1;
     if (!resident_enabled_v2(engine))
-        return coli_v4_layer_resident_reference_load(
+        return lma_v4_layer_resident_reference_load(
             NULL, weights, effective_config, index, layer, error, error_size);
     if (engine->dense_resident.index && engine->dense_resident.index != index) {
         if (error && error_size)
@@ -973,11 +973,11 @@ int coli_v4_layer_load(ColiV4Engine *engine,
     }
     engine->dense_resident.index = index;
     if (!engine->dense_resident.ready[layer]) {
-        if (coli_v4_layer_resident_reference_load(
+        if (lma_v4_layer_resident_reference_load(
                 NULL, &engine->dense_resident.layers[layer], effective_config, index,
                 layer, error, error_size)) return -1;
-#ifdef COLI_V4_GPU_TIER
-        if (coli_v4_gpu_layer_upload(engine, layer,
+#ifdef LMA_V4_GPU_TIER
+        if (lma_v4_gpu_layer_upload(engine, layer,
                                      &engine->dense_resident.layers[layer]) < 0)
             fprintf(stderr, "v4_gpu warning=layer-%d-upload-failed; "
                             "continuing-CPU\n", layer);
@@ -993,22 +993,22 @@ int coli_v4_layer_load(ColiV4Engine *engine,
     *weights = engine->dense_resident.layers[layer]; return 0;
 }
 
-void coli_v4_layer_free(ColiV4Engine *engine,
-                        ColiDeepSeekV4LayerWeights *weights) {
+void lma_v4_layer_free(LmaV4Engine *engine,
+                        LmaDeepSeekV4LayerWeights *weights) {
     if (!weights) return;
     int layer = weights->plan.layer;
-    if (engine && layer >= 0 && layer < COLI_V4_RESIDENT_MAX_LAYERS_V2 &&
+    if (engine && layer >= 0 && layer < LMA_V4_RESIDENT_MAX_LAYERS_V2 &&
         engine->dense_resident.ready[layer] &&
         weights->plan.tensor_count ==
             engine->dense_resident.layers[layer].plan.tensor_count &&
         weights->data[0] == engine->dense_resident.layers[layer].data[0]) {
         memset(weights, 0, sizeof(*weights)); return;
     }
-    coli_v4_layer_resident_reference_free(NULL, weights);
+    lma_v4_layer_resident_reference_free(NULL, weights);
 }
-#endif /* COLI_V4_UNIT_LAYER_RESIDENT */
+#endif /* LMA_V4_UNIT_LAYER_RESIDENT */
 
-#ifdef COLI_V4_UNIT_RESOURCE_PLAN
+#ifdef LMA_V4_UNIT_RESOURCE_PLAN
 /* ######## deepseek_v4_resource_plan.c ######## */
 #include "deepseek_v4_internal.h"
 
@@ -1050,7 +1050,7 @@ static int multiply_u64(uint64_t a, uint64_t b, uint64_t *output) {
 #include <mach/mach.h>
 #endif
 
-uint64_t coli_v4_os_available_memory(void) {
+uint64_t lma_v4_os_available_memory(void) {
 #ifdef _WIN32
     MEMORYSTATUSEX status;
     memset(&status, 0, sizeof(status));
@@ -1104,9 +1104,9 @@ uint64_t coli_v4_os_available_memory(void) {
 #endif
 }
 
-int coli_v4_resource_plan_compute(
-    ColiDeepSeekV4ResourcePlan *plan,
-    const ColiDeepSeekV4ResourceInputs *inputs,
+int lma_v4_resource_plan_compute(
+    LmaDeepSeekV4ResourcePlan *plan,
+    const LmaDeepSeekV4ResourceInputs *inputs,
     char *error, size_t error_size) {
     if (!plan || !inputs || !inputs->available_bytes ||
         !inputs->maximum_layer_bytes || !inputs->expert_record_bytes ||
@@ -1174,9 +1174,9 @@ static int resident_tiers_fit(uint64_t available, uint64_t fixed,
            !add_u64(total, minimum_experts, &total) && total <= available;
 }
 
-int coli_v4_resident_tier_plan(
-    ColiDeepSeekV4ResidentTierPlan *plan,
-    const ColiDeepSeekV4ResidentTierInputs *inputs,
+int lma_v4_resident_tier_plan(
+    LmaDeepSeekV4ResidentTierPlan *plan,
+    const LmaDeepSeekV4ResidentTierInputs *inputs,
     char *error, size_t error_size) {
     if (!plan || !inputs || !inputs->available_bytes ||
         !inputs->dense_bytes || !inputs->minimum_expert_bytes)
@@ -1197,9 +1197,9 @@ int coli_v4_resident_tier_plan(
     }
     return 0;
 }
-#endif /* COLI_V4_UNIT_RESOURCE_PLAN */
+#endif /* LMA_V4_UNIT_RESOURCE_PLAN */
 
-#ifdef COLI_V4_UNIT_HEAD_CACHE
+#ifdef LMA_V4_UNIT_HEAD_CACHE
 /* ######## deepseek_v4_head_cache.c ######## */
 #include "deepseek_v4_internal.h"
 
@@ -1208,11 +1208,11 @@ int coli_v4_resident_tier_plan(
 #include <string.h>
 
 
-static int find_head(const ColiSafetensorsIndex *index,
-                     const ColiSafetensorsTensor **head,
+static int find_head(const LmaSafetensorsIndex *index,
+                     const LmaSafetensorsTensor **head,
                      char *error, size_t error_size) {
-    *head = coli_st_find(index, "head.weight");
-    if (!*head || (*head)->dtype != COLI_ST_BF16 || (*head)->rank != 2) {
+    *head = lma_st_find(index, "head.weight");
+    if (!*head || (*head)->dtype != LMA_ST_BF16 || (*head)->rank != 2) {
         snprintf(error, error_size, "missing or invalid BF16 head.weight");
         return -1;
     }
@@ -1221,27 +1221,27 @@ static int find_head(const ColiSafetensorsIndex *index,
 
 /* The engine's retained index is passed in: this used to open (and scan)
  * every shard header a third time just to read one tensor's byte count. */
-int coli_v4_head_cache_probe(const ColiSafetensorsIndex *index, uint64_t *bytes,
+int lma_v4_head_cache_probe(const LmaSafetensorsIndex *index, uint64_t *bytes,
                              char *error, size_t error_size) {
-    const ColiSafetensorsTensor *head;
+    const LmaSafetensorsTensor *head;
     if (!bytes || !index ||
         find_head(index, &head, error, error_size)) return -1;
     *bytes = head->nbytes;
     return 0;
 }
 
-int coli_v4_head_cache_load(ColiV4Engine *engine,
-                            const ColiSafetensorsIndex *index,
+int lma_v4_head_cache_load(LmaV4Engine *engine,
+                            const LmaSafetensorsIndex *index,
                             char *error, size_t error_size) {
     if (!engine || !index) {
         snprintf(error, error_size, "head cache requires a V4 engine");
         return -1;
     }
-    const ColiSafetensorsTensor *head;
+    const LmaSafetensorsTensor *head;
     if (find_head(index, &head, error, error_size)) return -1;
     unsigned char *data = malloc((size_t)head->nbytes);
-    int shard = coli_st_tensor_shard(index, head);
-    if (!data || coli_st_read_at(index, shard, (uint64_t)head->off,
+    int shard = lma_st_tensor_shard(index, head);
+    if (!data || lma_st_read_at(index, shard, (uint64_t)head->off,
                                  (size_t)head->nbytes, data)) {
         free(data);
         snprintf(error, error_size, "cannot load resident BF16 head.weight");
@@ -1255,11 +1255,11 @@ int coli_v4_head_cache_load(ColiV4Engine *engine,
     return 0;
 }
 
-uint64_t coli_v4_head_cache_bytes(const ColiV4Engine *engine) {
+uint64_t lma_v4_head_cache_bytes(const LmaV4Engine *engine) {
     return engine ? engine->head_cache.bytes : 0;
 }
 
-const void *coli_v4_head_cache_data(const ColiV4Engine *engine,
+const void *lma_v4_head_cache_data(const LmaV4Engine *engine,
                                     int shard, uint64_t offset, size_t length) {
     if (!engine || !engine->head_cache.data || shard != engine->head_cache.shard ||
         offset < engine->head_cache.offset ||
@@ -1270,8 +1270,8 @@ const void *coli_v4_head_cache_data(const ColiV4Engine *engine,
            (size_t)(offset - engine->head_cache.offset);
 }
 
-int coli_st_read_at_engine(ColiV4Engine *engine,
-                           const ColiSafetensorsIndex *index, int shard,
+int lma_st_read_at_engine(LmaV4Engine *engine,
+                           const LmaSafetensorsIndex *index, int shard,
                            uint64_t offset, size_t length, void *destination) {
     if (engine && engine->head_cache.data && destination &&
         shard == engine->head_cache.shard &&
@@ -1285,11 +1285,11 @@ int coli_st_read_at_engine(ColiV4Engine *engine,
                length);
         return 0;
     }
-    return coli_st_read_at(index, shard, offset, length, destination);
+    return lma_st_read_at(index, shard, offset, length, destination);
 }
-#endif /* COLI_V4_UNIT_HEAD_CACHE */
+#endif /* LMA_V4_UNIT_HEAD_CACHE */
 
-#ifdef COLI_V4_UNIT_EXPERT_STORE_AUTO
+#ifdef LMA_V4_UNIT_EXPERT_STORE_AUTO
 /* ######## deepseek_v4_expert_store_auto.c ######## */
 /* ---- begin inlined deepseek_v4_expert_store_auto_v5.c ---- */
 #include "deepseek_v4_internal.h"
@@ -1309,7 +1309,7 @@ static double v4_open_now_s(void) {
 #define MIB UINT64_C(1048576)
 #define GIB UINT64_C(1073741824)
 
-static uint64_t expert_record_bytes(const ColiSafetensorsIndex *index) {
+static uint64_t expert_record_bytes(const LmaSafetensorsIndex *index) {
     static const char *parts[] = {
         "layers.0.ffn.experts.0.w1.weight", "layers.0.ffn.experts.0.w1.scale",
         "layers.0.ffn.experts.0.w2.weight", "layers.0.ffn.experts.0.w2.scale",
@@ -1317,7 +1317,7 @@ static uint64_t expert_record_bytes(const ColiSafetensorsIndex *index) {
     };
     uint64_t total = 0;
     for (size_t i = 0; i < sizeof(parts) / sizeof(parts[0]); i++) {
-        const ColiSafetensorsTensor *tensor = coli_st_find(index, parts[i]);
+        const LmaSafetensorsTensor *tensor = lma_st_find(index, parts[i]);
         if (!tensor || tensor->nbytes < 0) return 0;
         uint64_t bytes = (uint64_t)tensor->nbytes;
         if (UINT64_MAX - total < bytes) return 0;
@@ -1326,7 +1326,7 @@ static uint64_t expert_record_bytes(const ColiSafetensorsIndex *index) {
     return total;
 }
 
-static uint64_t context_bytes(const ColiDeepSeekV4Config *config, int context) {
+static uint64_t context_bytes(const LmaDeepSeekV4Config *config, int context) {
     uint64_t total = (uint64_t)config->num_hidden_layers *
         config->sliding_window * config->head_dim * sizeof(float);
     for (int layer = 0; layer < config->num_hidden_layers; layer++) {
@@ -1341,9 +1341,9 @@ static uint64_t context_bytes(const ColiDeepSeekV4Config *config, int context) {
     return total;
 }
 
-static int build_runtime_plan(ColiV4Engine *engine,
-                              const ColiDeepSeekV4ExpertStoreOptions *options,
-                              ColiDeepSeekV4ResourcePlan *plan,
+static int build_runtime_plan(LmaV4Engine *engine,
+                              const LmaDeepSeekV4ExpertStoreOptions *options,
+                              LmaDeepSeekV4ResourcePlan *plan,
                               uint64_t *dense_bytes_out,
                               char *error, size_t error_size) {
     if (!engine) {
@@ -1357,8 +1357,8 @@ static int build_runtime_plan(ColiV4Engine *engine,
      * open, ~100k tensor names hashed each time, for numbers the retained
      * index answers directly. One layer walk now yields the per-layer
      * maximum AND the dense total together. */
-    const ColiDeepSeekV4Config *config = &engine->config;
-    const ColiSafetensorsIndex *index = engine->target_index;
+    const LmaDeepSeekV4Config *config = &engine->config;
+    const LmaSafetensorsIndex *index = engine->target_index;
     if (!index || strcmp(options->model_dir,
                          engine->runtime.target_model_dir) != 0) {
         snprintf(error, error_size,
@@ -1367,11 +1367,11 @@ static int build_runtime_plan(ColiV4Engine *engine,
     }
     uint64_t maximum_layer = 0, dense_total = 0;
     for (int layer = 0; layer < config->num_hidden_layers; layer++) {
-        ColiDeepSeekV4LayerPlan layer_plan;
-        ColiDeepSeekV4LayerStats stats = {0};
-        if (coli_v4_layer_plan(&layer_plan, config, layer,
+        LmaDeepSeekV4LayerPlan layer_plan;
+        LmaDeepSeekV4LayerStats stats = {0};
+        if (lma_v4_layer_plan(&layer_plan, config, layer,
                                error, error_size) ||
-            coli_v4_layer_validate(&layer_plan, index, &stats,
+            lma_v4_layer_validate(&layer_plan, index, &stats,
                                    error, error_size))
             return -1;
         if (stats.total_bytes > maximum_layer) maximum_layer = stats.total_bytes;
@@ -1383,7 +1383,7 @@ static int build_runtime_plan(ColiV4Engine *engine,
         snprintf(error, error_size, "cannot determine V4 expert record size");
         return -1;
     }
-    ColiDeepSeekV4RuntimeOptions *runtime = &engine->runtime;
+    LmaDeepSeekV4RuntimeOptions *runtime = &engine->runtime;
     int context = runtime->context_tokens;
     if (context > config->max_position_embeddings)
         context = config->max_position_embeddings;
@@ -1396,29 +1396,29 @@ static int build_runtime_plan(ColiV4Engine *engine,
         return -1;
     }
     runtime_other += runtime->dspark_reserve_bytes;
-    uint64_t available = coli_v4_os_available_memory();
+    uint64_t available = lma_v4_os_available_memory();
     if (!available) {
         snprintf(error, error_size, "cannot determine OS available memory");
         return -1;
     }
-    ColiDeepSeekV4ResourceInputs inputs = {
+    LmaDeepSeekV4ResourceInputs inputs = {
         available, runtime->memory_limit_bytes, maximum_layer,
         runtime_other, record, config->num_hidden_layers,
         config->num_experts_per_tok, config->n_routed_experts,
     };
-    return coli_v4_resource_plan_compute(plan, &inputs, error, error_size);
+    return lma_v4_resource_plan_compute(plan, &inputs, error, error_size);
 }
 
 
-int coli_v4_expert_store_open_planned(
-    ColiV4Engine *engine,
-    const ColiDeepSeekV4Config *config,
-    const ColiDeepSeekV4ExpertStoreOptions *options, ColiExpertStore **output,
+int lma_v4_expert_store_open_planned(
+    LmaV4Engine *engine,
+    const LmaDeepSeekV4Config *config,
+    const LmaDeepSeekV4ExpertStoreOptions *options, LmaExpertStore **output,
     char *error, size_t error_size) {
     (void)config; /* auto uses engine->runtime + engine->config; requires engine */
     if (!options || !engine) return -1;
-    ColiDeepSeekV4ResourcePlan plan;
-    ColiDeepSeekV4RuntimeOptions *runtime = &engine->runtime;
+    LmaDeepSeekV4ResourcePlan plan;
+    LmaDeepSeekV4RuntimeOptions *runtime = &engine->runtime;
     double open_plan_t0 = v4_open_now_s();
     uint64_t dense_bytes = 0;
     if (build_runtime_plan(engine, options, &plan, &dense_bytes,
@@ -1426,17 +1426,17 @@ int coli_v4_expert_store_open_planned(
     uint64_t per_slot = plan.expert_cache_bytes /
                         (uint64_t)plan.slots_per_layer;
     uint64_t head_bytes = 0;
-    if (coli_v4_head_cache_probe(engine->target_index, &head_bytes,
+    if (lma_v4_head_cache_probe(engine->target_index, &head_bytes,
                                  error, error_size)) return -1;
     double open_plan_s = v4_open_now_s() - open_plan_t0;
 
     uint64_t fixed = plan.system_reserve_bytes + plan.runtime_reserve_bytes;
-    ColiDeepSeekV4ResidentTierPlan tiers;
-    ColiDeepSeekV4ResidentTierInputs tier_inputs = {
+    LmaDeepSeekV4ResidentTierPlan tiers;
+    LmaDeepSeekV4ResidentTierInputs tier_inputs = {
         plan.planner_available_bytes, fixed, dense_bytes,
         plan.minimum_expert_bytes,
     };
-    if (coli_v4_resident_tier_plan(&tiers, &tier_inputs,
+    if (lma_v4_resident_tier_plan(&tiers, &tier_inputs,
                                    error, error_size)) return -1;
     dense_bytes = tiers.dense_bytes;
     runtime->dense_resident = tiers.dense_resident;
@@ -1467,7 +1467,7 @@ int coli_v4_expert_store_open_planned(
     runtime->target_expert_cache_bytes = plan.expert_cache_bytes;
     plan.projected_bytes = fixed + dense_bytes +
         plan.expert_cache_bytes + (resident_head ? head_bytes : 0);
-    if (resident_head && coli_v4_head_cache_load(
+    if (resident_head && lma_v4_head_cache_load(
             engine, engine->target_index, error, error_size)) return -1;
     fprintf(stderr,
         "ram_tiers available=%.2fGiB dense=%s(%.2fGiB) "
@@ -1482,17 +1482,17 @@ int coli_v4_expert_store_open_planned(
     fprintf(stderr, "v4_open index=%.2fs plan=%.2fs (index built once, "
                     "reused by plan/inventory/head)\n",
             g_v4_open_index_seconds, open_plan_s);
-    ColiDeepSeekV4ExpertStoreOptions automatic = *options;
+    LmaDeepSeekV4ExpertStoreOptions automatic = *options;
     automatic.cache_bytes = plan.expert_cache_bytes;
     automatic.pin_slots_per_layer = runtime->pin_slots_per_layer;
     automatic.repin_interval = runtime->repin_interval;
-    return coli_deepseek_v4_expert_store_open(
+    return lma_deepseek_v4_expert_store_open(
         &automatic, output, error, error_size);
 }
 /* ---- end inlined deepseek_v4_expert_store_auto_v5.c ---- */
-#endif /* COLI_V4_UNIT_EXPERT_STORE_AUTO */
+#endif /* LMA_V4_UNIT_EXPERT_STORE_AUTO */
 
-#ifdef COLI_V4_UNIT_MATH
+#ifdef LMA_V4_UNIT_MATH
 /* ######## deepseek_v4_math.c ######## */
 #include "deepseek_v4_internal.h"
 #include "hyper_connections.h"
@@ -1515,30 +1515,30 @@ static float sigmoidf_stable(float value) {
  * le identiche chiavi hc_mult / hc_eps / hc_sinkhorn_iters). Qui restano solo
  * gli inoltri, cosi' i punti di chiamata dell'amalgama e le dichiarazioni in
  * deepseek_v4_internal.h non cambiano. */
-int coli_v4_hc_split_sinkhorn(float *pre, float *post, float *comb,
+int lma_v4_hc_split_sinkhorn(float *pre, float *post, float *comb,
                               const float *mixes, const float scale[3],
                               const float *base, int hc, int iterations,
                               float eps) {
-    return coli_hc_split_sinkhorn(pre, post, comb, mixes, scale, base,
+    return lma_hc_split_sinkhorn(pre, post, comb, mixes, scale, base,
                                   hc, iterations, eps);
 }
 
-int coli_v4_hc_pre(float *output, float *post, float *comb,
+int lma_v4_hc_pre(float *output, float *post, float *comb,
                    const float *input, const float *hc_fn,
                    const float scale[3], const float *base,
                    int hc, int dimension, int iterations,
                    float norm_eps, float hc_eps) {
-    return coli_hc_pre(output, post, comb, input, hc_fn, scale, base,
+    return lma_hc_pre(output, post, comb, input, hc_fn, scale, base,
                        hc, dimension, iterations, norm_eps, hc_eps);
 }
 
-int coli_v4_hc_post(float *output, const float *branch,
+int lma_v4_hc_post(float *output, const float *branch,
                     const float *residual, const float *post,
                     const float *comb, int hc, int dimension) {
-    return coli_hc_post(output, branch, residual, post, comb, hc, dimension);
+    return lma_hc_post(output, branch, residual, post, comb, hc, dimension);
 }
 
-int coli_v4_rmsnorm(float *output, const float *input, const float *weight,
+int lma_v4_rmsnorm(float *output, const float *input, const float *weight,
                     int dimension, float eps) {
     if (!output || !input || !weight || dimension < 1 || eps < 0.0f)
         return -1;
@@ -1585,7 +1585,7 @@ static float rope_frequency(int pair, int dimension,
     return frequency;
 }
 
-int coli_v4_rope_precompute_range(
+int lma_v4_rope_precompute_range(
     float *cosines, float *sines, int dimension, int start_position,
     int sequence_length, int original_sequence_length, float base,
     float factor, int beta_fast, int beta_slow) {
@@ -1612,16 +1612,16 @@ int coli_v4_rope_precompute_range(
     return 0;
 }
 
-int coli_v4_rope_precompute(float *cosines, float *sines,
+int lma_v4_rope_precompute(float *cosines, float *sines,
                             int dimension, int sequence_length,
                             int original_sequence_length, float base,
                             float factor, int beta_fast, int beta_slow) {
-    return coli_v4_rope_precompute_range(
+    return lma_v4_rope_precompute_range(
         cosines, sines, dimension, 0, sequence_length,
         original_sequence_length, base, factor, beta_fast, beta_slow);
 }
 
-int coli_v4_rope_position(float *cosines, float *sines,
+int lma_v4_rope_position(float *cosines, float *sines,
                           int dimension, int position,
                           int original_sequence_length, float base,
                           float factor, int beta_fast, int beta_slow) {
@@ -1643,7 +1643,7 @@ int coli_v4_rope_position(float *cosines, float *sines,
     return 0;
 }
 
-int coli_v4_rope_apply(float *vectors, int vector_count, int dimension,
+int lma_v4_rope_apply(float *vectors, int vector_count, int dimension,
                        const float *cosines, const float *sines, int inverse) {
     if (!vectors || !cosines || !sines || vector_count < 1 ||
         dimension < 2 || (dimension & 1))
@@ -1671,16 +1671,16 @@ static float softplusf_stable(float value) {
 
 #include "moe_router.h"
 
-int coli_v4_route(float *weights, int *indices, const float *hidden,
+int lma_v4_route(float *weights, int *indices, const float *hidden,
                   const float *gate, const float *bias,
                   const int *forced_indices, int experts, int dimension,
                   int topk, float route_scale) {
     if (!weights || !indices || !hidden || !gate || experts < 1 ||
         dimension < 1 || topk < 1 || topk > experts)
         return -1;
-    float scores_buf[COLI_V4_ROUTE_STACK_EXPERTS];
-    float selection_buf[COLI_V4_ROUTE_STACK_EXPERTS];
-    int on_stack = experts <= COLI_V4_ROUTE_STACK_EXPERTS;
+    float scores_buf[LMA_V4_ROUTE_STACK_EXPERTS];
+    float selection_buf[LMA_V4_ROUTE_STACK_EXPERTS];
+    int on_stack = experts <= LMA_V4_ROUTE_STACK_EXPERTS;
     float *scores = on_stack ? scores_buf : malloc((size_t)experts * sizeof(*scores));
     float *selection = on_stack ? selection_buf : malloc((size_t)experts * sizeof(*selection));
     if (!scores || !selection) {
@@ -1702,7 +1702,7 @@ int coli_v4_route(float *weights, int *indices, const float *hidden,
             }
             indices[rank] = forced_indices[rank];
         }
-    } else if (coli_router_topk(selection, NULL, NULL, experts, topk, indices, NULL, -1, 0) < topk) {
+    } else if (lma_router_topk(selection, NULL, NULL, experts, topk, indices, NULL, -1, 0) < topk) {
         /* Shared ranking (moe_router.h). This route fails loud on non-finite scores rather
          * than degrading: a poisoned router is an error here, never a silent wrong expert. */
         if (!on_stack) { free(selection); free(scores); }
@@ -1721,7 +1721,7 @@ int coli_v4_route(float *weights, int *indices, const float *hidden,
     return 0;
 }
 
-int coli_v4_swiglu(float *output, const float *gate, const float *up,
+int lma_v4_swiglu(float *output, const float *gate, const float *up,
                    int dimension, float limit) {
     if (!output || !gate || !up || dimension < 1 || limit < 0.0f)
         return -1;
@@ -1736,9 +1736,9 @@ int coli_v4_swiglu(float *output, const float *gate, const float *up,
     }
     return 0;
 }
-#endif /* COLI_V4_UNIT_MATH */
+#endif /* LMA_V4_UNIT_MATH */
 
-#ifdef COLI_V4_UNIT_ATTENTION
+#ifdef LMA_V4_UNIT_ATTENTION
 /* ######## deepseek_v4_attention.c ######## */
 #include "deepseek_v4_internal.h"
 
@@ -1757,21 +1757,21 @@ int coli_v4_swiglu(float *output, const float *gate, const float *up,
 
 static int set_error(char *error, size_t size, const char *format, ...);
 
-struct ColiDeepSeekV4WindowAttentionState {
+struct LmaDeepSeekV4WindowAttentionState {
     int window_size;
     int head_dim;
     int layer;
     int ratio;
     float *kv;
-    ColiDeepSeekV4CompressorState *compressor;
-    ColiDeepSeekV4Indexer *indexer;
+    LmaDeepSeekV4CompressorState *compressor;
+    LmaDeepSeekV4Indexer *indexer;
     float *compressed;
     int compressed_count;
     int compressed_capacity;
 };
 
-int coli_v4_window_attention_create(ColiDeepSeekV4WindowAttentionState **output,
-                                    const ColiDeepSeekV4Config *config) {
+int lma_v4_window_attention_create(LmaDeepSeekV4WindowAttentionState **output,
+                                    const LmaDeepSeekV4Config *config) {
     if (!output || !config || config->sliding_window < 1 || config->head_dim < 1)
         return -1;
     *output = calloc(1, sizeof(**output));
@@ -1789,28 +1789,28 @@ int coli_v4_window_attention_create(ColiDeepSeekV4WindowAttentionState **output,
     return 0;
 }
 
-void coli_v4_window_attention_reset(ColiDeepSeekV4WindowAttentionState *state) {
+void lma_v4_window_attention_reset(LmaDeepSeekV4WindowAttentionState *state) {
     if (!state) return;
     memset(state->kv, 0,
            (size_t)state->window_size * state->head_dim * sizeof(*state->kv));
     state->compressed_count = 0;
-    if (state->compressor) coli_v4_compressor_reset(state->compressor);
-    if (state->indexer) coli_v4_indexer_reset(state->indexer);
+    if (state->compressor) lma_v4_compressor_reset(state->compressor);
+    if (state->indexer) lma_v4_indexer_reset(state->indexer);
 }
 
-void coli_v4_window_attention_destroy(ColiDeepSeekV4WindowAttentionState *state) {
+void lma_v4_window_attention_destroy(LmaDeepSeekV4WindowAttentionState *state) {
     if (!state) return;
-    coli_v4_indexer_destroy(state->indexer);
-    coli_v4_compressor_destroy(state->compressor);
+    lma_v4_indexer_destroy(state->indexer);
+    lma_v4_compressor_destroy(state->compressor);
     free(state->compressed);
     free(state->kv);
     free(state);
 }
 
 static int prepare_compressed_state(
-    ColiDeepSeekV4WindowAttentionState *state,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config, char *error, size_t error_size) {
+    LmaDeepSeekV4WindowAttentionState *state,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config, char *error, size_t error_size) {
     int ratio = weights->plan.compression_ratio;
     if (!ratio) return 0;
     if (state->layer < 0) {
@@ -1819,17 +1819,17 @@ static int prepare_compressed_state(
         state->compressed_capacity = 16;
         state->compressed = calloc((size_t)state->compressed_capacity * state->head_dim,
                                    sizeof(*state->compressed));
-        if (!state->compressed || coli_v4_compressor_create(
+        if (!state->compressed || lma_v4_compressor_create(
                 &state->compressor, weights, config, error, error_size)) return -1;
-        if (ratio == 4 && coli_v4_indexer_create(
+        if (ratio == 4 && lma_v4_indexer_create(
                 &state->indexer, weights, config, config->max_position_embeddings,
                 error, error_size)) return -1;
     } else if (state->layer != weights->plan.layer || state->ratio != ratio) {
         return set_error(error, error_size, "attention state belongs to another layer");
     }
-    if (coli_v4_compressor_bind_weights(state->compressor, weights,
+    if (lma_v4_compressor_bind_weights(state->compressor, weights,
                                         error, error_size)) return -1;
-    if (state->indexer && coli_v4_indexer_bind_weights(
+    if (state->indexer && lma_v4_indexer_bind_weights(
             state->indexer, weights, error, error_size)) return -1;
     return 0;
 }
@@ -1837,15 +1837,15 @@ static int prepare_compressed_state(
 /* Create/bind this layer's compressor and indexer without attending: a
  * checkpoint restore on a fresh process needs the recurrent objects to
  * exist before the snapshot can be copied into them. */
-int coli_v4_window_attention_prepare(ColiDeepSeekV4WindowAttentionState *state,
-                                     const ColiDeepSeekV4LayerWeights *weights,
-                                     const ColiDeepSeekV4Config *config,
+int lma_v4_window_attention_prepare(LmaDeepSeekV4WindowAttentionState *state,
+                                     const LmaDeepSeekV4LayerWeights *weights,
+                                     const LmaDeepSeekV4Config *config,
                                      char *error, size_t error_size) {
     if (!state || !weights || !config) return -1;
     return prepare_compressed_state(state, weights, config, error, error_size);
 }
 
-static int grow_compressed_state(ColiDeepSeekV4WindowAttentionState *state,
+static int grow_compressed_state(LmaDeepSeekV4WindowAttentionState *state,
                                  char *error, size_t error_size) {
     if (state->compressed_count < state->compressed_capacity) return 0;
     int capacity = state->compressed_capacity * 2;
@@ -1867,34 +1867,34 @@ static int set_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
-static const void *layer_data(const ColiDeepSeekV4LayerWeights *weights,
+static const void *layer_data(const LmaDeepSeekV4LayerWeights *weights,
                               const char *suffix,
-                              const ColiDeepSeekV4TensorSpec **spec) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
+                              const LmaDeepSeekV4TensorSpec **spec) {
+    char name[LMA_V4_MAX_TENSOR_NAME];
     snprintf(name, sizeof(name), "layers.%d.%s", weights->plan.layer, suffix);
-    return coli_v4_layer_data(weights, name, spec);
+    return lma_v4_layer_data(weights, name, spec);
 }
 
-static int fp8_view(ColiTensorView *view,
-                    const ColiDeepSeekV4LayerWeights *weights,
+static int fp8_view(LmaTensorView *view,
+                    const LmaDeepSeekV4LayerWeights *weights,
                     const char *prefix) {
     char suffix[128];
-    const ColiDeepSeekV4TensorSpec *weight_spec = NULL, *scale_spec = NULL;
+    const LmaDeepSeekV4TensorSpec *weight_spec = NULL, *scale_spec = NULL;
     snprintf(suffix, sizeof(suffix), "%s.weight", prefix);
     const void *data = layer_data(weights, suffix, &weight_spec);
     snprintf(suffix, sizeof(suffix), "%s.scale", prefix);
     const void *scales = layer_data(weights, suffix, &scale_spec);
     if (!data || !scales || !weight_spec || !scale_spec ||
-        weight_spec->dtype != COLI_ST_F8_E4M3 ||
-        scale_spec->dtype != COLI_ST_F8_E8M0 || weight_spec->rank != 2)
+        weight_spec->dtype != LMA_ST_F8_E4M3 ||
+        scale_spec->dtype != LMA_ST_F8_E8M0 || weight_spec->rank != 2)
         return -1;
-    *view = (ColiTensorView){
-        COLI_TENSOR_FP8_E4M3_BLOCK, COLI_SCALE_F32, data, scales,
+    *view = (LmaTensorView){
+        LMA_TENSOR_FP8_E4M3_BLOCK, LMA_SCALE_F32, data, scales,
         (size_t)(weight_spec->shape[0] * weight_spec->shape[1]),
         (size_t)(scale_spec->shape[0] * scale_spec->shape[1]) * sizeof(float),
         weight_spec->shape[0], weight_spec->shape[1],
         weight_spec->packed_rows8 ? 8 : 128, 128,
-        coli_v4_layer_gpu(weights, prefix)
+        lma_v4_layer_gpu(weights, prefix)
     };
     return 0;
 }
@@ -1902,14 +1902,14 @@ static int fp8_view(ColiTensorView *view,
 static int decode_bf16(float *output, const void *data, size_t count) {
     if (!output || !data) return -1;
     const uint16_t *values = data;
-    for (size_t i = 0; i < count; i++) output[i] = coli_bf16_decode(values[i]);
+    for (size_t i = 0; i < count; i++) output[i] = lma_bf16_decode(values[i]);
     return 0;
 }
 
 static int attention_token_impl(float *output,
-                                ColiDeepSeekV4WindowAttentionState *state,
-                                const ColiDeepSeekV4LayerWeights *weights,
-                                const ColiDeepSeekV4Config *config,
+                                LmaDeepSeekV4WindowAttentionState *state,
+                                const LmaDeepSeekV4LayerWeights *weights,
+                                const LmaDeepSeekV4Config *config,
                                 const float *input, int position,
                                 char *error, size_t error_size) {
     if (!output || !weights || !config || !input || position < 0 ||
@@ -1926,7 +1926,7 @@ static int attention_token_impl(float *output,
         rope_dim > head_dim || q_rank < 1 || groups < 1 || heads % groups)
         return set_error(error, error_size, "unsupported attention dimensions");
 
-    ColiTensorView wq_a, wq_b, wkv, wo_a, wo_b;
+    LmaTensorView wq_a, wq_b, wkv, wo_a, wo_b;
     if (fp8_view(&wq_a, weights, "attn.wq_a") ||
         fp8_view(&wq_b, weights, "attn.wq_b") ||
         fp8_view(&wkv, weights, "attn.wkv") ||
@@ -1958,22 +1958,22 @@ static int attention_token_impl(float *output,
     float *input_act = malloc((size_t)wq_a.columns * sizeof(*input_act));
     uint8_t *input_act_scales = malloc((size_t)wq_a.columns / 128 + 1);
     int result = (!input_act || !input_act_scales ||
-                  coli_fp8_activation_qdq_ref(input_act, input_act_scales, input,
+                  lma_fp8_activation_qdq_ref(input_act, input_act_scales, input,
                                               (size_t)wq_a.columns, 128)) ? -1 : 0;
-    if (!result) result = coli_fp8_matvec_pre(qa, &wq_a, input, input_act);
-    coli_bf16_round_array(qa, (size_t)q_rank);
+    if (!result) result = lma_fp8_matvec_pre(qa, &wq_a, input, input_act);
+    lma_bf16_round_array(qa, (size_t)q_rank);
     const void *q_norm = layer_data(weights, "attn.q_norm.weight", NULL);
     if (!result && (!q_norm || decode_bf16(norm_weight, q_norm, (size_t)q_rank) ||
-                    coli_v4_rmsnorm(qa, qa, norm_weight, q_rank,
+                    lma_v4_rmsnorm(qa, qa, norm_weight, q_rank,
                                     config->rms_norm_eps))) result = -1;
-    if (!result) coli_bf16_round_array(qa, (size_t)q_rank);
+    if (!result) lma_bf16_round_array(qa, (size_t)q_rank);
     if (!result && state && weights->plan.compression_ratio) {
         result = prepare_compressed_state(state, weights, config,
                                           error, error_size);
         if (!result && (position + 1) % state->ratio == 0)
             result = grow_compressed_state(state, error, error_size);
         int produced = 0;
-        if (!result) result = coli_v4_compressor_step(
+        if (!result) result = lma_v4_compressor_step(
             state->compressor,
             state->compressed + (size_t)state->compressed_count * head_dim,
             &produced, input, position, error, error_size);
@@ -1987,11 +1987,11 @@ static int attention_token_impl(float *output,
                  * batch of one): past index_topk the selection runs the GPU
                  * projection replica + scoring kernel instead of the scalar
                  * per-token loops (~6 ms per indexer layer at 3k context). */
-                int visible = coli_v4_indexer_advance(
+                int visible = lma_v4_indexer_advance(
                     state->indexer, input, position, NULL, NULL,
                     error, error_size);
                 if (visible < 0) result = -1;
-                else if (coli_v4_indexer_select_batch(
+                else if (lma_v4_indexer_select_batch(
                              state->indexer, compressed_indices,
                              config->index_topk, qa, input, position, 1,
                              &visible, &compressed_selected, error,
@@ -2000,27 +2000,27 @@ static int attention_token_impl(float *output,
             if (compressed_selected < 0) result = -1;
         }
     }
-    if (!result) result = coli_fp8_matvec_ref(q, &wq_b, qa);
-    if (!result) coli_bf16_round_array(q, (size_t)heads * head_dim);
+    if (!result) result = lma_fp8_matvec_ref(q, &wq_b, qa);
+    if (!result) lma_bf16_round_array(q, (size_t)heads * head_dim);
     for (int head = 0; !result && head < heads; head++) {
         float *values = q + (size_t)head * head_dim;
         float mean_square = 0.0f;
         for (int i = 0; i < head_dim; i++) mean_square += values[i] * values[i];
         float scale = 1.0f / sqrtf(mean_square / head_dim + config->rms_norm_eps);
-        for (int i = 0; i < head_dim; i++) values[i] = coli_bf16_round(values[i] * scale);
+        for (int i = 0; i < head_dim; i++) values[i] = lma_bf16_round(values[i] * scale);
     }
 
-    if (!result) result = coli_fp8_matvec_pre(kv, &wkv, input, input_act);
-    if (!result) coli_bf16_round_array(kv, (size_t)head_dim);
+    if (!result) result = lma_fp8_matvec_pre(kv, &wkv, input, input_act);
+    if (!result) lma_bf16_round_array(kv, (size_t)head_dim);
     const void *kv_norm = layer_data(weights, "attn.kv_norm.weight", NULL);
     if (!result && (!kv_norm || decode_bf16(norm_weight, kv_norm, (size_t)head_dim) ||
-                    coli_v4_rmsnorm(kv, kv, norm_weight, head_dim,
+                    lma_v4_rmsnorm(kv, kv, norm_weight, head_dim,
                                     config->rms_norm_eps))) result = -1;
-    if (!result) coli_bf16_round_array(kv, (size_t)head_dim);
+    if (!result) lma_bf16_round_array(kv, (size_t)head_dim);
 
     if (!result) {
         int compressed = weights->plan.compression_ratio != 0;
-        if (coli_v4_rope_position(
+        if (lma_v4_rope_position(
                 cosines, sines, rope_dim, position,
                 compressed ? config->original_max_position_embeddings : 0,
                 compressed ? config->compress_rope_theta : config->rope_theta,
@@ -2030,27 +2030,27 @@ static int attention_token_impl(float *output,
     if (!result) {
         for (int head = 0; head < heads; head++) {
             float *rope = q + (size_t)head * head_dim + head_dim - rope_dim;
-            coli_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 0);
-            coli_bf16_round_array(rope, (size_t)rope_dim);
+            lma_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 0);
+            lma_bf16_round_array(rope, (size_t)rope_dim);
         }
         float *kv_rope = kv + head_dim - rope_dim;
-        coli_v4_rope_apply(kv_rope, 1, rope_dim, cosines, sines, 0);
-        coli_bf16_round_array(kv_rope, (size_t)rope_dim);
+        lma_v4_rope_apply(kv_rope, 1, rope_dim, cosines, sines, 0);
+        lma_bf16_round_array(kv_rope, (size_t)rope_dim);
         size_t nope = (size_t)(head_dim - rope_dim);
         float *qdq = malloc(nope * sizeof(*qdq));
         uint8_t *scales = malloc((nope + 63) / 64);
-        if (!qdq || !scales || coli_fp8_activation_qdq_ref(qdq, scales, kv, nope, 64))
+        if (!qdq || !scales || lma_fp8_activation_qdq_ref(qdq, scales, kv, nope, 64))
             result = -1;
         if (!result) {
             memcpy(kv, qdq, nope * sizeof(*kv));
-            coli_bf16_round_array(kv, nope);
+            lma_bf16_round_array(kv, nope);
         }
         free(scales); free(qdq);
     }
 
     const float *sinks = layer_data(weights, "attn.attn_sink", NULL);
     int gpu_attn_done = 0;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     /* DECODE on the persistent device KV (same ring/compressed buffers the
      * batched prefill fills, same kernels): at long context the CPU sparse
      * attention over window + top-512 compressed rows costs ~300 ms/token
@@ -2058,7 +2058,7 @@ static int attention_token_impl(float *output,
      * enters the ring after the kernel; the CPU state stays canonical (the
      * ring write below still happens), so any refusal here just falls
      * through to the reference loop. */
-    if (!result && state && sinks && coli_v4_gpu_attn_batch_wanted() &&
+    if (!result && state && sinks && lma_v4_gpu_attn_batch_wanted() &&
         state->compressed_count <= 8192 &&
         (!state->indexer || compressed_indices)) {
         int window = state->window_size;
@@ -2067,23 +2067,23 @@ static int attention_token_impl(float *output,
         int comp_total = state->compressed_count;
         int sel = state->indexer ? compressed_selected : comp_total;
         int meta[3] = {0, position - first + 1, sel};
-        if (coli_v4_gpu_kv_cache_sync(weights, state->kv, window, head_dim,
+        if (lma_v4_gpu_kv_cache_sync(weights, state->kv, window, head_dim,
                                       position, state->compressed,
                                       comp_total)) {
             int rc = state->indexer
-                ? coli_v4_gpu_sparse_attention_batch_cached_idx(
+                ? lma_v4_gpu_sparse_attention_batch_cached_idx(
                       weights, attended, q, kv, position, sinks, meta,
                       compressed_indices, config->index_topk, first,
                       comp_total, heads, head_dim, 1)
-                : coli_v4_gpu_sparse_attention_batch_cached(
+                : lma_v4_gpu_sparse_attention_batch_cached(
                       weights, attended, q, kv, position, sinks, meta, first,
                       comp_total, heads, head_dim, 1);
             if (rc == 0) {
                 gpu_attn_done = 1;
-                coli_v4_gpu_kv_cache_advance(weights, kv, position, 1, window,
+                lma_v4_gpu_kv_cache_advance(weights, kv, position, 1, window,
                                              head_dim, comp_total);
             } else {
-                coli_v4_gpu_kv_cache_poison(weights);
+                lma_v4_gpu_kv_cache_poison(weights);
             }
         }
     }
@@ -2125,7 +2125,7 @@ static int attention_token_impl(float *output,
                 int ordinal = state->indexer ? compressed_indices[i] : i;
                 indices[state->window_size + i] = state->window_size + ordinal;
             }
-            result = coli_v4_sparse_attention_ref(
+            result = lma_v4_sparse_attention_ref(
                 attended, q, kv_values, sinks, indices, heads, head_dim,
                 kv_count, topk,
                 1.0f / sqrtf((float)head_dim));
@@ -2140,13 +2140,13 @@ static int attention_token_impl(float *output,
         float attention_weight = 1.0f / (1.0f + expf(sinks[head] - score));
         float *head_output = attended + (size_t)head * head_dim;
         for (int i = 0; i < head_dim; i++)
-            head_output[i] = coli_bf16_round(kv[i] * attention_weight);
+            head_output[i] = lma_bf16_round(kv[i] * attention_weight);
     }
     for (int head = 0; !result && head < heads; head++) {
         float *head_output = attended + (size_t)head * head_dim;
         float *rope = head_output + head_dim - rope_dim;
-        coli_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 1);
-        coli_bf16_round_array(rope, (size_t)rope_dim);
+        lma_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 1);
+        lma_bf16_round_array(rope, (size_t)rope_dim);
     }
 
     int heads_per_group = heads / groups;
@@ -2154,13 +2154,13 @@ static int attention_token_impl(float *output,
     int scale_columns = (group_width + 127) / 128;
     int scale_rows_per_group = (o_rank + 127) / 128;
     if (!result) {
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
         if (wo_a.gpu) {
-            result = coli_v4_gpu_matvec_grouped(&wo_a, oa, attended, groups);
+            result = lma_v4_gpu_matvec_grouped(&wo_a, oa, attended, groups);
         } else
 #endif
         for (int group = 0; group < groups; group++) {
-            ColiTensorView group_view = wo_a;
+            LmaTensorView group_view = wo_a;
             group_view.rows = o_rank;
             group_view.columns = group_width;
             group_view.data = (const uint8_t *)wo_a.data +
@@ -2170,13 +2170,13 @@ static int attention_token_impl(float *output,
             group_view.data_bytes = (size_t)o_rank * group_width;
             group_view.scale_bytes =
                 (size_t)scale_rows_per_group * scale_columns * sizeof(float);
-            result = coli_fp8_matvec_ref(oa + (size_t)group * o_rank, &group_view,
+            result = lma_fp8_matvec_ref(oa + (size_t)group * o_rank, &group_view,
                                          attended + (size_t)group * group_width);
         }
     }
-    if (!result) coli_bf16_round_array(oa, (size_t)groups * o_rank);
-    if (!result) result = coli_fp8_matvec_ref(output, &wo_b, oa);
-    if (!result) coli_bf16_round_array(output, (size_t)hidden);
+    if (!result) lma_bf16_round_array(oa, (size_t)groups * o_rank);
+    if (!result) result = lma_fp8_matvec_ref(output, &wo_b, oa);
+    if (!result) lma_bf16_round_array(output, (size_t)hidden);
 
     free(compressed_indices);
     free(sines); free(cosines); free(norm_weight); free(oa);
@@ -2186,32 +2186,32 @@ static int attention_token_impl(float *output,
     return 0;
 }
 
-int coli_v4_attention_token_ref(float *output,
-                                const ColiDeepSeekV4LayerWeights *weights,
-                                const ColiDeepSeekV4Config *config,
+int lma_v4_attention_token_ref(float *output,
+                                const LmaDeepSeekV4LayerWeights *weights,
+                                const LmaDeepSeekV4Config *config,
                                 const float *input, int position,
                                 char *error, size_t error_size) {
     return attention_token_impl(output, NULL, weights, config, input, position,
                                 error, error_size);
 }
 
-int coli_v4_attention_window_token_ref(
-    float *output, ColiDeepSeekV4WindowAttentionState *state,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config, const float *input, int position,
+int lma_v4_attention_window_token_ref(
+    float *output, LmaDeepSeekV4WindowAttentionState *state,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config, const float *input, int position,
     char *error, size_t error_size) {
     return attention_token_impl(output, state, weights, config, input, position,
                                 error, error_size);
 }
-#endif /* COLI_V4_UNIT_ATTENTION */
+#endif /* LMA_V4_UNIT_ATTENTION */
 
-#ifdef COLI_V4_UNIT_ATTENTION_BATCH
+#ifdef LMA_V4_UNIT_ATTENTION_BATCH
 /* ######## deepseek_v4_attention_batch.c ######## */
-#define coli_v4_window_attention_create coli_v4_window_attention_batch_create_copy
-#define coli_v4_window_attention_reset coli_v4_window_attention_batch_reset_copy
-#define coli_v4_window_attention_destroy coli_v4_window_attention_batch_destroy_copy
-#define coli_v4_attention_token_ref coli_v4_attention_token_batch_serial_copy
-#define coli_v4_attention_window_token_ref coli_v4_attention_window_token_batch_serial_copy
+#define lma_v4_window_attention_create lma_v4_window_attention_batch_create_copy
+#define lma_v4_window_attention_reset lma_v4_window_attention_batch_reset_copy
+#define lma_v4_window_attention_destroy lma_v4_window_attention_batch_destroy_copy
+#define lma_v4_attention_token_ref lma_v4_attention_token_batch_serial_copy
+#define lma_v4_attention_window_token_ref lma_v4_attention_window_token_batch_serial_copy
 /* ---- begin include deepseek_v4_attention.c ---- */
 #include "deepseek_v4_internal.h"
 
@@ -2230,21 +2230,21 @@ int coli_v4_attention_window_token_ref(
 
 static int set_error(char *error, size_t size, const char *format, ...);
 
-struct ColiDeepSeekV4WindowAttentionState {
+struct LmaDeepSeekV4WindowAttentionState {
     int window_size;
     int head_dim;
     int layer;
     int ratio;
     float *kv;
-    ColiDeepSeekV4CompressorState *compressor;
-    ColiDeepSeekV4Indexer *indexer;
+    LmaDeepSeekV4CompressorState *compressor;
+    LmaDeepSeekV4Indexer *indexer;
     float *compressed;
     int compressed_count;
     int compressed_capacity;
 };
 
-int coli_v4_window_attention_create(ColiDeepSeekV4WindowAttentionState **output,
-                                    const ColiDeepSeekV4Config *config) {
+int lma_v4_window_attention_create(LmaDeepSeekV4WindowAttentionState **output,
+                                    const LmaDeepSeekV4Config *config) {
     if (!output || !config || config->sliding_window < 1 || config->head_dim < 1)
         return -1;
     *output = calloc(1, sizeof(**output));
@@ -2262,28 +2262,28 @@ int coli_v4_window_attention_create(ColiDeepSeekV4WindowAttentionState **output,
     return 0;
 }
 
-void coli_v4_window_attention_reset(ColiDeepSeekV4WindowAttentionState *state) {
+void lma_v4_window_attention_reset(LmaDeepSeekV4WindowAttentionState *state) {
     if (!state) return;
     memset(state->kv, 0,
            (size_t)state->window_size * state->head_dim * sizeof(*state->kv));
     state->compressed_count = 0;
-    if (state->compressor) coli_v4_compressor_reset(state->compressor);
-    if (state->indexer) coli_v4_indexer_reset(state->indexer);
+    if (state->compressor) lma_v4_compressor_reset(state->compressor);
+    if (state->indexer) lma_v4_indexer_reset(state->indexer);
 }
 
-void coli_v4_window_attention_destroy(ColiDeepSeekV4WindowAttentionState *state) {
+void lma_v4_window_attention_destroy(LmaDeepSeekV4WindowAttentionState *state) {
     if (!state) return;
-    coli_v4_indexer_destroy(state->indexer);
-    coli_v4_compressor_destroy(state->compressor);
+    lma_v4_indexer_destroy(state->indexer);
+    lma_v4_compressor_destroy(state->compressor);
     free(state->compressed);
     free(state->kv);
     free(state);
 }
 
 static int prepare_compressed_state(
-    ColiDeepSeekV4WindowAttentionState *state,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config, char *error, size_t error_size) {
+    LmaDeepSeekV4WindowAttentionState *state,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config, char *error, size_t error_size) {
     int ratio = weights->plan.compression_ratio;
     if (!ratio) return 0;
     if (state->layer < 0) {
@@ -2292,22 +2292,22 @@ static int prepare_compressed_state(
         state->compressed_capacity = 16;
         state->compressed = calloc((size_t)state->compressed_capacity * state->head_dim,
                                    sizeof(*state->compressed));
-        if (!state->compressed || coli_v4_compressor_create(
+        if (!state->compressed || lma_v4_compressor_create(
                 &state->compressor, weights, config, error, error_size)) return -1;
-        if (ratio == 4 && coli_v4_indexer_create(
+        if (ratio == 4 && lma_v4_indexer_create(
                 &state->indexer, weights, config, config->max_position_embeddings,
                 error, error_size)) return -1;
     } else if (state->layer != weights->plan.layer || state->ratio != ratio) {
         return set_error(error, error_size, "attention state belongs to another layer");
     }
-    if (coli_v4_compressor_bind_weights(state->compressor, weights,
+    if (lma_v4_compressor_bind_weights(state->compressor, weights,
                                         error, error_size)) return -1;
-    if (state->indexer && coli_v4_indexer_bind_weights(
+    if (state->indexer && lma_v4_indexer_bind_weights(
             state->indexer, weights, error, error_size)) return -1;
     return 0;
 }
 
-static int grow_compressed_state(ColiDeepSeekV4WindowAttentionState *state,
+static int grow_compressed_state(LmaDeepSeekV4WindowAttentionState *state,
                                  char *error, size_t error_size) {
     if (state->compressed_count < state->compressed_capacity) return 0;
     int capacity = state->compressed_capacity * 2;
@@ -2329,34 +2329,34 @@ static int set_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
-static const void *layer_data(const ColiDeepSeekV4LayerWeights *weights,
+static const void *layer_data(const LmaDeepSeekV4LayerWeights *weights,
                               const char *suffix,
-                              const ColiDeepSeekV4TensorSpec **spec) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
+                              const LmaDeepSeekV4TensorSpec **spec) {
+    char name[LMA_V4_MAX_TENSOR_NAME];
     snprintf(name, sizeof(name), "layers.%d.%s", weights->plan.layer, suffix);
-    return coli_v4_layer_data(weights, name, spec);
+    return lma_v4_layer_data(weights, name, spec);
 }
 
-static int fp8_view(ColiTensorView *view,
-                    const ColiDeepSeekV4LayerWeights *weights,
+static int fp8_view(LmaTensorView *view,
+                    const LmaDeepSeekV4LayerWeights *weights,
                     const char *prefix) {
     char suffix[128];
-    const ColiDeepSeekV4TensorSpec *weight_spec = NULL, *scale_spec = NULL;
+    const LmaDeepSeekV4TensorSpec *weight_spec = NULL, *scale_spec = NULL;
     snprintf(suffix, sizeof(suffix), "%s.weight", prefix);
     const void *data = layer_data(weights, suffix, &weight_spec);
     snprintf(suffix, sizeof(suffix), "%s.scale", prefix);
     const void *scales = layer_data(weights, suffix, &scale_spec);
     if (!data || !scales || !weight_spec || !scale_spec ||
-        weight_spec->dtype != COLI_ST_F8_E4M3 ||
-        scale_spec->dtype != COLI_ST_F8_E8M0 || weight_spec->rank != 2)
+        weight_spec->dtype != LMA_ST_F8_E4M3 ||
+        scale_spec->dtype != LMA_ST_F8_E8M0 || weight_spec->rank != 2)
         return -1;
-    *view = (ColiTensorView){
-        COLI_TENSOR_FP8_E4M3_BLOCK, COLI_SCALE_F32, data, scales,
+    *view = (LmaTensorView){
+        LMA_TENSOR_FP8_E4M3_BLOCK, LMA_SCALE_F32, data, scales,
         (size_t)(weight_spec->shape[0] * weight_spec->shape[1]),
         (size_t)(scale_spec->shape[0] * scale_spec->shape[1]) * sizeof(float),
         weight_spec->shape[0], weight_spec->shape[1],
         weight_spec->packed_rows8 ? 8 : 128, 128,
-        coli_v4_layer_gpu(weights, prefix)
+        lma_v4_layer_gpu(weights, prefix)
     };
     return 0;
 }
@@ -2364,14 +2364,14 @@ static int fp8_view(ColiTensorView *view,
 static int decode_bf16(float *output, const void *data, size_t count) {
     if (!output || !data) return -1;
     const uint16_t *values = data;
-    for (size_t i = 0; i < count; i++) output[i] = coli_bf16_decode(values[i]);
+    for (size_t i = 0; i < count; i++) output[i] = lma_bf16_decode(values[i]);
     return 0;
 }
 
 static int attention_token_impl(float *output,
-                                ColiDeepSeekV4WindowAttentionState *state,
-                                const ColiDeepSeekV4LayerWeights *weights,
-                                const ColiDeepSeekV4Config *config,
+                                LmaDeepSeekV4WindowAttentionState *state,
+                                const LmaDeepSeekV4LayerWeights *weights,
+                                const LmaDeepSeekV4Config *config,
                                 const float *input, int position,
                                 char *error, size_t error_size) {
     if (!output || !weights || !config || !input || position < 0 ||
@@ -2388,7 +2388,7 @@ static int attention_token_impl(float *output,
         rope_dim > head_dim || q_rank < 1 || groups < 1 || heads % groups)
         return set_error(error, error_size, "unsupported attention dimensions");
 
-    ColiTensorView wq_a, wq_b, wkv, wo_a, wo_b;
+    LmaTensorView wq_a, wq_b, wkv, wo_a, wo_b;
     if (fp8_view(&wq_a, weights, "attn.wq_a") ||
         fp8_view(&wq_b, weights, "attn.wq_b") ||
         fp8_view(&wkv, weights, "attn.wkv") ||
@@ -2420,22 +2420,22 @@ static int attention_token_impl(float *output,
     float *input_act = malloc((size_t)wq_a.columns * sizeof(*input_act));
     uint8_t *input_act_scales = malloc((size_t)wq_a.columns / 128 + 1);
     int result = (!input_act || !input_act_scales ||
-                  coli_fp8_activation_qdq_ref(input_act, input_act_scales, input,
+                  lma_fp8_activation_qdq_ref(input_act, input_act_scales, input,
                                               (size_t)wq_a.columns, 128)) ? -1 : 0;
-    if (!result) result = coli_fp8_matvec_pre(qa, &wq_a, input, input_act);
-    coli_bf16_round_array(qa, (size_t)q_rank);
+    if (!result) result = lma_fp8_matvec_pre(qa, &wq_a, input, input_act);
+    lma_bf16_round_array(qa, (size_t)q_rank);
     const void *q_norm = layer_data(weights, "attn.q_norm.weight", NULL);
     if (!result && (!q_norm || decode_bf16(norm_weight, q_norm, (size_t)q_rank) ||
-                    coli_v4_rmsnorm(qa, qa, norm_weight, q_rank,
+                    lma_v4_rmsnorm(qa, qa, norm_weight, q_rank,
                                     config->rms_norm_eps))) result = -1;
-    if (!result) coli_bf16_round_array(qa, (size_t)q_rank);
+    if (!result) lma_bf16_round_array(qa, (size_t)q_rank);
     if (!result && state && weights->plan.compression_ratio) {
         result = prepare_compressed_state(state, weights, config,
                                           error, error_size);
         if (!result && (position + 1) % state->ratio == 0)
             result = grow_compressed_state(state, error, error_size);
         int produced = 0;
-        if (!result) result = coli_v4_compressor_step(
+        if (!result) result = lma_v4_compressor_step(
             state->compressor,
             state->compressed + (size_t)state->compressed_count * head_dim,
             &produced, input, position, error, error_size);
@@ -2444,33 +2444,33 @@ static int attention_token_impl(float *output,
             compressed_indices = malloc((size_t)config->index_topk *
                                         sizeof(*compressed_indices));
             if (!compressed_indices) result = -1;
-            else compressed_selected = coli_v4_indexer_step(
+            else compressed_selected = lma_v4_indexer_step(
                 state->indexer, compressed_indices, config->index_topk,
                 qa, input, position, error, error_size);
             if (compressed_selected < 0) result = -1;
         }
     }
-    if (!result) result = coli_fp8_matvec_ref(q, &wq_b, qa);
-    if (!result) coli_bf16_round_array(q, (size_t)heads * head_dim);
+    if (!result) result = lma_fp8_matvec_ref(q, &wq_b, qa);
+    if (!result) lma_bf16_round_array(q, (size_t)heads * head_dim);
     for (int head = 0; !result && head < heads; head++) {
         float *values = q + (size_t)head * head_dim;
         float mean_square = 0.0f;
         for (int i = 0; i < head_dim; i++) mean_square += values[i] * values[i];
         float scale = 1.0f / sqrtf(mean_square / head_dim + config->rms_norm_eps);
-        for (int i = 0; i < head_dim; i++) values[i] = coli_bf16_round(values[i] * scale);
+        for (int i = 0; i < head_dim; i++) values[i] = lma_bf16_round(values[i] * scale);
     }
 
-    if (!result) result = coli_fp8_matvec_pre(kv, &wkv, input, input_act);
-    if (!result) coli_bf16_round_array(kv, (size_t)head_dim);
+    if (!result) result = lma_fp8_matvec_pre(kv, &wkv, input, input_act);
+    if (!result) lma_bf16_round_array(kv, (size_t)head_dim);
     const void *kv_norm = layer_data(weights, "attn.kv_norm.weight", NULL);
     if (!result && (!kv_norm || decode_bf16(norm_weight, kv_norm, (size_t)head_dim) ||
-                    coli_v4_rmsnorm(kv, kv, norm_weight, head_dim,
+                    lma_v4_rmsnorm(kv, kv, norm_weight, head_dim,
                                     config->rms_norm_eps))) result = -1;
-    if (!result) coli_bf16_round_array(kv, (size_t)head_dim);
+    if (!result) lma_bf16_round_array(kv, (size_t)head_dim);
 
     if (!result) {
         int compressed = weights->plan.compression_ratio != 0;
-        if (coli_v4_rope_position(
+        if (lma_v4_rope_position(
                 cosines, sines, rope_dim, position,
                 compressed ? config->original_max_position_embeddings : 0,
                 compressed ? config->compress_rope_theta : config->rope_theta,
@@ -2480,20 +2480,20 @@ static int attention_token_impl(float *output,
     if (!result) {
         for (int head = 0; head < heads; head++) {
             float *rope = q + (size_t)head * head_dim + head_dim - rope_dim;
-            coli_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 0);
-            coli_bf16_round_array(rope, (size_t)rope_dim);
+            lma_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 0);
+            lma_bf16_round_array(rope, (size_t)rope_dim);
         }
         float *kv_rope = kv + head_dim - rope_dim;
-        coli_v4_rope_apply(kv_rope, 1, rope_dim, cosines, sines, 0);
-        coli_bf16_round_array(kv_rope, (size_t)rope_dim);
+        lma_v4_rope_apply(kv_rope, 1, rope_dim, cosines, sines, 0);
+        lma_bf16_round_array(kv_rope, (size_t)rope_dim);
         size_t nope = (size_t)(head_dim - rope_dim);
         float *qdq = malloc(nope * sizeof(*qdq));
         uint8_t *scales = malloc((nope + 63) / 64);
-        if (!qdq || !scales || coli_fp8_activation_qdq_ref(qdq, scales, kv, nope, 64))
+        if (!qdq || !scales || lma_fp8_activation_qdq_ref(qdq, scales, kv, nope, 64))
             result = -1;
         if (!result) {
             memcpy(kv, qdq, nope * sizeof(*kv));
-            coli_bf16_round_array(kv, nope);
+            lma_bf16_round_array(kv, nope);
         }
         free(scales); free(qdq);
     }
@@ -2532,7 +2532,7 @@ static int attention_token_impl(float *output,
                 int ordinal = state->indexer ? compressed_indices[i] : i;
                 indices[state->window_size + i] = state->window_size + ordinal;
             }
-            result = coli_v4_sparse_attention_ref(
+            result = lma_v4_sparse_attention_ref(
                 attended, q, kv_values, sinks, indices, heads, head_dim,
                 kv_count, topk,
                 1.0f / sqrtf((float)head_dim));
@@ -2547,13 +2547,13 @@ static int attention_token_impl(float *output,
         float attention_weight = 1.0f / (1.0f + expf(sinks[head] - score));
         float *head_output = attended + (size_t)head * head_dim;
         for (int i = 0; i < head_dim; i++)
-            head_output[i] = coli_bf16_round(kv[i] * attention_weight);
+            head_output[i] = lma_bf16_round(kv[i] * attention_weight);
     }
     for (int head = 0; !result && head < heads; head++) {
         float *head_output = attended + (size_t)head * head_dim;
         float *rope = head_output + head_dim - rope_dim;
-        coli_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 1);
-        coli_bf16_round_array(rope, (size_t)rope_dim);
+        lma_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 1);
+        lma_bf16_round_array(rope, (size_t)rope_dim);
     }
 
     int heads_per_group = heads / groups;
@@ -2561,13 +2561,13 @@ static int attention_token_impl(float *output,
     int scale_columns = (group_width + 127) / 128;
     int scale_rows_per_group = (o_rank + 127) / 128;
     if (!result) {
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
         if (wo_a.gpu) {
-            result = coli_v4_gpu_matvec_grouped(&wo_a, oa, attended, groups);
+            result = lma_v4_gpu_matvec_grouped(&wo_a, oa, attended, groups);
         } else
 #endif
         for (int group = 0; group < groups; group++) {
-            ColiTensorView group_view = wo_a;
+            LmaTensorView group_view = wo_a;
             group_view.rows = o_rank;
             group_view.columns = group_width;
             group_view.data = (const uint8_t *)wo_a.data +
@@ -2577,13 +2577,13 @@ static int attention_token_impl(float *output,
             group_view.data_bytes = (size_t)o_rank * group_width;
             group_view.scale_bytes =
                 (size_t)scale_rows_per_group * scale_columns * sizeof(float);
-            result = coli_fp8_matvec_ref(oa + (size_t)group * o_rank, &group_view,
+            result = lma_fp8_matvec_ref(oa + (size_t)group * o_rank, &group_view,
                                          attended + (size_t)group * group_width);
         }
     }
-    if (!result) coli_bf16_round_array(oa, (size_t)groups * o_rank);
-    if (!result) result = coli_fp8_matvec_ref(output, &wo_b, oa);
-    if (!result) coli_bf16_round_array(output, (size_t)hidden);
+    if (!result) lma_bf16_round_array(oa, (size_t)groups * o_rank);
+    if (!result) result = lma_fp8_matvec_ref(output, &wo_b, oa);
+    if (!result) lma_bf16_round_array(output, (size_t)hidden);
 
     free(compressed_indices);
     free(sines); free(cosines); free(norm_weight); free(oa);
@@ -2593,30 +2593,30 @@ static int attention_token_impl(float *output,
     return 0;
 }
 
-int coli_v4_attention_token_ref(float *output,
-                                const ColiDeepSeekV4LayerWeights *weights,
-                                const ColiDeepSeekV4Config *config,
+int lma_v4_attention_token_ref(float *output,
+                                const LmaDeepSeekV4LayerWeights *weights,
+                                const LmaDeepSeekV4Config *config,
                                 const float *input, int position,
                                 char *error, size_t error_size) {
     return attention_token_impl(output, NULL, weights, config, input, position,
                                 error, error_size);
 }
 
-int coli_v4_attention_window_token_ref(
-    float *output, ColiDeepSeekV4WindowAttentionState *state,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config, const float *input, int position,
+int lma_v4_attention_window_token_ref(
+    float *output, LmaDeepSeekV4WindowAttentionState *state,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config, const float *input, int position,
     char *error, size_t error_size) {
     return attention_token_impl(output, state, weights, config, input, position,
                                 error, error_size);
 }
 /* ---- end include deepseek_v4_attention.c ---- */
 
-#undef coli_v4_window_attention_create
-#undef coli_v4_window_attention_reset
-#undef coli_v4_window_attention_destroy
-#undef coli_v4_attention_token_ref
-#undef coli_v4_attention_window_token_ref
+#undef lma_v4_window_attention_create
+#undef lma_v4_window_attention_reset
+#undef lma_v4_window_attention_destroy
+#undef lma_v4_attention_token_ref
+#undef lma_v4_attention_window_token_ref
 
 #include "deepseek_v4_internal.h"
 #include "native_quant_batch.h"
@@ -2661,10 +2661,10 @@ static void *v4_attn_scratch(int slot, size_t bytes, int zero) {
     return arena[slot];
 }
 
-int coli_v4_attention_window_batch_ref(
-    float *outputs, ColiDeepSeekV4WindowAttentionState *state,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config, const float *inputs,
+int lma_v4_attention_window_batch_ref(
+    float *outputs, LmaDeepSeekV4WindowAttentionState *state,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config, const float *inputs,
     int start_position, int batch, char *error, size_t error_size) {
     if (!outputs || !state || !weights || !config || !inputs ||
         start_position < 0 || batch < 1 || batch > 128)
@@ -2676,7 +2676,7 @@ int coli_v4_attention_window_batch_ref(
     size_t q_width = (size_t)heads * head_dim;
     size_t oa_width = (size_t)groups * o_rank;
 
-    ColiTensorView wq_a, wq_b, wkv, wo_a, wo_b;
+    LmaTensorView wq_a, wq_b, wkv, wo_a, wo_b;
     if (fp8_view(&wq_a, weights, "attn.wq_a") ||
         fp8_view(&wq_b, weights, "attn.wq_b") ||
         fp8_view(&wkv, weights, "attn.wkv") ||
@@ -2718,25 +2718,25 @@ int coli_v4_attention_window_batch_ref(
     uint8_t *inputs_act_scales = malloc((size_t)batch * (hidden / 128 + 1));
     int result = (!inputs_act || !inputs_act_scales) ? -1 : 0;
     for (int item = 0; !result && item < batch; item++)
-        if (coli_fp8_activation_qdq_ref(
+        if (lma_fp8_activation_qdq_ref(
                 inputs_act + (size_t)item * hidden,
                 inputs_act_scales + (size_t)item * (hidden / 128),
                 inputs + (size_t)item * hidden, (size_t)hidden, 128))
             result = -1;
-    if (!result) result = coli_fp8_matmul_batch_pre(qa, &wq_a, inputs, inputs_act, batch);
-    if (!result) coli_bf16_round_array(qa, (size_t)batch * q_rank);
+    if (!result) result = lma_fp8_matmul_batch_pre(qa, &wq_a, inputs, inputs_act, batch);
+    if (!result) lma_bf16_round_array(qa, (size_t)batch * q_rank);
     const void *raw_q_norm = layer_data(weights, "attn.q_norm.weight", NULL);
     if (!result && (!raw_q_norm || decode_bf16(norm, raw_q_norm, q_rank))) result = -1;
     for (int item = 0; !result && item < batch; item++) {
         float *item_qa = qa + (size_t)item * q_rank;
-        result = coli_v4_rmsnorm(item_qa, item_qa, norm, q_rank,
+        result = lma_v4_rmsnorm(item_qa, item_qa, norm, q_rank,
                                  config->rms_norm_eps);
-        if (!result) coli_bf16_round_array(item_qa, (size_t)q_rank);
+        if (!result) lma_bf16_round_array(item_qa, (size_t)q_rank);
     }
     V4_ATTN_PROF_MARK(prof_qa);
 
-#ifdef COLI_V4_GPU_TIER
-    int gpu_batch = coli_v4_gpu_attn_batch_wanted() && batch > 1;
+#ifdef LMA_V4_GPU_TIER
+    int gpu_batch = lma_v4_gpu_attn_batch_wanted() && batch > 1;
 #endif
     /* Whole-chunk GPU projections for the compressor and the indexer's
      * compressor; the per-token state advance stays on the CPU. NULL means
@@ -2744,7 +2744,7 @@ int coli_v4_attention_window_batch_ref(
     float *comp_kv_proj = NULL, *comp_gate_proj = NULL;
     float *idx_kv_proj = NULL, *idx_gate_proj = NULL;
     int comp_rows = 0, idx_rows = 0;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     if (!result && gpu_batch && weights->plan.compression_ratio) {
         comp_rows = (weights->plan.compression_ratio == 4 ? 2 : 1) * head_dim;
         comp_kv_proj = v4_attn_scratch(13, (size_t)batch * comp_rows *
@@ -2752,7 +2752,7 @@ int coli_v4_attention_window_batch_ref(
         comp_gate_proj = v4_attn_scratch(14, (size_t)batch * comp_rows *
                                          sizeof(*comp_gate_proj), 0);
         if (!comp_kv_proj || !comp_gate_proj ||
-            coli_v4_gpu_compressor_project_batch(
+            lma_v4_gpu_compressor_project_batch(
                 weights, "attn.compressor.wkv", "attn.compressor.wgate",
                 comp_rows, comp_kv_proj, comp_gate_proj, inputs, batch))
             comp_kv_proj = comp_gate_proj = NULL;
@@ -2763,7 +2763,7 @@ int coli_v4_attention_window_batch_ref(
             idx_gate_proj = v4_attn_scratch(16, (size_t)batch * idx_rows *
                                             sizeof(*idx_gate_proj), 0);
             if (!idx_kv_proj || !idx_gate_proj ||
-                coli_v4_gpu_compressor_project_batch(
+                lma_v4_gpu_compressor_project_batch(
                     weights, "attn.indexer.compressor.wkv",
                     "attn.indexer.compressor.wgate", idx_rows,
                     idx_kv_proj, idx_gate_proj, inputs, batch))
@@ -2786,13 +2786,13 @@ int coli_v4_attention_window_batch_ref(
                 result = grow_compressed_state(state, error, error_size);
             int produced = 0;
             if (!result) result = comp_kv_proj
-                ? coli_v4_compressor_advance(
+                ? lma_v4_compressor_advance(
                     state->compressor,
                     state->compressed + (size_t)state->compressed_count * head_dim,
                     &produced, comp_kv_proj + (size_t)item * comp_rows,
                     comp_gate_proj + (size_t)item * comp_rows, position,
                     error, error_size)
-                : coli_v4_compressor_step(
+                : lma_v4_compressor_step(
                     state->compressor,
                     state->compressed + (size_t)state->compressed_count * head_dim,
                     &produced, inputs + (size_t)item * hidden, position,
@@ -2804,7 +2804,7 @@ int coli_v4_attention_window_batch_ref(
                 /* Advance only; selection happens once for the whole chunk
                  * below (batched wq_b projection + scoring kernel). Until
                  * then selected_counts holds the visible candidate count. */
-                selected_counts[item] = coli_v4_indexer_advance(
+                selected_counts[item] = lma_v4_indexer_advance(
                     state->indexer, inputs + (size_t)item * hidden, position,
                     idx_kv_proj ? idx_kv_proj + (size_t)item * idx_rows : NULL,
                     idx_gate_proj ? idx_gate_proj + (size_t)item * idx_rows : NULL,
@@ -2813,7 +2813,7 @@ int coli_v4_attention_window_batch_ref(
             } else if (!result && state->indexer) {
                 /* V4_IDX_BATCH=0: legacy per-token projection + scoring. */
                 selected_counts[item] = idx_kv_proj
-                    ? coli_v4_indexer_step_projected(
+                    ? lma_v4_indexer_step_projected(
                         state->indexer,
                         compressed_indices + (size_t)item * config->index_topk,
                         config->index_topk, qa + (size_t)item * q_rank,
@@ -2821,7 +2821,7 @@ int coli_v4_attention_window_batch_ref(
                         idx_kv_proj + (size_t)item * idx_rows,
                         idx_gate_proj + (size_t)item * idx_rows,
                         error, error_size)
-                    : coli_v4_indexer_step(
+                    : lma_v4_indexer_step(
                         state->indexer,
                         compressed_indices + (size_t)item * config->index_topk,
                         config->index_topk, qa + (size_t)item * q_rank,
@@ -2840,7 +2840,7 @@ int coli_v4_attention_window_batch_ref(
         if (!visible) result = -1;
         else {
             memcpy(visible, selected_counts, (size_t)batch * sizeof(*visible));
-            result = coli_v4_indexer_select_batch(
+            result = lma_v4_indexer_select_batch(
                 state->indexer, compressed_indices, config->index_topk, qa,
                 inputs, start_position, batch, visible, selected_counts,
                 error, error_size);
@@ -2849,8 +2849,8 @@ int coli_v4_attention_window_batch_ref(
     }
 
 
-    if (!result) result = coli_fp8_matmul_batch_ref(q, &wq_b, qa, batch);
-    if (!result) coli_bf16_round_array(q, (size_t)batch * q_width);
+    if (!result) result = lma_fp8_matmul_batch_ref(q, &wq_b, qa, batch);
+    if (!result) lma_bf16_round_array(q, (size_t)batch * q_width);
     for (int item = 0; !result && item < batch; item++)
         for (int head = 0; head < heads; head++) {
             float *values = q + (size_t)item * q_width + (size_t)head * head_dim;
@@ -2858,24 +2858,24 @@ int coli_v4_attention_window_batch_ref(
             for (int i = 0; i < head_dim; i++) square += values[i] * values[i];
             float scale = 1.0f / sqrtf(square / head_dim + config->rms_norm_eps);
             for (int i = 0; i < head_dim; i++)
-                values[i] = coli_bf16_round(values[i] * scale);
+                values[i] = lma_bf16_round(values[i] * scale);
         }
     V4_ATTN_PROF_MARK(prof_qb);
 
-    if (!result) result = coli_fp8_matmul_batch_pre(kv, &wkv, inputs, inputs_act, batch);
-    if (!result) coli_bf16_round_array(kv, (size_t)batch * head_dim);
+    if (!result) result = lma_fp8_matmul_batch_pre(kv, &wkv, inputs, inputs_act, batch);
+    if (!result) lma_bf16_round_array(kv, (size_t)batch * head_dim);
     const void *raw_kv_norm = layer_data(weights, "attn.kv_norm.weight", NULL);
     if (!result && (!raw_kv_norm || decode_bf16(norm, raw_kv_norm, head_dim))) result = -1;
     for (int item = 0; !result && item < batch; item++) {
         float *item_kv = kv + (size_t)item * head_dim;
-        result = coli_v4_rmsnorm(item_kv, item_kv, norm, head_dim,
+        result = lma_v4_rmsnorm(item_kv, item_kv, norm, head_dim,
                                  config->rms_norm_eps);
-        if (!result) coli_bf16_round_array(item_kv, (size_t)head_dim);
+        if (!result) lma_bf16_round_array(item_kv, (size_t)head_dim);
     }
     V4_ATTN_PROF_MARK(prof_kv);
 
     int compressed = weights->plan.compression_ratio != 0;
-    if (!result) result = coli_v4_rope_precompute_range(
+    if (!result) result = lma_v4_rope_precompute_range(
         cosines, sines, rope_dim, start_position, batch,
         compressed ? config->original_max_position_embeddings : 0,
         compressed ? config->compress_rope_theta : config->rope_theta,
@@ -2887,27 +2887,27 @@ int coli_v4_attention_window_batch_ref(
         float *item_kv = kv + (size_t)item * head_dim;
         for (int head = 0; head < heads; head++) {
             float *rope = item_q + (size_t)head * head_dim + head_dim - rope_dim;
-            coli_v4_rope_apply(rope, 1, rope_dim, item_cos, item_sin, 0);
-            coli_bf16_round_array(rope, (size_t)rope_dim);
+            lma_v4_rope_apply(rope, 1, rope_dim, item_cos, item_sin, 0);
+            lma_bf16_round_array(rope, (size_t)rope_dim);
         }
         float *kv_rope = item_kv + head_dim - rope_dim;
-        coli_v4_rope_apply(kv_rope, 1, rope_dim, item_cos, item_sin, 0);
-        coli_bf16_round_array(kv_rope, (size_t)rope_dim);
+        lma_v4_rope_apply(kv_rope, 1, rope_dim, item_cos, item_sin, 0);
+        lma_bf16_round_array(kv_rope, (size_t)rope_dim);
         size_t nope = (size_t)(head_dim - rope_dim);
         float *qdq = v4_attn_scratch(17, nope * sizeof(*qdq), 0);
         uint8_t *scales = v4_attn_scratch(18, (nope + 63) / 64, 0);
-        if (!qdq || !scales || coli_fp8_activation_qdq_ref(
+        if (!qdq || !scales || lma_fp8_activation_qdq_ref(
                 qdq, scales, item_kv, nope, 64)) result = -1;
         if (!result) {
             memcpy(item_kv, qdq, nope * sizeof(*item_kv));
-            coli_bf16_round_array(item_kv, nope);
+            lma_bf16_round_array(item_kv, nope);
         }
     }
     V4_ATTN_PROF_MARK(prof_rope);
 
     const float *sinks = layer_data(weights, "attn.attn_sink", NULL);
     int gpu_attn_done = 0;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     /* Whole-chunk GPU sparse attention. Requires the indexer selection to be
      * the full compressed set (always true while compressed_count fits under
      * index_topk — softmax over the same SET is order-invariant), so the
@@ -2940,30 +2940,30 @@ int coli_v4_attention_window_batch_ref(
                                                  : compressed_counts[item];
                 }
             /* PERSISTENT DEVICE KV (shared with decode, see
-             * coli_v4_gpu_kv_cache_sync): per-layer ring + append-only
+             * lma_v4_gpu_kv_cache_sync): per-layer ring + append-only
              * compressed buffer; the chunk's own kv rows ride along as a
              * separate buffer and enter the ring only AFTER attention (with
              * slots indexed position%window, appending first would overwrite
              * the oldest rows early chunk tokens still attend to). */
-            if (meta && coli_v4_gpu_kv_cache_sync(
+            if (meta && lma_v4_gpu_kv_cache_sync(
                     weights, state->kv, state->window_size, head_dim,
                     start_position, state->compressed, comp_total)) {
                 if ((use_idx
-                         ? coli_v4_gpu_sparse_attention_batch_cached_idx(
+                         ? lma_v4_gpu_sparse_attention_batch_cached_idx(
                                weights, attended, q, kv, start_position,
                                sinks, meta, compressed_indices,
                                config->index_topk, first, comp_total, heads,
                                head_dim, batch)
-                         : coli_v4_gpu_sparse_attention_batch_cached(
+                         : lma_v4_gpu_sparse_attention_batch_cached(
                                weights, attended, q, kv, start_position,
                                sinks, meta, first, comp_total, heads,
                                head_dim, batch)) == 0) {
                     gpu_attn_done = 1;
-                    coli_v4_gpu_kv_cache_advance(weights, kv, start_position,
+                    lma_v4_gpu_kv_cache_advance(weights, kv, start_position,
                                                  batch, state->window_size,
                                                  head_dim, comp_total);
                 } else {
-                    coli_v4_gpu_kv_cache_poison(weights);
+                    lma_v4_gpu_kv_cache_poison(weights);
                 }
             }
             /* The legacy slab path assumes identity selection — with use_idx
@@ -2983,7 +2983,7 @@ int coli_v4_attention_window_batch_ref(
                     memcpy(values + (size_t)comp_base * head_dim,
                            state->compressed,
                            (size_t)comp_total * head_dim * sizeof(*values));
-                if (coli_v4_gpu_sparse_attention_batch(
+                if (lma_v4_gpu_sparse_attention_batch(
                         weights, attended, q, values, sinks, meta,
                         value_rows, comp_base, heads, head_dim, batch) == 0)
                     gpu_attn_done = 1;
@@ -3006,8 +3006,8 @@ int coli_v4_attention_window_batch_ref(
             for (int head = 0; head < heads; head++) {
                 float *rope = item_attended + (size_t)head * head_dim +
                               head_dim - rope_dim;
-                coli_v4_rope_apply(rope, 1, rope_dim, item_cos, item_sin, 1);
-                coli_bf16_round_array(rope, (size_t)rope_dim);
+                lma_v4_rope_apply(rope, 1, rope_dim, item_cos, item_sin, 1);
+                lma_bf16_round_array(rope, (size_t)rope_dim);
             }
         }
     }
@@ -3053,7 +3053,7 @@ int coli_v4_attention_window_batch_ref(
                     ? compressed_indices[(size_t)item * config->index_topk + i] : i;
                 indices[state->window_size + i] = state->window_size + ordinal;
             }
-            result = coli_v4_sparse_attention_ref(
+            result = lma_v4_sparse_attention_ref(
                 item_attended, item_q, values, sinks, indices, heads, head_dim,
                 kv_count, topk, 1.0f / sqrtf((float)head_dim));
         }
@@ -3063,8 +3063,8 @@ int coli_v4_attention_window_batch_ref(
         for (int head = 0; !result && head < heads; head++) {
             float *rope = item_attended + (size_t)head * head_dim +
                           head_dim - rope_dim;
-            coli_v4_rope_apply(rope, 1, rope_dim, item_cos, item_sin, 1);
-            coli_bf16_round_array(rope, (size_t)rope_dim);
+            lma_v4_rope_apply(rope, 1, rope_dim, item_cos, item_sin, 1);
+            lma_bf16_round_array(rope, (size_t)rope_dim);
         }
     }
     V4_ATTN_PROF_MARK(prof_attn);
@@ -3074,14 +3074,14 @@ int coli_v4_attention_window_batch_ref(
     int scale_columns = (group_width + 127) / 128;
     int scale_rows = (o_rank + 127) / 128;
     int gpu_wo_done = 0;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     /* Whole-chunk grouped wo_a + wo_b on the GPU (fp8-bf16 wo_a mirror). The
      * backend rounds through bf16 between the two GEMMs exactly where the CPU
      * reference rounds oa. */
     if (!result && gpu_batch &&
-        coli_v4_gpu_attention_wo_batch(weights, outputs, attended, groups,
+        lma_v4_gpu_attention_wo_batch(weights, outputs, attended, groups,
                                        (int)q_width, hidden, batch) == 0) {
-        coli_bf16_round_array(outputs, (size_t)batch * hidden);
+        lma_bf16_round_array(outputs, (size_t)batch * hidden);
         gpu_wo_done = 1;
     }
 #endif
@@ -3093,7 +3093,7 @@ int coli_v4_attention_window_batch_ref(
             memcpy(group_inputs + (size_t)item * group_width,
                    attended + (size_t)item * q_width + (size_t)group * group_width,
                    (size_t)group_width * sizeof(*group_inputs));
-        ColiTensorView group_view = wo_a;
+        LmaTensorView group_view = wo_a;
         /* The struct copy drags wo_a's Dsv4CudaTensor handle into a RESHAPED
          * sub-view (one group's o_rank x group_width slice at an offset), but
          * the mirror on the GPU is the FULL matrix: letting the batch matmul
@@ -3110,7 +3110,7 @@ int coli_v4_attention_window_batch_ref(
         group_view.data_bytes = (size_t)o_rank * group_width;
         group_view.scale_bytes =
             (size_t)scale_rows * scale_columns * sizeof(float);
-        result = coli_fp8_matmul_batch_ref(
+        result = lma_fp8_matmul_batch_ref(
             group_outputs, &group_view, group_inputs, batch);
         for (int item = 0; !result && item < batch; item++)
             memcpy(oa + (size_t)item * oa_width + (size_t)group * o_rank,
@@ -3118,9 +3118,9 @@ int coli_v4_attention_window_batch_ref(
                    (size_t)o_rank * sizeof(*oa));
     }
     if (!result && !gpu_wo_done) {
-        coli_bf16_round_array(oa, (size_t)batch * oa_width);
-        result = coli_fp8_matmul_batch_ref(outputs, &wo_b, oa, batch);
-        if (!result) coli_bf16_round_array(outputs, (size_t)batch * hidden);
+        lma_bf16_round_array(oa, (size_t)batch * oa_width);
+        result = lma_fp8_matmul_batch_ref(outputs, &wo_b, oa, batch);
+        if (!result) lma_bf16_round_array(outputs, (size_t)batch * hidden);
     }
     V4_ATTN_PROF_MARK(prof_wo);
     if (prof_t)
@@ -3134,9 +3134,9 @@ int coli_v4_attention_window_batch_ref(
     free(inputs_act_scales); free(inputs_act);
     return result ? set_error(error, error_size, "batched attention failed") : 0;
 }
-#endif /* COLI_V4_UNIT_ATTENTION_BATCH */
+#endif /* LMA_V4_UNIT_ATTENTION_BATCH */
 
-#ifdef COLI_V4_UNIT_COMPRESSOR
+#ifdef LMA_V4_UNIT_COMPRESSOR
 /* ######## deepseek_v4_compressor.c ######## */
 #include "deepseek_v4_internal.h"
 
@@ -3150,9 +3150,9 @@ int coli_v4_attention_window_batch_ref(
 #include "deepseek_v4_internal.h"
 #include "native_quant.h"
 
-struct ColiDeepSeekV4CompressorState {
-    const ColiDeepSeekV4LayerWeights *weights;
-    const ColiDeepSeekV4Config *config;
+struct LmaDeepSeekV4CompressorState {
+    const LmaDeepSeekV4LayerWeights *weights;
+    const LmaDeepSeekV4Config *config;
     int ratio;
     int layer;
     int hidden;
@@ -3176,38 +3176,38 @@ static int set_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
-static const void *layer_value(const ColiDeepSeekV4LayerWeights *weights,
+static const void *layer_value(const LmaDeepSeekV4LayerWeights *weights,
                                const char *suffix) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
+    char name[LMA_V4_MAX_TENSOR_NAME];
     snprintf(name, sizeof(name), "layers.%d.%s", weights->plan.layer, suffix);
-    return coli_v4_layer_data(weights, name, NULL);
+    return lma_v4_layer_data(weights, name, NULL);
 }
 
-int coli_v4_compressor_create(ColiDeepSeekV4CompressorState **output,
-                              const ColiDeepSeekV4LayerWeights *weights,
-                              const ColiDeepSeekV4Config *config,
+int lma_v4_compressor_create(LmaDeepSeekV4CompressorState **output,
+                              const LmaDeepSeekV4LayerWeights *weights,
+                              const LmaDeepSeekV4Config *config,
                               char *error, size_t error_size) {
-    ColiDeepSeekV4CompressorOptions options = {
+    LmaDeepSeekV4CompressorOptions options = {
         "attn.compressor", config ? config->head_dim : 0, 0
     };
-    return coli_v4_compressor_create_with_options(
+    return lma_v4_compressor_create_with_options(
         output, weights, config, &options, error, error_size);
 }
 
-int coli_v4_compressor_create_with_options(
-    ColiDeepSeekV4CompressorState **output,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config,
-    const ColiDeepSeekV4CompressorOptions *options,
+int lma_v4_compressor_create_with_options(
+    LmaDeepSeekV4CompressorState **output,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config,
+    const LmaDeepSeekV4CompressorOptions *options,
     char *error, size_t error_size) {
     if (!output || !weights || !config || !options || !options->prefix ||
         !options->prefix[0] || options->head_dimension <= 0 ||
         weights->plan.compression_ratio < 1)
         return set_error(error, error_size, "unsupported compressor ratio");
-    if (strlen(options->prefix) >= sizeof(((ColiDeepSeekV4CompressorState *)0)->prefix))
+    if (strlen(options->prefix) >= sizeof(((LmaDeepSeekV4CompressorState *)0)->prefix))
         return set_error(error, error_size, "compressor prefix is too long");
     *output = NULL;
-    ColiDeepSeekV4CompressorState *state = calloc(1, sizeof(*state));
+    LmaDeepSeekV4CompressorState *state = calloc(1, sizeof(*state));
     if (!state) return set_error(error, error_size, "out of memory creating compressor");
     state->weights = weights;
     state->config = config;
@@ -3225,7 +3225,7 @@ int coli_v4_compressor_create_with_options(
     state->kv_state = calloc(count, sizeof(*state->kv_state));
     state->score_state = malloc(count * sizeof(*state->score_state));
     if (!state->kv_state || !state->score_state) {
-        coli_v4_compressor_destroy(state);
+        lma_v4_compressor_destroy(state);
         return set_error(error, error_size, "out of memory allocating compressor state");
     }
     for (size_t i = 0; i < count; i++) state->score_state[i] = -INFINITY;
@@ -3233,8 +3233,8 @@ int coli_v4_compressor_create_with_options(
     return 0;
 }
 
-int coli_v4_compressor_bind_weights(ColiDeepSeekV4CompressorState *state,
-                                    const ColiDeepSeekV4LayerWeights *weights,
+int lma_v4_compressor_bind_weights(LmaDeepSeekV4CompressorState *state,
+                                    const LmaDeepSeekV4LayerWeights *weights,
                                     char *error, size_t error_size) {
     if (!state || !weights ||
         weights->plan.layer != state->layer ||
@@ -3244,26 +3244,26 @@ int coli_v4_compressor_bind_weights(ColiDeepSeekV4CompressorState *state,
     return 0;
 }
 
-void coli_v4_compressor_reset(ColiDeepSeekV4CompressorState *state) {
+void lma_v4_compressor_reset(LmaDeepSeekV4CompressorState *state) {
     if (!state) return;
     size_t count = (size_t)state->state_rows * state->projection_dim;
     memset(state->kv_state, 0, count * sizeof(*state->kv_state));
     for (size_t i = 0; i < count; i++) state->score_state[i] = -INFINITY;
 }
 
-void coli_v4_compressor_destroy(ColiDeepSeekV4CompressorState *state) {
+void lma_v4_compressor_destroy(LmaDeepSeekV4CompressorState *state) {
     if (!state) return;
     free(state->score_state);
     free(state->kv_state);
     free(state);
 }
 
-static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
+static int compressor_pool_and_emit(LmaDeepSeekV4CompressorState *state,
                                     float *output, int *produced,
                                     int position, char *error,
                                     size_t error_size);
 
-int coli_v4_compressor_step(ColiDeepSeekV4CompressorState *state,
+int lma_v4_compressor_step(LmaDeepSeekV4CompressorState *state,
                             float *output, int *produced,
                             const float *input, int position,
                             char *error, size_t error_size) {
@@ -3292,8 +3292,8 @@ int coli_v4_compressor_step(ColiDeepSeekV4CompressorState *state,
         const uint16_t *gate_weight = wgate + (size_t)row * hidden;
         for (int column = 0; column < hidden; column++) {
             float value = input[column];
-            kv_sum += coli_bf16_decode(kv_weight[column]) * value;
-            gate_sum += coli_bf16_decode(gate_weight[column]) * value;
+            kv_sum += lma_bf16_decode(kv_weight[column]) * value;
+            gate_sum += lma_bf16_decode(gate_weight[column]) * value;
         }
         kv_row[row] = kv_sum;
         score_row[row] = gate_sum + ape[(size_t)slot * projection + row];
@@ -3306,7 +3306,7 @@ int coli_v4_compressor_step(ColiDeepSeekV4CompressorState *state,
  * matvec results (computed batched on the GPU); the ape bias, pooling, norm,
  * RoPE, quantization and the sliding state all still run here so the CPU
  * state stays canonical for decode and CPU fallbacks. */
-int coli_v4_compressor_advance(ColiDeepSeekV4CompressorState *state,
+int lma_v4_compressor_advance(LmaDeepSeekV4CompressorState *state,
                                float *output, int *produced,
                                const float *kv_proj, const float *gate_proj,
                                int position, char *error, size_t error_size) {
@@ -3331,7 +3331,7 @@ int coli_v4_compressor_advance(ColiDeepSeekV4CompressorState *state,
                                     error, error_size);
 }
 
-static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
+static int compressor_pool_and_emit(LmaDeepSeekV4CompressorState *state,
                                     float *output, int *produced,
                                     int position, char *error,
                                     size_t error_size) {
@@ -3375,7 +3375,7 @@ static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
                state->score_state + (size_t)state->ratio * projection,
                (size_t)state->ratio * projection * sizeof(*state->score_state));
     }
-    coli_bf16_round_array(output, (size_t)dimension);
+    lma_bf16_round_array(output, (size_t)dimension);
     snprintf(suffix, sizeof(suffix), "%s.norm.weight", state->prefix);
     const uint16_t *raw_norm = layer_value(state->weights, suffix);
     float *norm = malloc((size_t)dimension * sizeof(*norm));
@@ -3383,16 +3383,16 @@ static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
         free(norm);
         return set_error(error, error_size, "missing compressor norm");
     }
-    for (int i = 0; i < dimension; i++) norm[i] = coli_bf16_decode(raw_norm[i]);
-    coli_v4_rmsnorm(output, output, norm, dimension, state->config->rms_norm_eps);
-    coli_bf16_round_array(output, (size_t)dimension);
+    for (int i = 0; i < dimension; i++) norm[i] = lma_bf16_decode(raw_norm[i]);
+    lma_v4_rmsnorm(output, output, norm, dimension, state->config->rms_norm_eps);
+    lma_bf16_round_array(output, (size_t)dimension);
     free(norm);
 
     int rope_position = position + 1 - state->ratio;
     int pairs = state->rope_dim / 2;
     float *cosines = malloc((size_t)pairs * sizeof(*cosines));
     float *sines = malloc((size_t)pairs * sizeof(*sines));
-    if (!cosines || !sines || coli_v4_rope_position(
+    if (!cosines || !sines || lma_v4_rope_position(
             cosines, sines, state->rope_dim, rope_position,
             state->config->original_max_position_embeddings,
             state->config->compress_rope_theta, state->config->rope_factor,
@@ -3401,8 +3401,8 @@ static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
         return set_error(error, error_size, "cannot create compressor RoPE table");
     }
     float *rope = output + dimension - state->rope_dim;
-    coli_v4_rope_apply(rope, 1, state->rope_dim, cosines, sines, 0);
-    coli_bf16_round_array(rope, (size_t)state->rope_dim);
+    lma_v4_rope_apply(rope, 1, state->rope_dim, cosines, sines, 0);
+    lma_bf16_round_array(rope, (size_t)state->rope_dim);
     free(sines); free(cosines);
 
     size_t quantized = state->rotate_fp4
@@ -3416,25 +3416,25 @@ static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
     }
     int quant_error = 0;
     if (state->rotate_fp4)
-        quant_error = coli_hadamard_bf16_ref(output, (size_t)dimension) ||
-                      coli_fp4_activation_qdq_ref(qdq, scales, output,
+        quant_error = lma_hadamard_bf16_ref(output, (size_t)dimension) ||
+                      lma_fp4_activation_qdq_ref(qdq, scales, output,
                                                   quantized, block);
     else
-        quant_error = coli_fp8_activation_qdq_ref(qdq, scales, output,
+        quant_error = lma_fp8_activation_qdq_ref(qdq, scales, output,
                                                   quantized, block);
     if (quant_error) {
         free(scales); free(qdq);
         return set_error(error, error_size, "compressor activation quantization failed");
     }
     memcpy(output, qdq, quantized * sizeof(*output));
-    coli_bf16_round_array(output, quantized);
+    lma_bf16_round_array(output, quantized);
     free(scales); free(qdq);
     *produced = 1;
     return 0;
 }
-#endif /* COLI_V4_UNIT_COMPRESSOR */
+#endif /* LMA_V4_UNIT_COMPRESSOR */
 
-#ifdef COLI_V4_UNIT_INDEXER
+#ifdef LMA_V4_UNIT_INDEXER
 /* ######## deepseek_v4_indexer.c ######## */
 #include "deepseek_v4_internal.h"
 
@@ -3450,15 +3450,15 @@ static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
 #include "deepseek_v4_internal.h"
 #include "native_quant.h"
 
-struct ColiDeepSeekV4Indexer {
-    const ColiDeepSeekV4LayerWeights *weights;
-    const ColiDeepSeekV4Config *config;
-    ColiDeepSeekV4CompressorState *compressor;
+struct LmaDeepSeekV4Indexer {
+    const LmaDeepSeekV4LayerWeights *weights;
+    const LmaDeepSeekV4Config *config;
+    LmaDeepSeekV4CompressorState *compressor;
     int layer;
     int capacity;
     int count;
     float *compressed;
-    /* Persistent arena scratch buffer for coli_v4_indexer_select_batch.
+    /* Persistent arena scratch buffer for lma_v4_indexer_select_batch.
      * Assumes single-threaded execution per indexer instance (standard in SERVE chunk prefill). */
     void *scratch_buf;
     size_t scratch_cap;
@@ -3477,32 +3477,32 @@ static int set_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
-static const void *value(const ColiDeepSeekV4LayerWeights *weights,
+static const void *value(const LmaDeepSeekV4LayerWeights *weights,
                          const char *suffix,
-                         const ColiDeepSeekV4TensorSpec **spec) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
+                         const LmaDeepSeekV4TensorSpec **spec) {
+    char name[LMA_V4_MAX_TENSOR_NAME];
     snprintf(name, sizeof(name), "layers.%d.%s", weights->plan.layer, suffix);
-    return coli_v4_layer_data(weights, name, spec);
+    return lma_v4_layer_data(weights, name, spec);
 }
 
-static int fp8_view(ColiTensorView *view,
-                    const ColiDeepSeekV4LayerWeights *weights,
+static int fp8_view(LmaTensorView *view,
+                    const LmaDeepSeekV4LayerWeights *weights,
                     const char *prefix) {
     char suffix[128];
-    const ColiDeepSeekV4TensorSpec *ws = NULL, *ss = NULL;
+    const LmaDeepSeekV4TensorSpec *ws = NULL, *ss = NULL;
     snprintf(suffix, sizeof(suffix), "%s.weight", prefix);
     const void *data = value(weights, suffix, &ws);
     snprintf(suffix, sizeof(suffix), "%s.scale", prefix);
     const void *scales = value(weights, suffix, &ss);
     if (!data || !scales || !ws || !ss || ws->rank != 2 ||
-        ws->dtype != COLI_ST_F8_E4M3 || ss->dtype != COLI_ST_F8_E8M0)
+        ws->dtype != LMA_ST_F8_E4M3 || ss->dtype != LMA_ST_F8_E8M0)
         return -1;
-    *view = (ColiTensorView){
-        COLI_TENSOR_FP8_E4M3_BLOCK, COLI_SCALE_F32, data, scales,
+    *view = (LmaTensorView){
+        LMA_TENSOR_FP8_E4M3_BLOCK, LMA_SCALE_F32, data, scales,
         (size_t)(ws->shape[0] * ws->shape[1]),
         (size_t)(ss->shape[0] * ss->shape[1]) * sizeof(float),
         ws->shape[0], ws->shape[1], ws->packed_rows8 ? 8 : 128, 128,
-        coli_v4_layer_gpu(weights, prefix)
+        lma_v4_layer_gpu(weights, prefix)
     };
     return 0;
 }
@@ -3514,16 +3514,16 @@ static int descending_score(const void *left, const void *right) {
     return a->index - b->index;
 }
 
-int coli_v4_indexer_create(ColiDeepSeekV4Indexer **output,
-                           const ColiDeepSeekV4LayerWeights *weights,
-                           const ColiDeepSeekV4Config *config,
+int lma_v4_indexer_create(LmaDeepSeekV4Indexer **output,
+                           const LmaDeepSeekV4LayerWeights *weights,
+                           const LmaDeepSeekV4Config *config,
                            int max_context, char *error, size_t error_size) {
     if (!output || !weights || !config || !weights->plan.has_indexer ||
         max_context < 4 || config->index_head_dim < 1 ||
         config->index_n_heads < 1)
         return set_error(error, error_size, "invalid indexer options");
     *output = NULL;
-    ColiDeepSeekV4Indexer *state = calloc(1, sizeof(*state));
+    LmaDeepSeekV4Indexer *state = calloc(1, sizeof(*state));
     if (!state) return set_error(error, error_size, "out of memory creating indexer");
     state->weights = weights;
     state->config = config;
@@ -3532,46 +3532,46 @@ int coli_v4_indexer_create(ColiDeepSeekV4Indexer **output,
     if (state->capacity > 128) state->capacity = 128;
     state->compressed = calloc((size_t)state->capacity * config->index_head_dim,
                                sizeof(*state->compressed));
-    ColiDeepSeekV4CompressorOptions options = {
+    LmaDeepSeekV4CompressorOptions options = {
         "attn.indexer.compressor", config->index_head_dim, 1
     };
-    if (!state->compressed || coli_v4_compressor_create_with_options(
+    if (!state->compressed || lma_v4_compressor_create_with_options(
             &state->compressor, weights, config, &options, error, error_size)) {
-        coli_v4_indexer_destroy(state);
+        lma_v4_indexer_destroy(state);
         return set_error(error, error_size, "cannot create indexer compressor");
     }
     *output = state;
     return 0;
 }
 
-int coli_v4_indexer_bind_weights(ColiDeepSeekV4Indexer *state,
-                                 const ColiDeepSeekV4LayerWeights *weights,
+int lma_v4_indexer_bind_weights(LmaDeepSeekV4Indexer *state,
+                                 const LmaDeepSeekV4LayerWeights *weights,
                                  char *error, size_t error_size) {
     if (!state || !weights || weights->plan.layer != state->layer ||
         !weights->plan.has_indexer)
         return set_error(error, error_size, "incompatible indexer weights");
     state->weights = weights;
-    return coli_v4_compressor_bind_weights(state->compressor, weights,
+    return lma_v4_compressor_bind_weights(state->compressor, weights,
                                             error, error_size);
 }
 
-void coli_v4_indexer_reset(ColiDeepSeekV4Indexer *state) {
+void lma_v4_indexer_reset(LmaDeepSeekV4Indexer *state) {
     if (!state) return;
     state->count = 0;
     memset(state->compressed, 0,
            (size_t)state->capacity * state->config->index_head_dim * sizeof(float));
-    coli_v4_compressor_reset(state->compressor);
+    lma_v4_compressor_reset(state->compressor);
 }
 
-void coli_v4_indexer_destroy(ColiDeepSeekV4Indexer *state) {
+void lma_v4_indexer_destroy(LmaDeepSeekV4Indexer *state) {
     if (!state) return;
-    coli_v4_compressor_destroy(state->compressor);
+    lma_v4_compressor_destroy(state->compressor);
     free(state->compressed);
     free(state->scratch_buf);
     free(state);
 }
 
-static void *indexer_scratch_alloc(ColiDeepSeekV4Indexer *state, size_t needed) {
+static void *indexer_scratch_alloc(LmaDeepSeekV4Indexer *state, size_t needed) {
     if (!state) return NULL;
     if (state->scratch_cap < needed) {
         size_t new_cap = needed < 65536 ? 65536 : (needed + needed / 4);
@@ -3585,13 +3585,13 @@ static void *indexer_scratch_alloc(ColiDeepSeekV4Indexer *state, size_t needed) 
 }
 
 static int apply_position_rope(float *queries,
-                               const ColiDeepSeekV4Config *config,
+                               const LmaDeepSeekV4Config *config,
                                int position) {
     int heads = config->index_n_heads, dimension = config->index_head_dim;
     int rope_dim = config->qk_rope_head_dim, pairs = rope_dim / 2;
     float *cosines = malloc((size_t)pairs * sizeof(*cosines));
     float *sines = malloc((size_t)pairs * sizeof(*sines));
-    if (!cosines || !sines || coli_v4_rope_position(
+    if (!cosines || !sines || lma_v4_rope_position(
             cosines, sines, rope_dim, position,
             config->original_max_position_embeddings,
             config->compress_rope_theta, config->rope_factor,
@@ -3600,9 +3600,9 @@ static int apply_position_rope(float *queries,
     }
     for (int head = 0; head < heads; head++) {
         float *query = queries + (size_t)head * dimension;
-        coli_v4_rope_apply(query + dimension - rope_dim, 1, rope_dim,
+        lma_v4_rope_apply(query + dimension - rope_dim, 1, rope_dim,
                            cosines, sines, 0);
-        coli_bf16_round_array(query + dimension - rope_dim, (size_t)rope_dim);
+        lma_bf16_round_array(query + dimension - rope_dim, (size_t)rope_dim);
     }
     free(sines); free(cosines);
     return 0;
@@ -3625,7 +3625,7 @@ static int indexer_identity_wanted(void) {
 
 /* Advance the indexer's compressor by one position (no scoring). Returns the
  * candidate count visible to this position, or -1. */
-static int indexer_advance(ColiDeepSeekV4Indexer *state, const float *input,
+static int indexer_advance(LmaDeepSeekV4Indexer *state, const float *input,
                            int position, const float *kv_proj,
                            const float *gate_proj, char *error,
                            size_t error_size) {
@@ -3644,10 +3644,10 @@ static int indexer_advance(ColiDeepSeekV4Indexer *state, const float *input,
     float *next = state->count < state->capacity
         ? state->compressed + (size_t)state->count * dimension : NULL;
     if (kv_proj && gate_proj
-            ? coli_v4_compressor_advance(state->compressor, next, &produced,
+            ? lma_v4_compressor_advance(state->compressor, next, &produced,
                                          kv_proj, gate_proj, position,
                                          error, error_size)
-            : coli_v4_compressor_step(state->compressor, next, &produced, input,
+            : lma_v4_compressor_step(state->compressor, next, &produced, input,
                                       position, error, error_size)) return -1;
     if (produced) {
         if (state->count >= state->capacity)
@@ -3657,7 +3657,7 @@ static int indexer_advance(ColiDeepSeekV4Indexer *state, const float *input,
     return state->count;
 }
 
-int coli_v4_indexer_advance(ColiDeepSeekV4Indexer *state, const float *input,
+int lma_v4_indexer_advance(LmaDeepSeekV4Indexer *state, const float *input,
                             int position, const float *kv_proj,
                             const float *gate_proj, char *error,
                             size_t error_size) {
@@ -3671,19 +3671,19 @@ int coli_v4_indexer_advance(ColiDeepSeekV4Indexer *state, const float *input,
  * hadamard + fp4 round trip. queries holds heads*dimension floats fresh from
  * the wq_b projection. */
 static int indexer_prepare_queries(float *queries, uint8_t *scales, float *qdq,
-                                   const ColiDeepSeekV4Config *config,
+                                   const LmaDeepSeekV4Config *config,
                                    int position) {
     int dimension = config->index_head_dim, heads = config->index_n_heads;
-    coli_bf16_round_array(queries, (size_t)heads * dimension);
+    lma_bf16_round_array(queries, (size_t)heads * dimension);
     int result = apply_position_rope(queries, config, position);
     for (int head = 0; !result && head < heads; head++) {
         float *query = queries + (size_t)head * dimension;
-        result = coli_hadamard_bf16_ref(query, (size_t)dimension);
-        if (!result) result = coli_fp4_activation_qdq_ref(
+        result = lma_hadamard_bf16_ref(query, (size_t)dimension);
+        if (!result) result = lma_fp4_activation_qdq_ref(
             qdq, scales, query, (size_t)dimension, 32);
         if (!result) {
             memcpy(query, qdq, (size_t)dimension * sizeof(*query));
-            coli_bf16_round_array(query, (size_t)dimension);
+            lma_bf16_round_array(query, (size_t)dimension);
         }
     }
     return result;
@@ -3691,14 +3691,14 @@ static int indexer_prepare_queries(float *queries, uint8_t *scales, float *qdq,
 
 static void indexer_head_weights(float *head_weights, const uint16_t *raw,
                                  const float *input,
-                                 const ColiDeepSeekV4Config *config) {
+                                 const LmaDeepSeekV4Config *config) {
     int heads = config->index_n_heads, dimension = config->index_head_dim;
     float weight_scale = 1.0f / sqrtf((float)(dimension * heads));
     for (int head = 0; head < heads; head++) {
         float sum = 0.0f;
         const uint16_t *row = raw + (size_t)head * config->hidden_size;
         for (int column = 0; column < config->hidden_size; column++)
-            sum += coli_bf16_decode(row[column]) * input[column];
+            sum += lma_bf16_decode(row[column]) * input[column];
         head_weights[head] = sum * weight_scale;
     }
 }
@@ -3716,13 +3716,13 @@ static float indexer_score_one(const float *q, const float *key,
 }
 
 /* Batched selection for prefill chunks. counts[t] is the candidate count
- * visible to token t (from coli_v4_indexer_advance, in order); every token
+ * visible to token t (from lma_v4_indexer_advance, in order); every token
  * whose count fits under index_topk gets identity selection for free, the
  * rest are scored together: reference wq_b matvec per scored token, then
  * one scoring kernel launch for the chunk (per-token CPU loop when the
  * backend declines). Numerics match the per-token path exactly:
  * same rounding chain, same sequential fp32 accumulation, same qsort. */
-int coli_v4_indexer_select_batch(ColiDeepSeekV4Indexer *state, int *indices,
+int lma_v4_indexer_select_batch(LmaDeepSeekV4Indexer *state, int *indices,
                                  int index_capacity, const float *query_ranks,
                                  const float *inputs, int start_position,
                                  int batch, const int *counts, int *selected,
@@ -3730,7 +3730,7 @@ int coli_v4_indexer_select_batch(ColiDeepSeekV4Indexer *state, int *indices,
     if (!state || !indices || index_capacity < 1 || !query_ranks || !inputs ||
         start_position < 0 || batch < 1 || !counts || !selected)
         return set_error(error, error_size, "invalid indexer batch arguments");
-    const ColiDeepSeekV4Config *config = state->config;
+    const LmaDeepSeekV4Config *config = state->config;
     int dimension = config->index_head_dim, heads = config->index_n_heads;
     int topk = config->index_topk;
     int need = 0, max_count = 0;
@@ -3760,7 +3760,7 @@ int coli_v4_indexer_select_batch(ColiDeepSeekV4Indexer *state, int *indices,
     double t_proj = 0, t_prep = 0, t_score = 0, t_sort = 0;
 #define IDX_PROF_MARK(acc) do { if (prof) {         clock_gettime(CLOCK_MONOTONIC, &ts_now);         acc += (ts_now.tv_sec - ts_prev.tv_sec) +                (ts_now.tv_nsec - ts_prev.tv_nsec) * 1e-9;         ts_prev = ts_now; } } while (0)
     if (prof) clock_gettime(CLOCK_MONOTONIC, &ts_prev);
-    ColiTensorView wq;
+    LmaTensorView wq;
     if (fp8_view(&wq, state->weights, "attn.indexer.wq_b")) {
         __atomic_clear(&state->in_use, __ATOMIC_RELEASE);
         return set_error(error, error_size, "missing indexer query weight");
@@ -3768,7 +3768,7 @@ int coli_v4_indexer_select_batch(ColiDeepSeekV4Indexer *state, int *indices,
     const uint16_t *raw_weights = value(
         state->weights, "attn.indexer.weights_proj.weight", NULL);
     size_t qn = (size_t)heads * dimension;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     size_t cols = (size_t)wq.columns;
 #endif
 
@@ -3780,7 +3780,7 @@ int coli_v4_indexer_select_batch(ColiDeepSeekV4Indexer *state, int *indices,
     size_t sz_stoken = ALIGN32((size_t)need * sizeof(int));
     size_t sz_scores = ALIGN32((size_t)need * max_count * sizeof(float));
     size_t sz_ranked = ALIGN32((size_t)max_count * sizeof(IndexScore));
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     size_t sz_xq = (need <= 1024) ? ALIGN32((size_t)need * cols * sizeof(float)) : 0;
     size_t sz_yq = (need <= 1024) ? ALIGN32((size_t)need * qn * sizeof(float)) : 0;
     size_t sz_xs = (need <= 1024) ? ALIGN32((size_t)need * (cols / 128)) : 0;
@@ -3815,7 +3815,7 @@ int coli_v4_indexer_select_batch(ColiDeepSeekV4Indexer *state, int *indices,
      * no faster at 8192x1024 and its activation quantization is not bitwise
      * the reference — the top-k boundary then flips.) */
     int projected = 0;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     if (!result && need <= 1024) {
         float *xq = (float *)scratch_ptr; scratch_ptr += sz_xq;
         float *yq = (float *)scratch_ptr; scratch_ptr += sz_yq;
@@ -3825,13 +3825,13 @@ int coli_v4_indexer_select_batch(ColiDeepSeekV4Indexer *state, int *indices,
             int i = 0;
             for (int t = 0; t < batch; t++) {
                 if (selected[t] >= 0) continue;
-                if (coli_fp8_activation_qdq_ref(
+                if (lma_fp8_activation_qdq_ref(
                         xq + (size_t)i * cols, xs + (size_t)i * (cols / 128),
                         query_ranks + (size_t)t * cols, cols, 128)) { qok = 0; break; }
                 i++;
             }
         }
-        if (qok && coli_v4_gpu_fp8_ref_matmul(state->weights, &wq, xq, need,
+        if (qok && lma_v4_gpu_fp8_ref_matmul(state->weights, &wq, xq, need,
                                               yq) == 0) {
             int i = 0;
             for (int t = 0; t < batch; t++) {
@@ -3855,7 +3855,7 @@ int coli_v4_indexer_select_batch(ColiDeepSeekV4Indexer *state, int *indices,
             long long bad = 0; double worst = 0.0;
             for (int t = 0; ref && t < batch; t++) {
                 if (selected[t] >= 0) continue;
-                if (coli_fp8_matvec_ref(ref, &wq,
+                if (lma_fp8_matvec_ref(ref, &wq,
                                         query_ranks + (size_t)t * wq.columns)) break;
                 for (size_t i = 0; i < qn; i++) {
                     float got = queries[(size_t)t * qn + i];
@@ -3872,7 +3872,7 @@ int coli_v4_indexer_select_batch(ColiDeepSeekV4Indexer *state, int *indices,
     if (!result && !projected)
         for (int t = 0; !result && t < batch; t++)
             if (selected[t] < 0 &&
-                coli_fp8_matvec_ref(queries + (size_t)t * qn, &wq,
+                lma_fp8_matvec_ref(queries + (size_t)t * qn, &wq,
                                     query_ranks + (size_t)t * wq.columns))
                 result = set_error(error, error_size,
                                    "indexer query projection failed");
@@ -3917,9 +3917,9 @@ int coli_v4_indexer_select_batch(ColiDeepSeekV4Indexer *state, int *indices,
     }
     IDX_PROF_MARK(t_prep);
     int gpu_scored = 0;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     if (!result &&
-        coli_v4_gpu_indexer_score_batch(state->weights, scores, sq,
+        lma_v4_gpu_indexer_score_batch(state->weights, scores, sq,
                                         state->compressed, head_weights,
                                         scounts, need, heads, dimension,
                                         max_count) == 0)
@@ -3974,7 +3974,7 @@ int coli_v4_indexer_select_batch(ColiDeepSeekV4Indexer *state, int *indices,
     return result;
 }
 
-static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
+static int indexer_step_common(LmaDeepSeekV4Indexer *state, int *indices,
                                int index_capacity, const float *query_rank,
                                const float *input, int position,
                                const float *kv_proj, const float *gate_proj,
@@ -3998,10 +3998,10 @@ static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
     float *next = state->count < state->capacity
         ? state->compressed + (size_t)state->count * dimension : NULL;
     if (kv_proj && gate_proj
-            ? coli_v4_compressor_advance(state->compressor, next, &produced,
+            ? lma_v4_compressor_advance(state->compressor, next, &produced,
                                          kv_proj, gate_proj, position,
                                          error, error_size)
-            : coli_v4_compressor_step(state->compressor, next, &produced, input,
+            : lma_v4_compressor_step(state->compressor, next, &produced, input,
                                       position, error, error_size)) return -1;
     if (produced) {
         if (state->count >= state->capacity)
@@ -4022,7 +4022,7 @@ static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
         return state->count;
     }
 
-    ColiTensorView wq;
+    LmaTensorView wq;
     if (fp8_view(&wq, state->weights, "attn.indexer.wq_b"))
         return set_error(error, error_size, "missing indexer query weight");
     float *queries = malloc((size_t)heads * dimension * sizeof(*queries));
@@ -4036,17 +4036,17 @@ static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
         free(qdq); free(scales); free(scores); free(head_weights); free(queries);
         return set_error(error, error_size, "out of memory scoring indexer");
     }
-    int result = coli_fp8_matvec_ref(queries, &wq, query_rank);
-    if (!result) coli_bf16_round_array(queries, (size_t)heads * dimension);
+    int result = lma_fp8_matvec_ref(queries, &wq, query_rank);
+    if (!result) lma_bf16_round_array(queries, (size_t)heads * dimension);
     if (!result) result = apply_position_rope(queries, state->config, position);
     for (int head = 0; !result && head < heads; head++) {
         float *query = queries + (size_t)head * dimension;
-        result = coli_hadamard_bf16_ref(query, (size_t)dimension);
-        if (!result) result = coli_fp4_activation_qdq_ref(
+        result = lma_hadamard_bf16_ref(query, (size_t)dimension);
+        if (!result) result = lma_fp4_activation_qdq_ref(
             qdq, scales, query, (size_t)dimension, 32);
         if (!result) {
             memcpy(query, qdq, (size_t)dimension * sizeof(*query));
-            coli_bf16_round_array(query, (size_t)dimension);
+            lma_bf16_round_array(query, (size_t)dimension);
         }
     }
     float weight_scale = 1.0f / sqrtf((float)(dimension * heads));
@@ -4054,7 +4054,7 @@ static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
         float sum = 0.0f;
         const uint16_t *row = raw_weights + (size_t)head * state->config->hidden_size;
         for (int column = 0; column < state->config->hidden_size; column++)
-            sum += coli_bf16_decode(row[column]) * input[column];
+            sum += lma_bf16_decode(row[column]) * input[column];
         head_weights[head] = sum * weight_scale;
     }
     for (int candidate = 0; !result && candidate < state->count; candidate++) {
@@ -4077,7 +4077,7 @@ static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
     return result ? set_error(error, error_size, "indexer scoring failed") : selected;
 }
 
-int coli_v4_indexer_step(ColiDeepSeekV4Indexer *state, int *indices,
+int lma_v4_indexer_step(LmaDeepSeekV4Indexer *state, int *indices,
                          int index_capacity, const float *query_rank,
                          const float *input, int position,
                          char *error, size_t error_size) {
@@ -4088,7 +4088,7 @@ int coli_v4_indexer_step(ColiDeepSeekV4Indexer *state, int *indices,
 /* GPU-projected variant: kv_proj/gate_proj are this position's rows of the
  * indexer-compressor wkv/wgate projections (batched on the GPU); scoring and
  * every piece of indexer state remain on the CPU. */
-int coli_v4_indexer_step_projected(ColiDeepSeekV4Indexer *state, int *indices,
+int lma_v4_indexer_step_projected(LmaDeepSeekV4Indexer *state, int *indices,
                                    int index_capacity, const float *query_rank,
                                    const float *input, int position,
                                    const float *kv_proj, const float *gate_proj,
@@ -4098,17 +4098,17 @@ int coli_v4_indexer_step_projected(ColiDeepSeekV4Indexer *state, int *indices,
                                error, error_size);
 }
 
-const float *coli_v4_indexer_compressed_values(
-    const ColiDeepSeekV4Indexer *state) {
+const float *lma_v4_indexer_compressed_values(
+    const LmaDeepSeekV4Indexer *state) {
     return state ? state->compressed : NULL;
 }
 
-int coli_v4_indexer_compressed_count(const ColiDeepSeekV4Indexer *state) {
+int lma_v4_indexer_compressed_count(const LmaDeepSeekV4Indexer *state) {
     return state ? state->count : 0;
 }
-#endif /* COLI_V4_UNIT_INDEXER */
+#endif /* LMA_V4_UNIT_INDEXER */
 
-#ifdef COLI_V4_UNIT_SPARSE_ATTENTION
+#ifdef LMA_V4_UNIT_SPARSE_ATTENTION
 /* ######## deepseek_v4_sparse_attention.c ######## */
 #include "deepseek_v4_internal.h"
 
@@ -4119,7 +4119,7 @@ int coli_v4_indexer_compressed_count(const ColiDeepSeekV4Indexer *state) {
 
 #include "native_quant.h"
 
-int coli_v4_sparse_attention_ref(float *output, const float *queries,
+int lma_v4_sparse_attention_ref(float *output, const float *queries,
                                  const float *kv, const float *sinks,
                                  const int *indices, int heads,
                                  int head_dimension, int kv_count, int topk,
@@ -4162,20 +4162,20 @@ int coli_v4_sparse_attention_ref(float *output, const float *queries,
             float probability = expf(scores[rank] - maximum);
             denominator += probability;
             /* TileLang casts the exp fragment to BF16 before value GEMM. */
-            probability = coli_bf16_round(probability);
+            probability = lma_bf16_round(probability);
             const float *value = kv + (size_t)indices[rank] * head_dimension;
             for (int column = 0; column < head_dimension; column++)
                 head_output[column] += probability * value[column];
         }
         for (int column = 0; column < head_dimension; column++)
-            head_output[column] = coli_bf16_round(head_output[column] / denominator);
+            head_output[column] = lma_bf16_round(head_output[column] / denominator);
     }
     free(scores);
     return 0;
 }
-#endif /* COLI_V4_UNIT_SPARSE_ATTENTION */
+#endif /* LMA_V4_UNIT_SPARSE_ATTENTION */
 
-#ifdef COLI_V4_UNIT_BLOCK_HYBRID
+#ifdef LMA_V4_UNIT_BLOCK_HYBRID
 
 /* Why the MoE step failed, for the block to put in its error string.
  *
@@ -4206,15 +4206,15 @@ static int moe_fail(const char *format, ...) {
 /* Windows-native routed-expert I/O pipeline. The original block implementation
  * is retained under serial symbols. Public entry points normally keep three
  * persistent lookup workers so reads N+1..N+3 overlap ordered expert compute.
- * COLI_V4_DISABLE_DUAL_EXPERT_LOADER restores the one-worker pipeline. */
-#if !defined(COLI_V4_DISABLE_DUAL_EXPERT_LOADER) && \
-    !defined(COLI_V4_DISABLE_PERSISTENT_EXPERT_LOADER) && \
-    !defined(COLI_V4_EXPERIMENTAL_SYNC_EXPERT_LOOKUP) && \
-    !defined(COLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER)
-#define COLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
+ * LMA_V4_DISABLE_DUAL_EXPERT_LOADER restores the one-worker pipeline. */
+#if !defined(LMA_V4_DISABLE_DUAL_EXPERT_LOADER) && \
+    !defined(LMA_V4_DISABLE_PERSISTENT_EXPERT_LOADER) && \
+    !defined(LMA_V4_EXPERIMENTAL_SYNC_EXPERT_LOOKUP) && \
+    !defined(LMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER)
+#define LMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
 #endif
-#define coli_v4_block_token_ref coli_v4_block_token_serial_ref
-#define coli_v4_block_window_token_ref coli_v4_block_window_token_serial_ref
+#define lma_v4_block_token_ref lma_v4_block_token_serial_ref
+#define lma_v4_block_window_token_ref lma_v4_block_window_token_serial_ref
 /* ---- begin include deepseek_v4_block.c ---- */
 #include "deepseek_v4_internal.h"
 #include "deepseek_v4_hybrid.h"
@@ -4241,42 +4241,42 @@ static int set_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
-static const void *value(const ColiDeepSeekV4LayerWeights *weights,
+static const void *value(const LmaDeepSeekV4LayerWeights *weights,
                          const char *suffix,
-                         const ColiDeepSeekV4TensorSpec **spec) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
+                         const LmaDeepSeekV4TensorSpec **spec) {
+    char name[LMA_V4_MAX_TENSOR_NAME];
     snprintf(name, sizeof(name), "layers.%d.%s", weights->plan.layer, suffix);
-    return coli_v4_layer_data(weights, name, spec);
+    return lma_v4_layer_data(weights, name, spec);
 }
 
-static int fp8_view(ColiTensorView *view,
-                    const ColiDeepSeekV4LayerWeights *weights,
+static int fp8_view(LmaTensorView *view,
+                    const LmaDeepSeekV4LayerWeights *weights,
                     const char *prefix) {
     char name[128];
-    const ColiDeepSeekV4TensorSpec *ws = NULL, *ss = NULL;
+    const LmaDeepSeekV4TensorSpec *ws = NULL, *ss = NULL;
     snprintf(name, sizeof(name), "%s.weight", prefix);
     const void *data = value(weights, name, &ws);
     snprintf(name, sizeof(name), "%s.scale", prefix);
     const void *scales = value(weights, name, &ss);
     if (!data || !scales || !ws || !ss || ws->rank != 2) return -1;
-    *view = (ColiTensorView){
-        COLI_TENSOR_FP8_E4M3_BLOCK, COLI_SCALE_F32, data, scales,
+    *view = (LmaTensorView){
+        LMA_TENSOR_FP8_E4M3_BLOCK, LMA_SCALE_F32, data, scales,
         (size_t)(ws->shape[0] * ws->shape[1]),
         (size_t)(ss->shape[0] * ss->shape[1]) * sizeof(float),
         ws->shape[0], ws->shape[1], ws->packed_rows8 ? 8 : 128, 128,
-        coli_v4_layer_gpu(weights, prefix)
+        lma_v4_layer_gpu(weights, prefix)
     };
     return 0;
 }
 
 static void decode_bf16(float *output, const uint16_t *input, size_t count) {
-    for (size_t i = 0; i < count; i++) output[i] = coli_bf16_decode(input[i]);
+    for (size_t i = 0; i < count; i++) output[i] = lma_bf16_decode(input[i]);
 }
 
 static int normalized_hc_pre(float *reduced, float *post, float *comb,
                              float *normalized, const float *input_hc,
-                             const ColiDeepSeekV4LayerWeights *weights,
-                             const ColiDeepSeekV4Config *config,
+                             const LmaDeepSeekV4LayerWeights *weights,
+                             const LmaDeepSeekV4Config *config,
                              const char *branch, const char *norm_name) {
     char name[64];
     snprintf(name, sizeof(name), "hc_%s_fn", branch);
@@ -4293,35 +4293,35 @@ static int normalized_hc_pre(float *reduced, float *post, float *comb,
         return -1;
     }
     decode_bf16(norm, raw_norm, (size_t)d);
-    int result = coli_v4_hc_pre(reduced, post, comb, input_hc, function,
+    int result = lma_v4_hc_pre(reduced, post, comb, input_hc, function,
                                 scale, base, config->hc_mult, d,
                                 config->hc_sinkhorn_iters,
                                 config->rms_norm_eps, config->hc_eps);
     if (!result) {
-        coli_bf16_round_array(reduced, (size_t)d);
-        result = coli_v4_rmsnorm(normalized, reduced, norm, d,
+        lma_bf16_round_array(reduced, (size_t)d);
+        result = lma_v4_rmsnorm(normalized, reduced, norm, d,
                                  config->rms_norm_eps);
-        coli_bf16_round_array(normalized, (size_t)d);
+        lma_bf16_round_array(normalized, (size_t)d);
     }
     free(norm);
     return result;
 }
 
-#ifndef COLI_V4_DISABLE_BF16_ROUTE
-int coli_v4_route_bf16(float *weights, int *indices, const float *hidden,
+#ifndef LMA_V4_DISABLE_BF16_ROUTE
+int lma_v4_route_bf16(float *weights, int *indices, const float *hidden,
                        const uint16_t *gate, const float *bias,
                        const int *forced_indices, int experts, int dimension,
                        int topk, float route_scale);
 #endif
 
 static int moe_token(float *output,
-                     const ColiDeepSeekV4LayerWeights *weights,
-                     const ColiDeepSeekV4Config *config,
-                     ColiExpertStore *store, const float *input, int token) {
+                     const LmaDeepSeekV4LayerWeights *weights,
+                     const LmaDeepSeekV4Config *config,
+                     LmaExpertStore *store, const float *input, int token) {
     int d = config->hidden_size;
     int n = config->n_routed_experts;
     int topk = config->num_experts_per_tok;
-#ifndef COLI_V4_DISABLE_BF16_ROUTE
+#ifndef LMA_V4_DISABLE_BF16_ROUTE
     float *gate = NULL;
     const uint16_t *raw_gate = value(weights, "ffn.gate.weight", NULL);
     int missing_gate = !raw_gate;
@@ -4349,26 +4349,26 @@ static int moe_token(float *output,
         for (int i = 0; i < topk; i++)
             indices[i] = (int)table[(size_t)token * topk + i];
     }
-#ifndef COLI_V4_DISABLE_BF16_ROUTE
-    if (!result) result = coli_v4_route_bf16(
+#ifndef LMA_V4_DISABLE_BF16_ROUTE
+    if (!result) result = lma_v4_route_bf16(
         route_weights, indices, input, raw_gate, bias,
         weights->plan.uses_hash_router ? indices : NULL,
         n, d, topk, config->routed_scaling_factor);
 #else
     if (!result) {
         decode_bf16(gate, value(weights, "ffn.gate.weight", NULL), gate_count);
-        result = coli_v4_route(
+        result = lma_v4_route(
             route_weights, indices, input, gate, bias,
             weights->plan.uses_hash_router ? indices : NULL,
             n, d, topk, config->routed_scaling_factor);
     }
 #endif
 
-    ColiTensorView w1, w2, w3;
+    LmaTensorView w1, w2, w3;
     if (!result && (fp8_view(&w1, weights, "ffn.shared_experts.w1") ||
                     fp8_view(&w2, weights, "ffn.shared_experts.w2") ||
                     fp8_view(&w3, weights, "ffn.shared_experts.w3"))) result = -1;
-    if (!result) result = coli_v4_shared_expert_forward_ref(
+    if (!result) result = lma_v4_shared_expert_forward_ref(
         shared_output, &w1, &w2, &w3, input, config->swiglu_limit);
     if (!result) memset(output, 0, (size_t)d * sizeof(*output));
     for (int expert_id = 0; !result && expert_id < n; expert_id++) {
@@ -4376,36 +4376,36 @@ static int moe_token(float *output,
         for (int candidate = 0; candidate < topk; candidate++)
             if (indices[candidate] == expert_id) rank = candidate;
         if (rank < 0) continue;
-        ColiExpertView expert;
-        if (coli_expert_lookup(store,
-                               (ColiExpertKey){weights->plan.layer, expert_id},
+        LmaExpertView expert;
+        if (lma_expert_lookup(store,
+                               (LmaExpertKey){weights->plan.layer, expert_id},
                                &expert)) {
             result = -1;
             break;
         }
-#ifdef COLI_V4_GPU_TIER
-        if (store->gpu) coli_v4_gpu_expert_attach(store, &expert);
+#ifdef LMA_V4_GPU_TIER
+        if (store->gpu) lma_v4_gpu_expert_attach(store, &expert);
 #endif
-        result = coli_v4_expert_forward_ref(expert_output, &expert, input,
+        result = lma_v4_expert_forward_ref(expert_output, &expert, input,
                                              route_weights[rank],
                                              config->swiglu_limit);
-        coli_expert_release(store, &expert);
+        lma_expert_release(store, &expert);
         if (!result)
             for (int i = 0; i < d; i++) output[i] += expert_output[i];
     }
     if (!result)
         for (int i = 0; i < d; i++)
-            output[i] = coli_bf16_round(output[i] + shared_output[i]);
+            output[i] = lma_bf16_round(output[i] + shared_output[i]);
     free(shared_output); free(expert_output); free(indices);
     free(route_weights); free(gate);
     return result;
 }
 
 static int block_token_impl(float *output_hc,
-                            ColiDeepSeekV4WindowAttentionState *attention,
-                            const ColiDeepSeekV4LayerWeights *weights,
-                            const ColiDeepSeekV4Config *config,
-                            ColiExpertStore *experts,
+                            LmaDeepSeekV4WindowAttentionState *attention,
+                            const LmaDeepSeekV4LayerWeights *weights,
+                            const LmaDeepSeekV4Config *config,
+                            LmaExpertStore *experts,
                             const float *input_hc, int token, int position,
                             char *error, size_t error_size) {
     if (!output_hc || !weights || !config || !experts || !input_hc)
@@ -4428,19 +4428,19 @@ static int block_token_impl(float *output_hc,
     int result = normalized_hc_pre(reduced, post, comb, normalized, input_hc,
                                    weights, config, "attn", "attn_norm.weight");
     if (!result) result = attention
-        ? coli_v4_attention_window_token_ref(branch, attention, weights, config,
+        ? lma_v4_attention_window_token_ref(branch, attention, weights, config,
                                              normalized, position, error, error_size)
-        : coli_v4_attention_token_ref(branch, weights, config, normalized,
+        : lma_v4_attention_token_ref(branch, weights, config, normalized,
                                       position, error, error_size);
-    if (!result) result = coli_v4_hc_post(state, branch, residual, post, comb, hc, d);
-    if (!result) coli_bf16_round_array(state, hd);
+    if (!result) result = lma_v4_hc_post(state, branch, residual, post, comb, hc, d);
+    if (!result) lma_bf16_round_array(state, hd);
 
     if (!result) memcpy(residual, state, hd * sizeof(*residual));
     if (!result) result = normalized_hc_pre(reduced, post, comb, normalized, state,
                                             weights, config, "ffn", "ffn_norm.weight");
     if (!result) result = moe_token(branch, weights, config, experts, normalized, token);
-    if (!result) result = coli_v4_hc_post(output_hc, branch, residual, post, comb, hc, d);
-    if (!result) coli_bf16_round_array(output_hc, hd);
+    if (!result) result = lma_v4_hc_post(output_hc, branch, residual, post, comb, hc, d);
+    if (!result) lma_bf16_round_array(output_hc, hd);
 
     free(comb); free(post); free(branch); free(normalized);
     free(reduced); free(state); free(residual);
@@ -4451,20 +4451,20 @@ static int block_token_impl(float *output_hc,
     return set_error(error, error_size, "block computation failed");
 }
 
-int coli_v4_block_token_ref(float *output_hc,
-                            const ColiDeepSeekV4LayerWeights *weights,
-                            const ColiDeepSeekV4Config *config,
-                            ColiExpertStore *experts,
+int lma_v4_block_token_ref(float *output_hc,
+                            const LmaDeepSeekV4LayerWeights *weights,
+                            const LmaDeepSeekV4Config *config,
+                            LmaExpertStore *experts,
                             const float *input_hc, int token, int position,
                             char *error, size_t error_size) {
     return block_token_impl(output_hc, NULL, weights, config, experts, input_hc,
                             token, position, error, error_size);
 }
 
-int coli_v4_block_window_token_ref(
-    float *output_hc, ColiDeepSeekV4WindowAttentionState *attention,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config, ColiExpertStore *experts,
+int lma_v4_block_window_token_ref(
+    float *output_hc, LmaDeepSeekV4WindowAttentionState *attention,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config, LmaExpertStore *experts,
     const float *input_hc, int token, int position,
     char *error, size_t error_size) {
     return block_token_impl(output_hc, attention, weights, config, experts,
@@ -4472,28 +4472,28 @@ int coli_v4_block_window_token_ref(
 }
 /* ---- end include deepseek_v4_block.c ---- */
 
-#undef coli_v4_block_token_ref
-#undef coli_v4_block_window_token_ref
+#undef lma_v4_block_token_ref
+#undef lma_v4_block_window_token_ref
 
-#ifndef COLI_V4_DISABLE_BF16_ROUTE
-int coli_v4_route_bf16(float *weights, int *indices, const float *hidden,
+#ifndef LMA_V4_DISABLE_BF16_ROUTE
+int lma_v4_route_bf16(float *weights, int *indices, const float *hidden,
                        const uint16_t *gate, const float *bias,
                        const int *forced_indices, int experts, int dimension,
                        int topk, float route_scale);
 #endif
 
 typedef struct {
-    ColiExpertStore *store;
-    ColiExpertKey key;
-    ColiExpertView view;
+    LmaExpertStore *store;
+    LmaExpertKey key;
+    LmaExpertView view;
     int result;
 } ExpertLoadJob;
 
-#ifdef COLI_V4_EXPERIMENTAL_PREFETCH
+#ifdef LMA_V4_EXPERIMENTAL_PREFETCH
 static int expert_prefetch_enabled(void) {
     static int enabled = -1;
     if (enabled < 0) {
-        const char *text = getenv("COLI_V4_EXPERT_PREFETCH");
+        const char *text = getenv("LMA_V4_EXPERT_PREFETCH");
         enabled = text && *text && atoi(text) != 0;
     }
     return enabled;
@@ -4503,20 +4503,20 @@ static int expert_prefetch_enabled(void) {
 
 static void *expert_load_worker(void *argument) {
     ExpertLoadJob *job = argument;
-    job->result = coli_expert_lookup(job->store, job->key, &job->view);
+    job->result = lma_expert_lookup(job->store, job->key, &job->view);
     return NULL;
 }
 
 typedef struct {
     pthread_t thread;
     int active;
-#ifdef COLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
+#ifdef LMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
     int loader_slot;
 #endif
 } ExpertLoadHandle;
 
-#ifdef COLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
-/* COLI_V4_EXPERT_LOADER_COUNT defaults in deepseek_v4_internal.h so the CLI
+#ifdef LMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
+/* LMA_V4_EXPERT_LOADER_COUNT defaults in deepseek_v4_internal.h so the CLI
  * sees the same worker count when sizing the OpenMP team.
  *
  * The COUNT is only the DEFAULT lane count now: V4_LOADER_LANES=<1..16>
@@ -4533,7 +4533,7 @@ typedef struct {
  * at 2 threads -- the reservation and the pool depth are two consumers of
  * this constant with OPPOSITE correctness directions, so the env knob moves
  * only the pool. */
-enum { DUAL_EXPERT_LOADER_COUNT = COLI_V4_EXPERT_LOADER_COUNT };
+enum { DUAL_EXPERT_LOADER_COUNT = LMA_V4_EXPERT_LOADER_COUNT };
 enum { DUAL_EXPERT_LOADER_MAX = 16 };
 /* Default del POOL (non della riserva CPU qui sotto: quella resta sul COMPILE
  * default — le lane bloccano in pread e non consumano core, vedi il commento
@@ -4594,7 +4594,7 @@ static void *dual_expert_loader_worker(void *argument) {
         ExpertLoadJob *job = slot->job;
         slot->pending = 0;
         pthread_mutex_unlock(&dual_loader_pool.mutex);
-        job->result = coli_expert_lookup(job->store, job->key, &job->view);
+        job->result = lma_expert_lookup(job->store, job->key, &job->view);
         pthread_mutex_lock(&dual_loader_pool.mutex);
         slot->completed = 1;
         pthread_cond_broadcast(&dual_loader_pool.complete);
@@ -4679,8 +4679,8 @@ static int dual_expert_load_finish(ExpertLoadHandle *handle) {
 }
 #endif
 
-#if !defined(COLI_V4_DISABLE_PERSISTENT_EXPERT_LOADER) && \
-    !defined(COLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER)
+#if !defined(LMA_V4_DISABLE_PERSISTENT_EXPERT_LOADER) && \
+    !defined(LMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER)
 typedef struct {
     pthread_mutex_t mutex;
     pthread_cond_t ready;
@@ -4713,7 +4713,7 @@ static void *persistent_expert_loader_worker(void *unused) {
         ExpertLoadJob *job = persistent_loader.job;
         persistent_loader.pending = 0;
         pthread_mutex_unlock(&persistent_loader.mutex);
-        job->result = coli_expert_lookup(job->store, job->key, &job->view);
+        job->result = lma_expert_lookup(job->store, job->key, &job->view);
         pthread_mutex_lock(&persistent_loader.mutex);
         persistent_loader.completed = 1;
         pthread_cond_signal(&persistent_loader.complete);
@@ -4742,18 +4742,18 @@ static void persistent_expert_loader_init(void) {
 #endif
 
 static int expert_load_start(ExpertLoadHandle *handle, ExpertLoadJob *job) {
-#ifdef COLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
+#ifdef LMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
     if (!dual_expert_load_start(handle, job)) return 0;
     if (pthread_create(&handle->thread, NULL, expert_load_worker, job))
         return -1;
     handle->loader_slot = -1;
     handle->active = 1;
     return 0;
-#elif defined(COLI_V4_EXPERIMENTAL_SYNC_EXPERT_LOOKUP)
-    job->result = coli_expert_lookup(job->store, job->key, &job->view);
+#elif defined(LMA_V4_EXPERIMENTAL_SYNC_EXPERT_LOOKUP)
+    job->result = lma_expert_lookup(job->store, job->key, &job->view);
     handle->active = 1;
     return 0;
-#elif !defined(COLI_V4_DISABLE_PERSISTENT_EXPERT_LOADER)
+#elif !defined(LMA_V4_DISABLE_PERSISTENT_EXPERT_LOADER)
     pthread_once(&persistent_loader_once, persistent_expert_loader_init);
     if (!persistent_loader.available) return -1;
     pthread_mutex_lock(&persistent_loader.mutex);
@@ -4777,16 +4777,16 @@ static int expert_load_start(ExpertLoadHandle *handle, ExpertLoadJob *job) {
 
 static int expert_load_finish(ExpertLoadHandle *handle) {
     if (!handle->active) return -1;
-#ifdef COLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
+#ifdef LMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
     if (handle->loader_slot >= 0)
         return dual_expert_load_finish(handle);
     int result = pthread_join(handle->thread, NULL);
     handle->active = 0;
     return result;
-#elif defined(COLI_V4_EXPERIMENTAL_SYNC_EXPERT_LOOKUP)
+#elif defined(LMA_V4_EXPERIMENTAL_SYNC_EXPERT_LOOKUP)
     handle->active = 0;
     return 0;
-#elif !defined(COLI_V4_DISABLE_PERSISTENT_EXPERT_LOADER)
+#elif !defined(LMA_V4_DISABLE_PERSISTENT_EXPERT_LOADER)
     pthread_mutex_lock(&persistent_loader.mutex);
     while (!persistent_loader.completed)
         pthread_cond_wait(&persistent_loader.complete,
@@ -4803,22 +4803,22 @@ static int expert_load_finish(ExpertLoadHandle *handle) {
 #endif
 }
 
-#ifdef COLI_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
+#ifdef LMA_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
 enum {
-    COLI_V4_BLOCK_PROFILE_MOE_TOTAL = 0,
-    COLI_V4_BLOCK_PROFILE_GATE_DECODE = 1,
-    COLI_V4_BLOCK_PROFILE_LOADER_START = 2,
-    COLI_V4_BLOCK_PROFILE_LOADER_WAIT = 3,
+    LMA_V4_BLOCK_PROFILE_MOE_TOTAL = 0,
+    LMA_V4_BLOCK_PROFILE_GATE_DECODE = 1,
+    LMA_V4_BLOCK_PROFILE_LOADER_START = 2,
+    LMA_V4_BLOCK_PROFILE_LOADER_WAIT = 3,
 };
-double coli_v4_block_profile_now(void);
-void coli_v4_block_profile_add(int kind, double seconds);
+double lma_v4_block_profile_now(void);
+void lma_v4_block_profile_add(int kind, double seconds);
 #endif
 
 /* #890: expert-forward compute accounting — defined in the expert-store unit,
  * called here around the matmul, read per-turn in the serve loop. Always on
  * (unlike the block profiler above), because the dashboard always needs it. */
-void coli_v4_expert_store_add_matmul(ColiExpertStore *store, double sec);
-double coli_v4_expert_store_matmul_sec(ColiExpertStore *store);
+void lma_v4_expert_store_add_matmul(LmaExpertStore *store, double sec);
+double lma_v4_expert_store_matmul_sec(LmaExpertStore *store);
 
 static double v4_now_mono(void) {   /* #890 phase timing, same clock as disk_sec */
     struct timespec ts;
@@ -4828,37 +4828,37 @@ static double v4_now_mono(void) {   /* #890 phase timing, same clock as disk_sec
 
 static int profiled_expert_load_start(ExpertLoadHandle *handle,
                                       ExpertLoadJob *job) {
-#ifdef COLI_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
-    double began = coli_v4_block_profile_now();
+#ifdef LMA_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
+    double began = lma_v4_block_profile_now();
 #endif
     int result = expert_load_start(handle, job);
-#ifdef COLI_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
-    coli_v4_block_profile_add(COLI_V4_BLOCK_PROFILE_LOADER_START,
-                              coli_v4_block_profile_now() - began);
+#ifdef LMA_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
+    lma_v4_block_profile_add(LMA_V4_BLOCK_PROFILE_LOADER_START,
+                              lma_v4_block_profile_now() - began);
 #endif
     return result;
 }
 
 static int profiled_expert_load_finish(ExpertLoadHandle *handle) {
-#ifdef COLI_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
-    double began = coli_v4_block_profile_now();
+#ifdef LMA_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
+    double began = lma_v4_block_profile_now();
 #endif
     int result = expert_load_finish(handle);
-#ifdef COLI_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
-    coli_v4_block_profile_add(COLI_V4_BLOCK_PROFILE_LOADER_WAIT,
-                              coli_v4_block_profile_now() - began);
+#ifdef LMA_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
+    lma_v4_block_profile_add(LMA_V4_BLOCK_PROFILE_LOADER_WAIT,
+                              lma_v4_block_profile_now() - began);
 #endif
     return result;
 }
 
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
 /* DSV4_HYBRID=1 (opt-in): on a decode miss, split the missing experts between
  * a PCIe-fill set (upload, compute on GPU with the residents) and a host set
  * (compute on CPU) instead of today's all-or-nothing, sized by the q* policy
  * in deepseek_v4_hybrid.h from live bandwidth EMAs. Off by default until the
  * split is validated on real GPUs; when off, the engine byte-for-byte keeps
  * its historical behaviour. */
-int coli_v4_hybrid_enabled(void) {
+int lma_v4_hybrid_enabled(void) {
     static int on = -1;
     if (on < 0) {
         const char *setting = getenv("DSV4_HYBRID");
@@ -4875,17 +4875,17 @@ unsigned long long g_v4_hyb_upload_n, g_v4_hyb_skip_n;
 #endif
 
 static int moe_token_pipeline(float *output,
-                              const ColiDeepSeekV4LayerWeights *weights,
-                              const ColiDeepSeekV4Config *config,
-                              ColiExpertStore *store,
+                              const LmaDeepSeekV4LayerWeights *weights,
+                              const LmaDeepSeekV4Config *config,
+                              LmaExpertStore *store,
                               const float *input, int token) {
-#ifdef COLI_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
-    double profile_moe_began = coli_v4_block_profile_now();
+#ifdef LMA_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
+    double profile_moe_began = lma_v4_block_profile_now();
 #endif
     int d = config->hidden_size;
     int n = config->n_routed_experts;
     int topk = config->num_experts_per_tok;
-#ifndef COLI_V4_DISABLE_BF16_ROUTE
+#ifndef LMA_V4_DISABLE_BF16_ROUTE
     float *gate = NULL;
     const uint16_t *raw_gate = value(weights, "ffn.gate.weight", NULL);
     int missing_gate = !raw_gate;
@@ -4907,14 +4907,14 @@ static int moe_token_pipeline(float *output,
         return moe_fail("layer %d: out of memory for the routing scratch",
                         weights->plan.layer);
     }
-#ifdef COLI_V4_DISABLE_BF16_ROUTE
-#ifdef COLI_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
-    double profile_gate_began = coli_v4_block_profile_now();
+#ifdef LMA_V4_DISABLE_BF16_ROUTE
+#ifdef LMA_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
+    double profile_gate_began = lma_v4_block_profile_now();
 #endif
     decode_bf16(gate, value(weights, "ffn.gate.weight", NULL), gate_count);
-#ifdef COLI_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
-    coli_v4_block_profile_add(COLI_V4_BLOCK_PROFILE_GATE_DECODE,
-                              coli_v4_block_profile_now() - profile_gate_began);
+#ifdef LMA_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
+    lma_v4_block_profile_add(LMA_V4_BLOCK_PROFILE_GATE_DECODE,
+                              lma_v4_block_profile_now() - profile_gate_began);
 #endif
 #endif
     const int64_t *table = value(weights, "ffn.gate.tid2eid", NULL);
@@ -4929,23 +4929,23 @@ static int moe_token_pipeline(float *output,
     if (!result && weights->plan.uses_hash_router)
         for (int i = 0; i < topk; i++)
             indices[i] = (int)table[(size_t)token * topk + i];
-#ifndef COLI_V4_DISABLE_BF16_ROUTE
+#ifndef LMA_V4_DISABLE_BF16_ROUTE
     if (!result) {
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
         /* The CUDA router mirror (f32 gate/bias) dispatches through
          * dsv4_cuda_route when this layer uploaded one; any shape/mirror
          * mismatch returns non-zero and the CPU bf16 route below takes over. */
-        if (coli_v4_gpu_route(route_weights, indices, input, weights, bias,
+        if (lma_v4_gpu_route(route_weights, indices, input, weights, bias,
                               weights->plan.uses_hash_router ? indices : NULL,
                               n, d, topk, config->routed_scaling_factor) != 0)
 #endif
-            result = coli_v4_route_bf16(
+            result = lma_v4_route_bf16(
                 route_weights, indices, input, raw_gate, bias,
                 weights->plan.uses_hash_router ? indices : NULL,
                 n, d, topk, config->routed_scaling_factor);
     }
 #else
-    if (!result) result = coli_v4_route(
+    if (!result) result = lma_v4_route(
         route_weights, indices, input, gate, bias,
         weights->plan.uses_hash_router ? indices : NULL,
         n, d, topk, config->routed_scaling_factor);
@@ -4965,12 +4965,12 @@ static int moe_token_pipeline(float *output,
         result = moe_fail("layer %d: routing selected %d experts, wanted %d",
                           weights->plan.layer, selected, topk);
 
-#ifdef COLI_V4_EXPERIMENTAL_PREFETCH
+#ifdef LMA_V4_EXPERIMENTAL_PREFETCH
     if (!result && expert_prefetch_enabled() && store->ops->prefetch) {
-        ColiExpertKey *keys = malloc((size_t)selected * sizeof(*keys));
+        LmaExpertKey *keys = malloc((size_t)selected * sizeof(*keys));
         if (keys) {
             for (int i = 0; i < selected; i++)
-                keys[i] = (ColiExpertKey){weights->plan.layer, expert_ids[i]};
+                keys[i] = (LmaExpertKey){weights->plan.layer, expert_ids[i]};
             store->ops->prefetch(store, keys, (size_t)selected);
             free(keys);
         }
@@ -4978,7 +4978,7 @@ static int moe_token_pipeline(float *output,
 #endif
 
 
-#ifdef COLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
+#ifdef LMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
     ExpertLoadJob jobs[DUAL_EXPERT_LOADER_MAX] = {{0}};
     ExpertLoadHandle loaders[DUAL_EXPERT_LOADER_MAX] = {{0}};
     int loader_active[DUAL_EXPERT_LOADER_MAX] = {0};
@@ -4987,7 +4987,7 @@ static int moe_token_pipeline(float *output,
             ? selected : dual_loader_lanes();
         for (int i = 0; i < preload; i++) {
             jobs[i].store = store;
-            jobs[i].key = (ColiExpertKey){weights->plan.layer, expert_ids[i]};
+            jobs[i].key = (LmaExpertKey){weights->plan.layer, expert_ids[i]};
             jobs[i].result = -1;
             if (profiled_expert_load_start(&loaders[i], &jobs[i]) != 0) {
                 result = moe_fail("layer %d: could not start reading expert %d",
@@ -5003,7 +5003,7 @@ static int moe_token_pipeline(float *output,
     int loader_active = 0;
     if (!result) {
         job.store = store;
-        job.key = (ColiExpertKey){weights->plan.layer, expert_ids[0]};
+        job.key = (LmaExpertKey){weights->plan.layer, expert_ids[0]};
         job.result = -1;
         if (profiled_expert_load_start(&loader, &job) != 0)
             result = moe_fail("layer %d: could not start reading expert %d",
@@ -5012,26 +5012,26 @@ static int moe_token_pipeline(float *output,
             loader_active = 1;
     }
 #endif
-    ColiTensorView w1, w2, w3;
+    LmaTensorView w1, w2, w3;
     if (!result && (fp8_view(&w1, weights, "ffn.shared_experts.w1") ||
                     fp8_view(&w2, weights, "ffn.shared_experts.w2") ||
                     fp8_view(&w3, weights, "ffn.shared_experts.w3")))
         result = moe_fail("layer %d: the shared expert's fp8 tensors are missing",
                           weights->plan.layer);
-    if (!result) result = coli_v4_shared_expert_forward_ref(
+    if (!result) result = lma_v4_shared_expert_forward_ref(
         shared_output, &w1, &w2, &w3, input, config->swiglu_limit);
     if (!result) memset(output, 0, (size_t)d * sizeof(*output));
 
-#ifdef COLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
-    ColiExpertView *views = malloc((size_t)selected * sizeof(*views));
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
+    LmaExpertView *views = malloc((size_t)selected * sizeof(*views));
+#ifdef LMA_V4_GPU_TIER
     int gpu_compute = 0;
 #endif
     if (!views) result = moe_fail("layer %d: out of memory for %d expert views",
                                   weights->plan.layer, selected);
     if (!result) {
         memset(views, 0, (size_t)selected * sizeof(*views));
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
         gpu_compute = 1;
 #endif
         for (int current = 0; !result && current < selected; current++) {
@@ -5049,17 +5049,17 @@ static int moe_token_pipeline(float *output,
                 break;
             }
             views[current] = jobs[slot].view;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
             if (store->gpu) {
-                if (coli_v4_hybrid_enabled())
+                if (lma_v4_hybrid_enabled())
                     /* peek only: uploads are decided once the token's full
                      * miss count is known, by the q* pass below */
-                    coli_v4_gpu_expert_peek(store, &views[current]);
+                    lma_v4_gpu_expert_peek(store, &views[current]);
                 else
-                    coli_v4_gpu_expert_attach(store, &views[current]);
+                    lma_v4_gpu_expert_attach(store, &views[current]);
             }
 #endif
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
             if (!views[current].gate.gpu || !views[current].up.gpu ||
                 !views[current].down.gpu)
                 gpu_compute = 0;
@@ -5069,7 +5069,7 @@ static int moe_token_pipeline(float *output,
             if (next < selected) {
                 memset(&jobs[slot], 0, sizeof(jobs[slot]));
                 jobs[slot].store = store;
-                jobs[slot].key = (ColiExpertKey){weights->plan.layer,
+                jobs[slot].key = (LmaExpertKey){weights->plan.layer,
                                                 expert_ids[next]};
                 jobs[slot].result = -1;
                 if (profiled_expert_load_start(&loaders[slot],
@@ -5084,15 +5084,15 @@ static int moe_token_pipeline(float *output,
             if (loader_active[slot]) {
                 profiled_expert_load_finish(&loaders[slot]);
                 if (!jobs[slot].result)
-                    coli_expert_release(store, &jobs[slot].view);
+                    lma_expert_release(store, &jobs[slot].view);
             }
     }
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     int hybrid_gpu_count = 0;
     int hybrid_pending_drain = 0;   /* async DMA enqueued, not yet drained */
     int hybrid_uploads = 0;
     struct timespec hybrid_fill_t0 = {0, 0};
-    if (!result && coli_v4_hybrid_enabled() && store->gpu && !gpu_compute) {
+    if (!result && lma_v4_hybrid_enabled() && store->gpu && !gpu_compute) {
         /* q* pass: the peeks above established which of the token's experts
          * are already resident. Upload only fill = q*(m) of the m misses;
          * the rest stay host-side on purpose. Uploads are timed to feed the
@@ -5106,7 +5106,7 @@ static int moe_token_pipeline(float *output,
                 if (!views[i].gate.gpu || !views[i].up.gpu ||
                     !views[i].down.gpu)
                     missing[miss_n++] = i;
-            int fill = coli_v4_hybrid_fill_count(
+            int fill = lma_v4_hybrid_fill_count(
                 miss_n, g_v4_hyb_fill_bw, g_v4_hyb_host_bw);
             if (g_v4_hyb_host_bw <= 0.0 && fill >= miss_n && miss_n > 1)
                 fill = miss_n - 1;
@@ -5121,13 +5121,13 @@ static int moe_token_pipeline(float *output,
              * nothing is ever enqueued that could not be waited on. */
             static int hybrid_async_ok = -1;
             if (hybrid_async_ok < 0)
-                hybrid_async_ok = coli_v4_gpu_expert_drain(store) == 0;
+                hybrid_async_ok = lma_v4_gpu_expert_drain(store) == 0;
             clock_gettime(CLOCK_MONOTONIC, &hybrid_fill_t0);
             for (int i = 0; i < fill; i++) {
                 int v = missing[i];
                 int attached = hybrid_async_ok
-                    ? coli_v4_gpu_expert_attach_async(store, &views[v])
-                    : coli_v4_gpu_expert_attach(store, &views[v]);
+                    ? lma_v4_gpu_expert_attach_async(store, &views[v])
+                    : lma_v4_gpu_expert_attach(store, &views[v]);
                 if (attached == 0 &&
                     views[v].gate.gpu && views[v].up.gpu &&
                     views[v].down.gpu) {
@@ -5147,9 +5147,9 @@ static int moe_token_pipeline(float *output,
             gpu_compute = 1;    /* every expert made it: use the fused path */
     }
     if (!result && gpu_compute && store->gpu) {
-        void *sg = coli_v4_layer_gpu(weights, "ffn.shared_experts.w1");
-        void *su = coli_v4_layer_gpu(weights, "ffn.shared_experts.w2");
-        void *sd = coli_v4_layer_gpu(weights, "ffn.shared_experts.w3");
+        void *sg = lma_v4_layer_gpu(weights, "ffn.shared_experts.w1");
+        void *su = lma_v4_layer_gpu(weights, "ffn.shared_experts.w2");
+        void *sd = lma_v4_layer_gpu(weights, "ffn.shared_experts.w3");
         int moe_ok = sg && su && sd;
         void **gates = malloc((size_t)selected * sizeof(*gates));
         void **ups = malloc((size_t)selected * sizeof(*ups));
@@ -5191,7 +5191,7 @@ static int moe_token_pipeline(float *output,
             }
             if (!result)
                 for (int i = 0; i < d; i++)
-                    output[i] = coli_bf16_round(expert_output[i]);
+                    output[i] = lma_bf16_round(expert_output[i]);
         }
         free(gates); free(ups); free(downs);
     } else if (!result && hybrid_gpu_count > 0 && store->gpu) {
@@ -5219,7 +5219,7 @@ static int moe_token_pipeline(float *output,
             int on_gpu = views[current].gate.gpu && views[current].up.gpu &&
                          views[current].down.gpu;
             if (on_gpu && gpu_ok) continue;   /* covered by the group below */
-            result = coli_v4_expert_forward_ref(
+            result = lma_v4_expert_forward_ref(
                 expert_output, &views[current], input,
                 expert_weights[current], config->swiglu_limit);
             if (!result)
@@ -5230,7 +5230,7 @@ static int moe_token_pipeline(float *output,
             double dt = (h1.tv_sec - h0.tv_sec) +
                         (h1.tv_nsec - h0.tv_nsec) * 1e-9;
             if (dt > 0.0)
-                g_v4_hyb_host_bw = coli_v4_hybrid_ema(
+                g_v4_hyb_host_bw = lma_v4_hybrid_ema(
                     g_v4_hyb_host_bw, (double)cpu_n / dt);
         }
         /* Close the fill pipeline. The whole window (enqueue -> drained) is
@@ -5240,7 +5240,7 @@ static int moe_token_pipeline(float *output,
         if (hybrid_pending_drain) {
             struct timespec d0, d1;
             clock_gettime(CLOCK_MONOTONIC, &d0);
-            coli_v4_gpu_expert_drain(store);
+            lma_v4_gpu_expert_drain(store);
             clock_gettime(CLOCK_MONOTONIC, &d1);
             hybrid_pending_drain = 0;
             double waited = (d1.tv_sec - d0.tv_sec) +
@@ -5249,7 +5249,7 @@ static int moe_token_pipeline(float *output,
                             (d1.tv_nsec - hybrid_fill_t0.tv_nsec) * 1e-9;
             if (hybrid_uploads > 0 && window > 0.0 &&
                 waited > window * 0.05)
-                g_v4_hyb_fill_bw = coli_v4_hybrid_ema(
+                g_v4_hyb_fill_bw = lma_v4_hybrid_ema(
                     g_v4_hyb_fill_bw, (double)hybrid_uploads / window);
         }
         if (gpu_ok) {
@@ -5278,7 +5278,7 @@ static int moe_token_pipeline(float *output,
                 if (!(views[current].gate.gpu && views[current].up.gpu &&
                       views[current].down.gpu))
                     continue;   /* already computed by the CPU loop above */
-                result = coli_v4_expert_forward_ref(
+                result = lma_v4_expert_forward_ref(
                     expert_output, &views[current], input,
                     expert_weights[current], config->swiglu_limit);
                 if (!result)
@@ -5288,13 +5288,13 @@ static int moe_token_pipeline(float *output,
         if (!result) {
             if (gpu_ok) {
                 for (int i = 0; i < d; i++)
-                    output[i] = coli_bf16_round(
+                    output[i] = lma_bf16_round(
                         output[i] + gpu_sum[i] + shared_output[i]);
                 g_v4_hyb_gpu_n += (unsigned long long)gpu_n;
                 g_v4_hyb_cpu_n += (unsigned long long)cpu_n;
             } else {
                 for (int i = 0; i < d; i++)
-                    output[i] = coli_bf16_round(output[i] + shared_output[i]);
+                    output[i] = lma_bf16_round(output[i] + shared_output[i]);
             }
         }
         free(gates); free(ups); free(downs);
@@ -5303,7 +5303,7 @@ static int moe_token_pipeline(float *output,
 #endif
     {
         for (int current = 0; !result && current < selected; current++) {
-            if (!result) result = coli_v4_expert_forward_ref(
+            if (!result) result = lma_v4_expert_forward_ref(
                 expert_output, &views[current], input,
                 expert_weights[current], config->swiglu_limit);
             if (!result)
@@ -5311,17 +5311,17 @@ static int moe_token_pipeline(float *output,
         }
         if (!result)
             for (int i = 0; i < d; i++)
-                output[i] = coli_bf16_round(output[i] + shared_output[i]);
+                output[i] = lma_bf16_round(output[i] + shared_output[i]);
     }
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     /* If an error or the fused path skipped the hybrid branch while async
      * fill DMA was still enqueued, drain before releasing the host slabs the
      * copies read from. (The fused kernels sync internally, so this is only
      * ever a wait on already-finished work — never a correctness gamble.) */
-    if (hybrid_pending_drain) coli_v4_gpu_expert_drain(store);
+    if (hybrid_pending_drain) lma_v4_gpu_expert_drain(store);
 #endif
     for (int current = 0; current < selected; current++)
-        coli_expert_release(store, &views[current]);
+        lma_expert_release(store, &views[current]);
     free(views);
 #else
     for (int current = 0; current < selected && loader_active; current++) {
@@ -5336,15 +5336,15 @@ static int moe_token_pipeline(float *output,
                               weights->plan.layer, job.key.expert);
             break;
         }
-        ColiExpertView expert = job.view;
-#ifdef COLI_V4_GPU_TIER
-        if (store->gpu) coli_v4_gpu_expert_attach(store, &expert);
+        LmaExpertView expert = job.view;
+#ifdef LMA_V4_GPU_TIER
+        if (store->gpu) lma_v4_gpu_expert_attach(store, &expert);
 #endif
 
         if (current + 1 < selected) {
             memset(&job, 0, sizeof(job));
             job.store = store;
-            job.key = (ColiExpertKey){weights->plan.layer,
+            job.key = (LmaExpertKey){weights->plan.layer,
                                      expert_ids[current + 1]};
             job.result = -1;
             if (profiled_expert_load_start(&loader, &job) != 0)
@@ -5355,35 +5355,35 @@ static int moe_token_pipeline(float *output,
         }
         if (!result) {
             double mm0 = v4_now_mono();
-            result = coli_v4_expert_forward_ref(
+            result = lma_v4_expert_forward_ref(
                 expert_output, &expert, input, expert_weights[current],
                 config->swiglu_limit);
-            coli_v4_expert_store_add_matmul(store, v4_now_mono() - mm0);
+            lma_v4_expert_store_add_matmul(store, v4_now_mono() - mm0);
         }
-        coli_expert_release(store, &expert);
+        lma_expert_release(store, &expert);
         if (!result)
             for (int i = 0; i < d; i++) output[i] += expert_output[i];
     }
     if (loader_active) {
         profiled_expert_load_finish(&loader);
         if (!job.result)
-            coli_expert_release(store, &job.view);
+            lma_expert_release(store, &job.view);
     }
 #endif
     free(shared_output); free(expert_output); free(expert_weights);
     free(expert_ids); free(indices); free(route_weights); free(gate);
-#ifdef COLI_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
-    coli_v4_block_profile_add(COLI_V4_BLOCK_PROFILE_MOE_TOTAL,
-                              coli_v4_block_profile_now() - profile_moe_began);
+#ifdef LMA_V4_EXPERIMENTAL_BLOCK_OTHER_PROFILE
+    lma_v4_block_profile_add(LMA_V4_BLOCK_PROFILE_MOE_TOTAL,
+                              lma_v4_block_profile_now() - profile_moe_began);
 #endif
     return result;
 }
 
 static int block_token_pipeline(float *output_hc,
-                                ColiDeepSeekV4WindowAttentionState *attention,
-                                const ColiDeepSeekV4LayerWeights *weights,
-                                const ColiDeepSeekV4Config *config,
-                                ColiExpertStore *experts,
+                                LmaDeepSeekV4WindowAttentionState *attention,
+                                const LmaDeepSeekV4LayerWeights *weights,
+                                const LmaDeepSeekV4Config *config,
+                                LmaExpertStore *experts,
                                 const float *input_hc, int token, int position,
                                 char *error, size_t error_size) {
     if (!output_hc || !weights || !config || !experts || !input_hc)
@@ -5421,14 +5421,14 @@ static int block_token_pipeline(float *output_hc,
                                    weights, config, "attn", "attn_norm.weight");
     DP_MARK(dp_hc);
     if (!result) result = attention
-        ? coli_v4_attention_window_token_ref(branch, attention, weights, config,
+        ? lma_v4_attention_window_token_ref(branch, attention, weights, config,
                                              normalized, position, error, error_size)
-        : coli_v4_attention_token_ref(branch, weights, config, normalized,
+        : lma_v4_attention_token_ref(branch, weights, config, normalized,
                                       position, error, error_size);
     DP_MARK(dp_attn);
-    if (!result) result = coli_v4_hc_post(state, branch, residual,
+    if (!result) result = lma_v4_hc_post(state, branch, residual,
                                           post, comb, hc, d);
-    if (!result) coli_bf16_round_array(state, hd);
+    if (!result) lma_bf16_round_array(state, hd);
     if (!result) memcpy(residual, state, hd * sizeof(*residual));
     if (!result) result = normalized_hc_pre(reduced, post, comb, normalized, state,
                                             weights, config, "ffn",
@@ -5437,9 +5437,9 @@ static int block_token_pipeline(float *output_hc,
     if (!result) result = moe_token_pipeline(branch, weights, config, experts,
                                              normalized, token);
     DP_MARK(dp_moe);
-    if (!result) result = coli_v4_hc_post(output_hc, branch, residual,
+    if (!result) result = lma_v4_hc_post(output_hc, branch, residual,
                                           post, comb, hc, d);
-    if (!result) coli_bf16_round_array(output_hc, hd);
+    if (!result) lma_bf16_round_array(output_hc, hd);
     DP_MARK(dp_hc);
     if (dprof) dp_layers++;
 #undef DP_MARK
@@ -5452,20 +5452,20 @@ static int block_token_pipeline(float *output_hc,
     return set_error(error, error_size, "block computation failed");
 }
 
-int coli_v4_block_token_ref(float *output_hc,
-                            const ColiDeepSeekV4LayerWeights *weights,
-                            const ColiDeepSeekV4Config *config,
-                            ColiExpertStore *experts,
+int lma_v4_block_token_ref(float *output_hc,
+                            const LmaDeepSeekV4LayerWeights *weights,
+                            const LmaDeepSeekV4Config *config,
+                            LmaExpertStore *experts,
                             const float *input_hc, int token, int position,
                             char *error, size_t error_size) {
     return block_token_pipeline(output_hc, NULL, weights, config, experts,
                                 input_hc, token, position, error, error_size);
 }
 
-int coli_v4_block_window_token_ref(
-    float *output_hc, ColiDeepSeekV4WindowAttentionState *attention,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config, ColiExpertStore *experts,
+int lma_v4_block_window_token_ref(
+    float *output_hc, LmaDeepSeekV4WindowAttentionState *attention,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config, LmaExpertStore *experts,
     const float *input_hc, int token, int position,
     char *error, size_t error_size) {
     return block_token_pipeline(output_hc, attention, weights, config, experts,
@@ -5504,19 +5504,19 @@ int coli_v4_block_window_token_ref(
 enum { V4_EXPERT_BATCH_MAX = 128 };
 
 static int v4_flush_expert_batch(
-    float *outputs, ColiExpertStore *store, const ColiExpertView *view,
+    float *outputs, LmaExpertStore *store, const LmaExpertView *view,
     const float *batch_inputs, const float *batch_weights,
     const int *batch_items, float *batch_outputs, int count, int dimension,
     float swiglu_limit) {
     if (count < 1) return 0;
     double began = v4_now_mono();
     int result = count == 1
-        ? coli_v4_expert_forward_ref(batch_outputs, view, batch_inputs,
+        ? lma_v4_expert_forward_ref(batch_outputs, view, batch_inputs,
                                      batch_weights[0], swiglu_limit)
-        : coli_v4_expert_forward_batch_ref(
+        : lma_v4_expert_forward_batch_ref(
               batch_outputs, view, batch_inputs, batch_weights, count,
               swiglu_limit);
-    coli_v4_expert_store_add_matmul(store, v4_now_mono() - began);
+    lma_v4_expert_store_add_matmul(store, v4_now_mono() - began);
     if (result) return -1;
     /* Matches were gathered in ascending (item, rank) order.  Accumulate in
      * that same order so duplicate routes retain scalar-path FP ordering. */
@@ -5528,7 +5528,7 @@ static int v4_flush_expert_batch(
 }
 
 static int v4_apply_expert_batch(
-    float *outputs, ColiExpertStore *store, const ColiExpertView *view,
+    float *outputs, LmaExpertStore *store, const LmaExpertView *view,
     const float *inputs, const int *indices, const float *route_weights,
     int batch, int topk, int dimension, float swiglu_limit,
     float *batch_inputs, float *batch_route_weights, int *batch_items,
@@ -5559,7 +5559,7 @@ static int v4_apply_expert_batch(
 }
 
 static int v4_shared_batch_enabled(void) {
-    const char *setting = getenv("COLI_V4_SHARED_BATCH");
+    const char *setting = getenv("LMA_V4_SHARED_BATCH");
     return !setting || atoi(setting) != 0;
 }
 
@@ -5568,14 +5568,14 @@ static int v4_shared_batch_enabled(void) {
  * batch kernel keeps each matrix tile hot while preserving each item's scalar
  * column-accumulation order. */
 static int v4_shared_expert_forward_batch_ref(
-    float *outputs, const ColiTensorView *gate_weight,
-    const ColiTensorView *down_weight, const ColiTensorView *up_weight,
+    float *outputs, const LmaTensorView *gate_weight,
+    const LmaTensorView *down_weight, const LmaTensorView *up_weight,
     const float *inputs, int batch, float swiglu_limit) {
     if (!outputs || !gate_weight || !down_weight || !up_weight || !inputs ||
         batch < 1 || batch > V4_EXPERT_BATCH_MAX || swiglu_limit < 0.0f ||
-        gate_weight->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
-        down_weight->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
-        up_weight->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
+        gate_weight->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
+        down_weight->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
+        up_weight->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
         gate_weight->rows != up_weight->rows ||
         gate_weight->columns != up_weight->columns ||
         down_weight->columns != gate_weight->rows ||
@@ -5590,40 +5590,40 @@ static int v4_shared_expert_forward_batch_ref(
     float *gate = workspace;
     float *up = gate + cells;
     float *activated = up + cells;
-    int result = coli_fp8_matmul_batch_ref(
+    int result = lma_fp8_matmul_batch_ref(
         gate, gate_weight, inputs, batch);
     if (!result)
-        result = coli_fp8_matmul_batch_ref(
+        result = lma_fp8_matmul_batch_ref(
             up, up_weight, inputs, batch);
     for (int item = 0; !result && item < batch; item++) {
         float *item_gate = gate + (size_t)item * intermediate;
         float *item_up = up + (size_t)item * intermediate;
         float *item_activated = activated + (size_t)item * intermediate;
-        coli_bf16_round_array(item_gate, intermediate);
-        coli_bf16_round_array(item_up, intermediate);
-        result = coli_v4_swiglu(item_activated, item_gate, item_up,
+        lma_bf16_round_array(item_gate, intermediate);
+        lma_bf16_round_array(item_up, intermediate);
+        result = lma_v4_swiglu(item_activated, item_gate, item_up,
                                 (int)intermediate, swiglu_limit);
-        if (!result) coli_bf16_round_array(item_activated, intermediate);
+        if (!result) lma_bf16_round_array(item_activated, intermediate);
     }
     if (!result)
-        result = coli_fp8_matmul_batch_ref(
+        result = lma_fp8_matmul_batch_ref(
             outputs, down_weight, activated, batch);
     if (!result)
-        coli_bf16_round_array(
+        lma_bf16_round_array(
             outputs, (size_t)batch * (size_t)down_weight->rows);
     free(workspace);
     return result ? -1 : 0;
 }
 
 static int v4_moe_batch_union(
-    float *outputs, const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config, ColiExpertStore *store,
+    float *outputs, const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config, LmaExpertStore *store,
     const float *inputs, const int *tokens, int batch) {
     moe_reason_clear();
     int d = config->hidden_size;
     int n = config->n_routed_experts;
     int topk = config->num_experts_per_tok;
-#ifndef COLI_V4_DISABLE_BF16_ROUTE
+#ifndef LMA_V4_DISABLE_BF16_ROUTE
     float *gate = NULL;
     const uint16_t *raw_gate = value(weights, "ffn.gate.weight", NULL);
     int missing_gate = !raw_gate;
@@ -5647,7 +5647,7 @@ static int v4_moe_batch_union(
     int *expert_items = malloc(
         (size_t)expert_batch_capacity * sizeof(*expert_items));
     unsigned char *used = calloc((size_t)n, 1);
-    ColiExpertKey *keys = malloc((size_t)n * sizeof(*keys));
+    LmaExpertKey *keys = malloc((size_t)n * sizeof(*keys));
     if (missing_gate || !route_weights || !indices || !shared ||
         !expert_inputs || !expert_outputs || !expert_weights ||
         !expert_items || !used || !keys) {
@@ -5657,7 +5657,7 @@ static int v4_moe_batch_union(
         return moe_fail("layer %d: out of memory for the prefill expert union",
                         weights->plan.layer);
     }
-#ifdef COLI_V4_DISABLE_BF16_ROUTE
+#ifdef LMA_V4_DISABLE_BF16_ROUTE
     decode_bf16(gate, value(weights, "ffn.gate.weight", NULL), gate_count);
 #endif
     const int64_t *table = value(weights, "ffn.gate.tid2eid", NULL);
@@ -5670,14 +5670,14 @@ static int v4_moe_batch_union(
             for (int rank = 0; rank < topk; rank++)
                 item_indices[rank] =
                     (int)table[(size_t)tokens[item] * topk + rank];
-#ifndef COLI_V4_DISABLE_BF16_ROUTE
-        result = coli_v4_route_bf16(
+#ifndef LMA_V4_DISABLE_BF16_ROUTE
+        result = lma_v4_route_bf16(
             item_weights, item_indices, inputs + (size_t)item * d,
             raw_gate, bias,
             weights->plan.uses_hash_router ? item_indices : NULL,
             n, d, topk, config->routed_scaling_factor);
 #else
-        result = coli_v4_route(
+        result = lma_v4_route(
             item_weights, item_indices, inputs + (size_t)item * d,
             gate, bias,
             weights->plan.uses_hash_router ? item_indices : NULL,
@@ -5693,7 +5693,7 @@ static int v4_moe_batch_union(
             }
     }
 
-    ColiTensorView w1, w2, w3;
+    LmaTensorView w1, w2, w3;
     if (!result &&
         (fp8_view(&w1, weights, "ffn.shared_experts.w1") ||
          fp8_view(&w2, weights, "ffn.shared_experts.w2") ||
@@ -5705,7 +5705,7 @@ static int v4_moe_batch_union(
             shared, &w1, &w2, &w3, inputs, batch, config->swiglu_limit);
     else
         for (int item = 0; !result && item < batch; item++)
-            result = coli_v4_shared_expert_forward_ref(
+            result = lma_v4_shared_expert_forward_ref(
                 shared + (size_t)item * d, &w1, &w2, &w3,
                 inputs + (size_t)item * d, config->swiglu_limit);
     if (!result)
@@ -5714,8 +5714,8 @@ static int v4_moe_batch_union(
     int key_count = 0;
     for (int expert = 0; expert < n; expert++)
         if (used[expert])
-            keys[key_count++] = (ColiExpertKey){weights->plan.layer, expert};
-#ifdef COLI_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
+            keys[key_count++] = (LmaExpertKey){weights->plan.layer, expert};
+#ifdef LMA_V4_EXPERIMENTAL_DUAL_EXPERT_LOADER
     /* The union is also the loader pool's issue queue: keep lanes-many reads
      * in flight, launch the replacement before computing the completed
      * expert, and disk N+lanes overlaps CPU expert N. */
@@ -5743,7 +5743,7 @@ static int v4_moe_batch_union(
             break;
         }
         active[slot] = 0;
-        ColiExpertView view = jobs[slot].view;
+        LmaExpertView view = jobs[slot].view;
         int next = current + dual_loader_lanes();
         if (next < key_count) {
             memset(&jobs[slot], 0, sizeof(jobs[slot]));
@@ -5762,17 +5762,17 @@ static int v4_moe_batch_union(
                 batch, topk, d, config->swiglu_limit, expert_inputs,
                 expert_weights, expert_items, expert_outputs,
                 expert_batch_capacity);
-        coli_expert_release(store, &view);
+        lma_expert_release(store, &view);
     }
     for (int slot = 0; slot < dual_loader_lanes(); slot++)
         if (active[slot]) {
             profiled_expert_load_finish(&loaders[slot]);
-            if (!jobs[slot].result) coli_expert_release(store, &jobs[slot].view);
+            if (!jobs[slot].result) lma_expert_release(store, &jobs[slot].view);
         }
 #else
     for (int current = 0; !result && current < key_count; current++) {
-        ColiExpertView view;
-        if (coli_expert_lookup(store, keys[current], &view)) {
+        LmaExpertView view;
+        if (lma_expert_lookup(store, keys[current], &view)) {
             result = moe_fail("layer %d: expert %d is not in the expert store",
                               weights->plan.layer, keys[current].expert);
             break;
@@ -5782,12 +5782,12 @@ static int v4_moe_batch_union(
             batch, topk, d, config->swiglu_limit, expert_inputs,
             expert_weights, expert_items, expert_outputs,
             expert_batch_capacity);
-        coli_expert_release(store, &view);
+        lma_expert_release(store, &view);
     }
 #endif
     for (int item = 0; !result && item < batch; item++)
         for (int column = 0; column < d; column++)
-            outputs[(size_t)item * d + column] = coli_bf16_round(
+            outputs[(size_t)item * d + column] = lma_bf16_round(
                 outputs[(size_t)item * d + column] +
                 shared[(size_t)item * d + column]);
 
@@ -5823,10 +5823,10 @@ static double v4_block_prof_now(void) {
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-int coli_v4_block_window_batch_ref(
-    float *outputs_hc, ColiDeepSeekV4WindowAttentionState *attention,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config, ColiExpertStore *experts,
+int lma_v4_block_window_batch_ref(
+    float *outputs_hc, LmaDeepSeekV4WindowAttentionState *attention,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config, LmaExpertStore *experts,
     const float *inputs_hc, const int *tokens, int start_position, int batch,
     char *error, size_t error_size) {
     if (!outputs_hc || !attention || !weights || !config || !experts ||
@@ -5859,13 +5859,13 @@ int coli_v4_block_window_batch_ref(
         double _now = v4_block_prof_now(); (slot) += _now - prof_t; \
         prof_t = _now; } } while (0)
     const char *phase = "attention hyper-connection";
-    /* Whole-chunk mHC on the GPU (COLI_CUDA_ATTN_BATCH=1): the kernels round
+    /* Whole-chunk mHC on the GPU (LMA_CUDA_ATTN_BATCH=1): the kernels round
      * through bf16 at the same points as the CPU loops, and posts/combs come
      * back in the CPU layout so any later stage can still fall back. */
     int gpu_hc1 = 0;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     if (!result && batch > 1 &&
-        coli_v4_gpu_mhc_pre_norm_batch(weights, "attn", "attn_norm",
+        lma_v4_gpu_mhc_pre_norm_batch(weights, "attn", "attn_norm",
                                        posts, combs, normalized,
                                        inputs_hc, hc, d, batch) == 0)
         gpu_hc1 = 1;
@@ -5880,17 +5880,17 @@ int coli_v4_block_window_batch_ref(
                 weights, config, "attn", "attn_norm.weight");
     V4_BLOCK_PROF_MARK(prof_hc1);
     phase = "attention";
-    if (!result) result = coli_v4_attention_window_batch_ref(
+    if (!result) result = lma_v4_attention_window_batch_ref(
         branches, attention, weights, config, normalized,
         start_position, batch, error, error_size);
     V4_BLOCK_PROF_MARK(prof_attn);
     if (!result) phase = "attention post / FFN hyper-connection";
     int gpu_hc2 = 0;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     if (!result && batch > 1 &&
-        coli_v4_gpu_mhc_post_batch(weights, states, branches, inputs_hc,
+        lma_v4_gpu_mhc_post_batch(weights, states, branches, inputs_hc,
                                    posts, combs, hc, d, batch) == 0 &&
-        coli_v4_gpu_mhc_pre_norm_batch(weights, "ffn", "ffn_norm",
+        lma_v4_gpu_mhc_pre_norm_batch(weights, "ffn", "ffn_norm",
                                        ffn_post, ffn_comb, ffn_normalized,
                                        states, hc, d, batch) == 0)
         gpu_hc2 = 1;
@@ -5898,12 +5898,12 @@ int coli_v4_block_window_batch_ref(
     if (!gpu_hc2)
     for (int item = 0; !result && item < batch; item++) {
         float *state = states + (size_t)item * hd;
-        result = coli_v4_hc_post(
+        result = lma_v4_hc_post(
             state, branches + (size_t)item * d,
             inputs_hc + (size_t)item * hd,
             posts + (size_t)item * hc,
             combs + (size_t)item * hc * hc, hc, d);
-        if (!result) coli_bf16_round_array(state, hd);
+        if (!result) lma_bf16_round_array(state, hd);
         if (!result) phase = "FFN hyper-connection";
         if (!result) result = normalized_hc_pre(
             reduced, ffn_post + (size_t)item * hc,
@@ -5913,14 +5913,14 @@ int coli_v4_block_window_batch_ref(
     }
     V4_BLOCK_PROF_MARK(prof_hc2);
     if (!result) phase = "MoE";
-#ifdef COLI_V4_GPU_TIER
-    /* Whole-chunk GPU MoE (expert bank; COLI_CUDA_MOE_BATCH=1). The backend
+#ifdef LMA_V4_GPU_TIER
+    /* Whole-chunk GPU MoE (expert bank; LMA_CUDA_MOE_BATCH=1). The backend
      * sums routed + shared like the CPU union; only the final bf16 rounding
      * happens here. Any refusal falls through to the CPU paths below. */
     if (!result && batch > 1 &&
-        coli_v4_gpu_moe_batch_union(ffn_branch, weights, config, experts,
+        lma_v4_gpu_moe_batch_union(ffn_branch, weights, config, experts,
                                     ffn_normalized, tokens, batch) == 0)
-        coli_bf16_round_array(ffn_branch, (size_t)batch * d);
+        lma_bf16_round_array(ffn_branch, (size_t)batch * d);
     else
 #endif
     if (!result && batch > 1 && v4_expert_union_enabled())
@@ -5935,21 +5935,21 @@ int coli_v4_block_window_batch_ref(
     V4_BLOCK_PROF_MARK(prof_moe);
     if (!result) phase = "FFN hyper-connection post";
     int gpu_hc3 = 0;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     if (!result && batch > 1 &&
-        coli_v4_gpu_mhc_post_batch(weights, outputs_hc, ffn_branch, states,
+        lma_v4_gpu_mhc_post_batch(weights, outputs_hc, ffn_branch, states,
                                    ffn_post, ffn_comb, hc, d, batch) == 0)
         gpu_hc3 = 1;
 #endif
     if (!gpu_hc3)
     for (int item = 0; !result && item < batch; item++) {
-        result = coli_v4_hc_post(
+        result = lma_v4_hc_post(
             outputs_hc + (size_t)item * hd,
             ffn_branch + (size_t)item * d,
             states + (size_t)item * hd,
             ffn_post + (size_t)item * hc,
             ffn_comb + (size_t)item * hc * hc, hc, d);
-        if (!result) coli_bf16_round_array(
+        if (!result) lma_bf16_round_array(
             outputs_hc + (size_t)item * hd, hd);
     }
     V4_BLOCK_PROF_MARK(prof_hc3);
@@ -5970,17 +5970,17 @@ int coli_v4_block_window_batch_ref(
                          phase, moe_reason());
     return set_error(error, error_size, "hybrid batched block failed in %s", phase);
 }
-#endif /* COLI_V4_UNIT_BLOCK_HYBRID */
+#endif /* LMA_V4_UNIT_BLOCK_HYBRID */
 
-#ifdef COLI_V4_UNIT_COMPRESSOR_SNAPSHOT
+#ifdef LMA_V4_UNIT_COMPRESSOR_SNAPSHOT
 /* ######## deepseek_v4_compressor_snapshot.c ######## */
-#define coli_v4_compressor_create snapshot_copy_compressor_create
-#define coli_v4_compressor_create_with_options snapshot_copy_compressor_create_with_options
-#define coli_v4_compressor_reset snapshot_copy_compressor_reset
-#define coli_v4_compressor_bind_weights snapshot_copy_compressor_bind_weights
-#define coli_v4_compressor_destroy snapshot_copy_compressor_destroy
-#define coli_v4_compressor_step snapshot_copy_compressor_step
-#define coli_v4_compressor_advance snapshot_copy_compressor_advance
+#define lma_v4_compressor_create snapshot_copy_compressor_create
+#define lma_v4_compressor_create_with_options snapshot_copy_compressor_create_with_options
+#define lma_v4_compressor_reset snapshot_copy_compressor_reset
+#define lma_v4_compressor_bind_weights snapshot_copy_compressor_bind_weights
+#define lma_v4_compressor_destroy snapshot_copy_compressor_destroy
+#define lma_v4_compressor_step snapshot_copy_compressor_step
+#define lma_v4_compressor_advance snapshot_copy_compressor_advance
 /* ---- begin include deepseek_v4_compressor.c ---- */
 #include "deepseek_v4_internal.h"
 
@@ -5994,9 +5994,9 @@ int coli_v4_block_window_batch_ref(
 #include "deepseek_v4_internal.h"
 #include "native_quant.h"
 
-struct ColiDeepSeekV4CompressorState {
-    const ColiDeepSeekV4LayerWeights *weights;
-    const ColiDeepSeekV4Config *config;
+struct LmaDeepSeekV4CompressorState {
+    const LmaDeepSeekV4LayerWeights *weights;
+    const LmaDeepSeekV4Config *config;
     int ratio;
     int layer;
     int hidden;
@@ -6020,38 +6020,38 @@ static int set_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
-static const void *layer_value(const ColiDeepSeekV4LayerWeights *weights,
+static const void *layer_value(const LmaDeepSeekV4LayerWeights *weights,
                                const char *suffix) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
+    char name[LMA_V4_MAX_TENSOR_NAME];
     snprintf(name, sizeof(name), "layers.%d.%s", weights->plan.layer, suffix);
-    return coli_v4_layer_data(weights, name, NULL);
+    return lma_v4_layer_data(weights, name, NULL);
 }
 
-int coli_v4_compressor_create(ColiDeepSeekV4CompressorState **output,
-                              const ColiDeepSeekV4LayerWeights *weights,
-                              const ColiDeepSeekV4Config *config,
+int lma_v4_compressor_create(LmaDeepSeekV4CompressorState **output,
+                              const LmaDeepSeekV4LayerWeights *weights,
+                              const LmaDeepSeekV4Config *config,
                               char *error, size_t error_size) {
-    ColiDeepSeekV4CompressorOptions options = {
+    LmaDeepSeekV4CompressorOptions options = {
         "attn.compressor", config ? config->head_dim : 0, 0
     };
-    return coli_v4_compressor_create_with_options(
+    return lma_v4_compressor_create_with_options(
         output, weights, config, &options, error, error_size);
 }
 
-int coli_v4_compressor_create_with_options(
-    ColiDeepSeekV4CompressorState **output,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config,
-    const ColiDeepSeekV4CompressorOptions *options,
+int lma_v4_compressor_create_with_options(
+    LmaDeepSeekV4CompressorState **output,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config,
+    const LmaDeepSeekV4CompressorOptions *options,
     char *error, size_t error_size) {
     if (!output || !weights || !config || !options || !options->prefix ||
         !options->prefix[0] || options->head_dimension <= 0 ||
         weights->plan.compression_ratio < 1)
         return set_error(error, error_size, "unsupported compressor ratio");
-    if (strlen(options->prefix) >= sizeof(((ColiDeepSeekV4CompressorState *)0)->prefix))
+    if (strlen(options->prefix) >= sizeof(((LmaDeepSeekV4CompressorState *)0)->prefix))
         return set_error(error, error_size, "compressor prefix is too long");
     *output = NULL;
-    ColiDeepSeekV4CompressorState *state = calloc(1, sizeof(*state));
+    LmaDeepSeekV4CompressorState *state = calloc(1, sizeof(*state));
     if (!state) return set_error(error, error_size, "out of memory creating compressor");
     state->weights = weights;
     state->config = config;
@@ -6069,7 +6069,7 @@ int coli_v4_compressor_create_with_options(
     state->kv_state = calloc(count, sizeof(*state->kv_state));
     state->score_state = malloc(count * sizeof(*state->score_state));
     if (!state->kv_state || !state->score_state) {
-        coli_v4_compressor_destroy(state);
+        lma_v4_compressor_destroy(state);
         return set_error(error, error_size, "out of memory allocating compressor state");
     }
     for (size_t i = 0; i < count; i++) state->score_state[i] = -INFINITY;
@@ -6077,8 +6077,8 @@ int coli_v4_compressor_create_with_options(
     return 0;
 }
 
-int coli_v4_compressor_bind_weights(ColiDeepSeekV4CompressorState *state,
-                                    const ColiDeepSeekV4LayerWeights *weights,
+int lma_v4_compressor_bind_weights(LmaDeepSeekV4CompressorState *state,
+                                    const LmaDeepSeekV4LayerWeights *weights,
                                     char *error, size_t error_size) {
     if (!state || !weights ||
         weights->plan.layer != state->layer ||
@@ -6088,26 +6088,26 @@ int coli_v4_compressor_bind_weights(ColiDeepSeekV4CompressorState *state,
     return 0;
 }
 
-void coli_v4_compressor_reset(ColiDeepSeekV4CompressorState *state) {
+void lma_v4_compressor_reset(LmaDeepSeekV4CompressorState *state) {
     if (!state) return;
     size_t count = (size_t)state->state_rows * state->projection_dim;
     memset(state->kv_state, 0, count * sizeof(*state->kv_state));
     for (size_t i = 0; i < count; i++) state->score_state[i] = -INFINITY;
 }
 
-void coli_v4_compressor_destroy(ColiDeepSeekV4CompressorState *state) {
+void lma_v4_compressor_destroy(LmaDeepSeekV4CompressorState *state) {
     if (!state) return;
     free(state->score_state);
     free(state->kv_state);
     free(state);
 }
 
-static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
+static int compressor_pool_and_emit(LmaDeepSeekV4CompressorState *state,
                                     float *output, int *produced,
                                     int position, char *error,
                                     size_t error_size);
 
-int coli_v4_compressor_step(ColiDeepSeekV4CompressorState *state,
+int lma_v4_compressor_step(LmaDeepSeekV4CompressorState *state,
                             float *output, int *produced,
                             const float *input, int position,
                             char *error, size_t error_size) {
@@ -6136,8 +6136,8 @@ int coli_v4_compressor_step(ColiDeepSeekV4CompressorState *state,
         const uint16_t *gate_weight = wgate + (size_t)row * hidden;
         for (int column = 0; column < hidden; column++) {
             float value = input[column];
-            kv_sum += coli_bf16_decode(kv_weight[column]) * value;
-            gate_sum += coli_bf16_decode(gate_weight[column]) * value;
+            kv_sum += lma_bf16_decode(kv_weight[column]) * value;
+            gate_sum += lma_bf16_decode(gate_weight[column]) * value;
         }
         kv_row[row] = kv_sum;
         score_row[row] = gate_sum + ape[(size_t)slot * projection + row];
@@ -6150,7 +6150,7 @@ int coli_v4_compressor_step(ColiDeepSeekV4CompressorState *state,
  * matvec results (computed batched on the GPU); the ape bias, pooling, norm,
  * RoPE, quantization and the sliding state all still run here so the CPU
  * state stays canonical for decode and CPU fallbacks. */
-int coli_v4_compressor_advance(ColiDeepSeekV4CompressorState *state,
+int lma_v4_compressor_advance(LmaDeepSeekV4CompressorState *state,
                                float *output, int *produced,
                                const float *kv_proj, const float *gate_proj,
                                int position, char *error, size_t error_size) {
@@ -6175,7 +6175,7 @@ int coli_v4_compressor_advance(ColiDeepSeekV4CompressorState *state,
                                     error, error_size);
 }
 
-static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
+static int compressor_pool_and_emit(LmaDeepSeekV4CompressorState *state,
                                     float *output, int *produced,
                                     int position, char *error,
                                     size_t error_size) {
@@ -6219,7 +6219,7 @@ static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
                state->score_state + (size_t)state->ratio * projection,
                (size_t)state->ratio * projection * sizeof(*state->score_state));
     }
-    coli_bf16_round_array(output, (size_t)dimension);
+    lma_bf16_round_array(output, (size_t)dimension);
     snprintf(suffix, sizeof(suffix), "%s.norm.weight", state->prefix);
     const uint16_t *raw_norm = layer_value(state->weights, suffix);
     float *norm = malloc((size_t)dimension * sizeof(*norm));
@@ -6227,16 +6227,16 @@ static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
         free(norm);
         return set_error(error, error_size, "missing compressor norm");
     }
-    for (int i = 0; i < dimension; i++) norm[i] = coli_bf16_decode(raw_norm[i]);
-    coli_v4_rmsnorm(output, output, norm, dimension, state->config->rms_norm_eps);
-    coli_bf16_round_array(output, (size_t)dimension);
+    for (int i = 0; i < dimension; i++) norm[i] = lma_bf16_decode(raw_norm[i]);
+    lma_v4_rmsnorm(output, output, norm, dimension, state->config->rms_norm_eps);
+    lma_bf16_round_array(output, (size_t)dimension);
     free(norm);
 
     int rope_position = position + 1 - state->ratio;
     int pairs = state->rope_dim / 2;
     float *cosines = malloc((size_t)pairs * sizeof(*cosines));
     float *sines = malloc((size_t)pairs * sizeof(*sines));
-    if (!cosines || !sines || coli_v4_rope_position(
+    if (!cosines || !sines || lma_v4_rope_position(
             cosines, sines, state->rope_dim, rope_position,
             state->config->original_max_position_embeddings,
             state->config->compress_rope_theta, state->config->rope_factor,
@@ -6245,8 +6245,8 @@ static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
         return set_error(error, error_size, "cannot create compressor RoPE table");
     }
     float *rope = output + dimension - state->rope_dim;
-    coli_v4_rope_apply(rope, 1, state->rope_dim, cosines, sines, 0);
-    coli_bf16_round_array(rope, (size_t)state->rope_dim);
+    lma_v4_rope_apply(rope, 1, state->rope_dim, cosines, sines, 0);
+    lma_bf16_round_array(rope, (size_t)state->rope_dim);
     free(sines); free(cosines);
 
     size_t quantized = state->rotate_fp4
@@ -6260,43 +6260,43 @@ static int compressor_pool_and_emit(ColiDeepSeekV4CompressorState *state,
     }
     int quant_error = 0;
     if (state->rotate_fp4)
-        quant_error = coli_hadamard_bf16_ref(output, (size_t)dimension) ||
-                      coli_fp4_activation_qdq_ref(qdq, scales, output,
+        quant_error = lma_hadamard_bf16_ref(output, (size_t)dimension) ||
+                      lma_fp4_activation_qdq_ref(qdq, scales, output,
                                                   quantized, block);
     else
-        quant_error = coli_fp8_activation_qdq_ref(qdq, scales, output,
+        quant_error = lma_fp8_activation_qdq_ref(qdq, scales, output,
                                                   quantized, block);
     if (quant_error) {
         free(scales); free(qdq);
         return set_error(error, error_size, "compressor activation quantization failed");
     }
     memcpy(output, qdq, quantized * sizeof(*output));
-    coli_bf16_round_array(output, quantized);
+    lma_bf16_round_array(output, quantized);
     free(scales); free(qdq);
     *produced = 1;
     return 0;
 }
 /* ---- end include deepseek_v4_compressor.c ---- */
 
-#undef coli_v4_compressor_step
-#undef coli_v4_compressor_advance
-#undef coli_v4_compressor_destroy
-#undef coli_v4_compressor_bind_weights
-#undef coli_v4_compressor_reset
-#undef coli_v4_compressor_create_with_options
-#undef coli_v4_compressor_create
+#undef lma_v4_compressor_step
+#undef lma_v4_compressor_advance
+#undef lma_v4_compressor_destroy
+#undef lma_v4_compressor_bind_weights
+#undef lma_v4_compressor_reset
+#undef lma_v4_compressor_create_with_options
+#undef lma_v4_compressor_create
 
 #include "deepseek_v4_internal.h"
 
-struct ColiV4CompressorSnapshot {
+struct LmaV4CompressorSnapshot {
     size_t count;
     float *kv_state;
     float *score_state;
 };
 
-int coli_v4_compressor_snapshot_create(
-    const ColiDeepSeekV4CompressorState *state,
-    ColiV4CompressorSnapshot **output) {
+int lma_v4_compressor_snapshot_create(
+    const LmaDeepSeekV4CompressorState *state,
+    LmaV4CompressorSnapshot **output) {
     if (!state || !output) return -1;
     *output = calloc(1, sizeof(**output));
     if (!*output) return -1;
@@ -6304,7 +6304,7 @@ int coli_v4_compressor_snapshot_create(
     (*output)->kv_state = malloc((*output)->count * sizeof(float));
     (*output)->score_state = malloc((*output)->count * sizeof(float));
     if (!(*output)->kv_state || !(*output)->score_state) {
-        coli_v4_compressor_snapshot_destroy(*output); *output = NULL; return -1;
+        lma_v4_compressor_snapshot_destroy(*output); *output = NULL; return -1;
     }
     memcpy((*output)->kv_state, state->kv_state,
            (*output)->count * sizeof(float));
@@ -6313,7 +6313,7 @@ int coli_v4_compressor_snapshot_create(
     return 0;
 }
 
-int coli_v4_compressor_snapshot_write(const ColiV4CompressorSnapshot *snapshot,
+int lma_v4_compressor_snapshot_write(const LmaV4CompressorSnapshot *snapshot,
                                       FILE *stream) {
     if (!snapshot || !stream) return -1;
     uint64_t count = (uint64_t)snapshot->count;
@@ -6325,12 +6325,12 @@ int coli_v4_compressor_snapshot_write(const ColiV4CompressorSnapshot *snapshot,
     return 0;
 }
 
-int coli_v4_compressor_snapshot_read(FILE *stream,
-                                     ColiV4CompressorSnapshot **output) {
+int lma_v4_compressor_snapshot_read(FILE *stream,
+                                     LmaV4CompressorSnapshot **output) {
     if (!stream || !output) return -1;
     uint64_t count = 0;
     if (fread(&count, sizeof(count), 1, stream) != 1 || count > (1u << 28)) return -1;
-    ColiV4CompressorSnapshot *snap = calloc(1, sizeof(*snap));
+    LmaV4CompressorSnapshot *snap = calloc(1, sizeof(*snap));
     if (!snap) return -1;
     snap->count = (size_t)count;
     snap->kv_state = malloc((snap->count ? snap->count : 1) * sizeof(float));
@@ -6339,15 +6339,15 @@ int coli_v4_compressor_snapshot_read(FILE *stream,
         (snap->count &&
          (fread(snap->kv_state, sizeof(float), snap->count, stream) != snap->count ||
           fread(snap->score_state, sizeof(float), snap->count, stream) != snap->count))) {
-        coli_v4_compressor_snapshot_destroy(snap); return -1;
+        lma_v4_compressor_snapshot_destroy(snap); return -1;
     }
     *output = snap;
     return 0;
 }
 
-int coli_v4_compressor_snapshot_restore(
-    ColiDeepSeekV4CompressorState *state,
-    const ColiV4CompressorSnapshot *snapshot) {
+int lma_v4_compressor_snapshot_restore(
+    LmaDeepSeekV4CompressorState *state,
+    const LmaV4CompressorSnapshot *snapshot) {
     if (!state || !snapshot || snapshot->count !=
         (size_t)state->state_rows * state->projection_dim) return -1;
     memcpy(state->kv_state, snapshot->kv_state, snapshot->count * sizeof(float));
@@ -6356,22 +6356,22 @@ int coli_v4_compressor_snapshot_restore(
     return 0;
 }
 
-void coli_v4_compressor_snapshot_destroy(ColiV4CompressorSnapshot *snapshot) {
+void lma_v4_compressor_snapshot_destroy(LmaV4CompressorSnapshot *snapshot) {
     if (!snapshot) return;
     free(snapshot->score_state); free(snapshot->kv_state); free(snapshot);
 }
-#endif /* COLI_V4_UNIT_COMPRESSOR_SNAPSHOT */
+#endif /* LMA_V4_UNIT_COMPRESSOR_SNAPSHOT */
 
-#ifdef COLI_V4_UNIT_INDEXER_SNAPSHOT
+#ifdef LMA_V4_UNIT_INDEXER_SNAPSHOT
 /* ######## deepseek_v4_indexer_snapshot.c ######## */
-#define coli_v4_indexer_create snapshot_copy_indexer_create
-#define coli_v4_indexer_bind_weights snapshot_copy_indexer_bind_weights
-#define coli_v4_indexer_reset snapshot_copy_indexer_reset
-#define coli_v4_indexer_destroy snapshot_copy_indexer_destroy
-#define coli_v4_indexer_step snapshot_copy_indexer_step
-#define coli_v4_indexer_step_projected snapshot_copy_indexer_step_projected
-#define coli_v4_indexer_compressed_values snapshot_copy_indexer_values
-#define coli_v4_indexer_compressed_count snapshot_copy_indexer_count
+#define lma_v4_indexer_create snapshot_copy_indexer_create
+#define lma_v4_indexer_bind_weights snapshot_copy_indexer_bind_weights
+#define lma_v4_indexer_reset snapshot_copy_indexer_reset
+#define lma_v4_indexer_destroy snapshot_copy_indexer_destroy
+#define lma_v4_indexer_step snapshot_copy_indexer_step
+#define lma_v4_indexer_step_projected snapshot_copy_indexer_step_projected
+#define lma_v4_indexer_compressed_values snapshot_copy_indexer_values
+#define lma_v4_indexer_compressed_count snapshot_copy_indexer_count
 /* ---- begin include deepseek_v4_indexer.c ---- */
 #include "deepseek_v4_internal.h"
 
@@ -6386,10 +6386,10 @@ void coli_v4_compressor_snapshot_destroy(ColiV4CompressorSnapshot *snapshot) {
 #include "deepseek_v4_internal.h"
 #include "native_quant.h"
 
-struct ColiDeepSeekV4Indexer {
-    const ColiDeepSeekV4LayerWeights *weights;
-    const ColiDeepSeekV4Config *config;
-    ColiDeepSeekV4CompressorState *compressor;
+struct LmaDeepSeekV4Indexer {
+    const LmaDeepSeekV4LayerWeights *weights;
+    const LmaDeepSeekV4Config *config;
+    LmaDeepSeekV4CompressorState *compressor;
     int layer;
     int capacity;
     int count;
@@ -6408,32 +6408,32 @@ static int set_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
-static const void *value(const ColiDeepSeekV4LayerWeights *weights,
+static const void *value(const LmaDeepSeekV4LayerWeights *weights,
                          const char *suffix,
-                         const ColiDeepSeekV4TensorSpec **spec) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
+                         const LmaDeepSeekV4TensorSpec **spec) {
+    char name[LMA_V4_MAX_TENSOR_NAME];
     snprintf(name, sizeof(name), "layers.%d.%s", weights->plan.layer, suffix);
-    return coli_v4_layer_data(weights, name, spec);
+    return lma_v4_layer_data(weights, name, spec);
 }
 
-static int fp8_view(ColiTensorView *view,
-                    const ColiDeepSeekV4LayerWeights *weights,
+static int fp8_view(LmaTensorView *view,
+                    const LmaDeepSeekV4LayerWeights *weights,
                     const char *prefix) {
     char suffix[128];
-    const ColiDeepSeekV4TensorSpec *ws = NULL, *ss = NULL;
+    const LmaDeepSeekV4TensorSpec *ws = NULL, *ss = NULL;
     snprintf(suffix, sizeof(suffix), "%s.weight", prefix);
     const void *data = value(weights, suffix, &ws);
     snprintf(suffix, sizeof(suffix), "%s.scale", prefix);
     const void *scales = value(weights, suffix, &ss);
     if (!data || !scales || !ws || !ss || ws->rank != 2 ||
-        ws->dtype != COLI_ST_F8_E4M3 || ss->dtype != COLI_ST_F8_E8M0)
+        ws->dtype != LMA_ST_F8_E4M3 || ss->dtype != LMA_ST_F8_E8M0)
         return -1;
-    *view = (ColiTensorView){
-        COLI_TENSOR_FP8_E4M3_BLOCK, COLI_SCALE_F32, data, scales,
+    *view = (LmaTensorView){
+        LMA_TENSOR_FP8_E4M3_BLOCK, LMA_SCALE_F32, data, scales,
         (size_t)(ws->shape[0] * ws->shape[1]),
         (size_t)(ss->shape[0] * ss->shape[1]) * sizeof(float),
         ws->shape[0], ws->shape[1], ws->packed_rows8 ? 8 : 128, 128,
-        coli_v4_layer_gpu(weights, prefix)
+        lma_v4_layer_gpu(weights, prefix)
     };
     return 0;
 }
@@ -6445,16 +6445,16 @@ static int descending_score(const void *left, const void *right) {
     return a->index - b->index;
 }
 
-int coli_v4_indexer_create(ColiDeepSeekV4Indexer **output,
-                           const ColiDeepSeekV4LayerWeights *weights,
-                           const ColiDeepSeekV4Config *config,
+int lma_v4_indexer_create(LmaDeepSeekV4Indexer **output,
+                           const LmaDeepSeekV4LayerWeights *weights,
+                           const LmaDeepSeekV4Config *config,
                            int max_context, char *error, size_t error_size) {
     if (!output || !weights || !config || !weights->plan.has_indexer ||
         max_context < 4 || config->index_head_dim < 1 ||
         config->index_n_heads < 1)
         return set_error(error, error_size, "invalid indexer options");
     *output = NULL;
-    ColiDeepSeekV4Indexer *state = calloc(1, sizeof(*state));
+    LmaDeepSeekV4Indexer *state = calloc(1, sizeof(*state));
     if (!state) return set_error(error, error_size, "out of memory creating indexer");
     state->weights = weights;
     state->config = config;
@@ -6463,52 +6463,52 @@ int coli_v4_indexer_create(ColiDeepSeekV4Indexer **output,
     if (state->capacity > 128) state->capacity = 128;
     state->compressed = calloc((size_t)state->capacity * config->index_head_dim,
                                sizeof(*state->compressed));
-    ColiDeepSeekV4CompressorOptions options = {
+    LmaDeepSeekV4CompressorOptions options = {
         "attn.indexer.compressor", config->index_head_dim, 1
     };
-    if (!state->compressed || coli_v4_compressor_create_with_options(
+    if (!state->compressed || lma_v4_compressor_create_with_options(
             &state->compressor, weights, config, &options, error, error_size)) {
-        coli_v4_indexer_destroy(state);
+        lma_v4_indexer_destroy(state);
         return set_error(error, error_size, "cannot create indexer compressor");
     }
     *output = state;
     return 0;
 }
 
-int coli_v4_indexer_bind_weights(ColiDeepSeekV4Indexer *state,
-                                 const ColiDeepSeekV4LayerWeights *weights,
+int lma_v4_indexer_bind_weights(LmaDeepSeekV4Indexer *state,
+                                 const LmaDeepSeekV4LayerWeights *weights,
                                  char *error, size_t error_size) {
     if (!state || !weights || weights->plan.layer != state->layer ||
         !weights->plan.has_indexer)
         return set_error(error, error_size, "incompatible indexer weights");
     state->weights = weights;
-    return coli_v4_compressor_bind_weights(state->compressor, weights,
+    return lma_v4_compressor_bind_weights(state->compressor, weights,
                                             error, error_size);
 }
 
-void coli_v4_indexer_reset(ColiDeepSeekV4Indexer *state) {
+void lma_v4_indexer_reset(LmaDeepSeekV4Indexer *state) {
     if (!state) return;
     state->count = 0;
     memset(state->compressed, 0,
            (size_t)state->capacity * state->config->index_head_dim * sizeof(float));
-    coli_v4_compressor_reset(state->compressor);
+    lma_v4_compressor_reset(state->compressor);
 }
 
-void coli_v4_indexer_destroy(ColiDeepSeekV4Indexer *state) {
+void lma_v4_indexer_destroy(LmaDeepSeekV4Indexer *state) {
     if (!state) return;
-    coli_v4_compressor_destroy(state->compressor);
+    lma_v4_compressor_destroy(state->compressor);
     free(state->compressed);
     free(state);
 }
 
 static int apply_position_rope(float *queries,
-                               const ColiDeepSeekV4Config *config,
+                               const LmaDeepSeekV4Config *config,
                                int position) {
     int heads = config->index_n_heads, dimension = config->index_head_dim;
     int rope_dim = config->qk_rope_head_dim, pairs = rope_dim / 2;
     float *cosines = malloc((size_t)pairs * sizeof(*cosines));
     float *sines = malloc((size_t)pairs * sizeof(*sines));
-    if (!cosines || !sines || coli_v4_rope_position(
+    if (!cosines || !sines || lma_v4_rope_position(
             cosines, sines, rope_dim, position,
             config->original_max_position_embeddings,
             config->compress_rope_theta, config->rope_factor,
@@ -6517,15 +6517,15 @@ static int apply_position_rope(float *queries,
     }
     for (int head = 0; head < heads; head++) {
         float *query = queries + (size_t)head * dimension;
-        coli_v4_rope_apply(query + dimension - rope_dim, 1, rope_dim,
+        lma_v4_rope_apply(query + dimension - rope_dim, 1, rope_dim,
                            cosines, sines, 0);
-        coli_bf16_round_array(query + dimension - rope_dim, (size_t)rope_dim);
+        lma_bf16_round_array(query + dimension - rope_dim, (size_t)rope_dim);
     }
     free(sines); free(cosines);
     return 0;
 }
 
-static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
+static int indexer_step_common(LmaDeepSeekV4Indexer *state, int *indices,
                                int index_capacity, const float *query_rank,
                                const float *input, int position,
                                const float *kv_proj, const float *gate_proj,
@@ -6549,10 +6549,10 @@ static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
     float *next = state->count < state->capacity
         ? state->compressed + (size_t)state->count * dimension : NULL;
     if (kv_proj && gate_proj
-            ? coli_v4_compressor_advance(state->compressor, next, &produced,
+            ? lma_v4_compressor_advance(state->compressor, next, &produced,
                                          kv_proj, gate_proj, position,
                                          error, error_size)
-            : coli_v4_compressor_step(state->compressor, next, &produced, input,
+            : lma_v4_compressor_step(state->compressor, next, &produced, input,
                                       position, error, error_size)) return -1;
     if (produced) {
         if (state->count >= state->capacity)
@@ -6573,7 +6573,7 @@ static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
         return state->count;
     }
 
-    ColiTensorView wq;
+    LmaTensorView wq;
     if (fp8_view(&wq, state->weights, "attn.indexer.wq_b"))
         return set_error(error, error_size, "missing indexer query weight");
     float *queries = malloc((size_t)heads * dimension * sizeof(*queries));
@@ -6587,17 +6587,17 @@ static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
         free(qdq); free(scales); free(scores); free(head_weights); free(queries);
         return set_error(error, error_size, "out of memory scoring indexer");
     }
-    int result = coli_fp8_matvec_ref(queries, &wq, query_rank);
-    if (!result) coli_bf16_round_array(queries, (size_t)heads * dimension);
+    int result = lma_fp8_matvec_ref(queries, &wq, query_rank);
+    if (!result) lma_bf16_round_array(queries, (size_t)heads * dimension);
     if (!result) result = apply_position_rope(queries, state->config, position);
     for (int head = 0; !result && head < heads; head++) {
         float *query = queries + (size_t)head * dimension;
-        result = coli_hadamard_bf16_ref(query, (size_t)dimension);
-        if (!result) result = coli_fp4_activation_qdq_ref(
+        result = lma_hadamard_bf16_ref(query, (size_t)dimension);
+        if (!result) result = lma_fp4_activation_qdq_ref(
             qdq, scales, query, (size_t)dimension, 32);
         if (!result) {
             memcpy(query, qdq, (size_t)dimension * sizeof(*query));
-            coli_bf16_round_array(query, (size_t)dimension);
+            lma_bf16_round_array(query, (size_t)dimension);
         }
     }
     float weight_scale = 1.0f / sqrtf((float)(dimension * heads));
@@ -6605,7 +6605,7 @@ static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
         float sum = 0.0f;
         const uint16_t *row = raw_weights + (size_t)head * state->config->hidden_size;
         for (int column = 0; column < state->config->hidden_size; column++)
-            sum += coli_bf16_decode(row[column]) * input[column];
+            sum += lma_bf16_decode(row[column]) * input[column];
         head_weights[head] = sum * weight_scale;
     }
     for (int candidate = 0; !result && candidate < state->count; candidate++) {
@@ -6628,7 +6628,7 @@ static int indexer_step_common(ColiDeepSeekV4Indexer *state, int *indices,
     return result ? set_error(error, error_size, "indexer scoring failed") : selected;
 }
 
-int coli_v4_indexer_step(ColiDeepSeekV4Indexer *state, int *indices,
+int lma_v4_indexer_step(LmaDeepSeekV4Indexer *state, int *indices,
                          int index_capacity, const float *query_rank,
                          const float *input, int position,
                          char *error, size_t error_size) {
@@ -6639,7 +6639,7 @@ int coli_v4_indexer_step(ColiDeepSeekV4Indexer *state, int *indices,
 /* GPU-projected variant: kv_proj/gate_proj are this position's rows of the
  * indexer-compressor wkv/wgate projections (batched on the GPU); scoring and
  * every piece of indexer state remain on the CPU. */
-int coli_v4_indexer_step_projected(ColiDeepSeekV4Indexer *state, int *indices,
+int lma_v4_indexer_step_projected(LmaDeepSeekV4Indexer *state, int *indices,
                                    int index_capacity, const float *query_rank,
                                    const float *input, int position,
                                    const float *kv_proj, const float *gate_proj,
@@ -6649,37 +6649,37 @@ int coli_v4_indexer_step_projected(ColiDeepSeekV4Indexer *state, int *indices,
                                error, error_size);
 }
 
-const float *coli_v4_indexer_compressed_values(
-    const ColiDeepSeekV4Indexer *state) {
+const float *lma_v4_indexer_compressed_values(
+    const LmaDeepSeekV4Indexer *state) {
     return state ? state->compressed : NULL;
 }
 
-int coli_v4_indexer_compressed_count(const ColiDeepSeekV4Indexer *state) {
+int lma_v4_indexer_compressed_count(const LmaDeepSeekV4Indexer *state) {
     return state ? state->count : 0;
 }
 /* ---- end include deepseek_v4_indexer.c ---- */
 
-#undef coli_v4_indexer_compressed_count
-#undef coli_v4_indexer_compressed_values
-#undef coli_v4_indexer_step
-#undef coli_v4_indexer_step_projected
-#undef coli_v4_indexer_destroy
-#undef coli_v4_indexer_reset
-#undef coli_v4_indexer_bind_weights
-#undef coli_v4_indexer_create
+#undef lma_v4_indexer_compressed_count
+#undef lma_v4_indexer_compressed_values
+#undef lma_v4_indexer_step
+#undef lma_v4_indexer_step_projected
+#undef lma_v4_indexer_destroy
+#undef lma_v4_indexer_reset
+#undef lma_v4_indexer_bind_weights
+#undef lma_v4_indexer_create
 
 #include "deepseek_v4_internal.h"
 #include "deepseek_v4_internal.h"
 
-struct ColiV4IndexerSnapshot {
+struct LmaV4IndexerSnapshot {
     int count;
     int head_dim;
     float *compressed;
-    ColiV4CompressorSnapshot *compressor;
+    LmaV4CompressorSnapshot *compressor;
 };
 
-int coli_v4_indexer_snapshot_create(const ColiDeepSeekV4Indexer *state,
-                                    ColiV4IndexerSnapshot **output) {
+int lma_v4_indexer_snapshot_create(const LmaDeepSeekV4Indexer *state,
+                                    LmaV4IndexerSnapshot **output) {
     if (!state || !output || !state->config) return -1;
     *output = calloc(1, sizeof(**output));
     if (!*output) return -1;
@@ -6689,52 +6689,52 @@ int coli_v4_indexer_snapshot_create(const ColiDeepSeekV4Indexer *state,
         (*output)->compressed = malloc((size_t)state->count *
                                        (*output)->head_dim * sizeof(float));
         if (!(*output)->compressed) {
-            coli_v4_indexer_snapshot_destroy(*output); *output = NULL; return -1;
+            lma_v4_indexer_snapshot_destroy(*output); *output = NULL; return -1;
         }
         memcpy((*output)->compressed, state->compressed,
                (size_t)state->count * (*output)->head_dim * sizeof(float));
     }
-    if (coli_v4_compressor_snapshot_create(state->compressor,
+    if (lma_v4_compressor_snapshot_create(state->compressor,
                                             &(*output)->compressor)) {
-        coli_v4_indexer_snapshot_destroy(*output); *output = NULL; return -1;
+        lma_v4_indexer_snapshot_destroy(*output); *output = NULL; return -1;
     }
     return 0;
 }
 
-int coli_v4_indexer_snapshot_write(const ColiV4IndexerSnapshot *snapshot,
+int lma_v4_indexer_snapshot_write(const LmaV4IndexerSnapshot *snapshot,
                                    FILE *stream) {
     if (!snapshot || !stream) return -1;
     int32_t head[2] = {snapshot->count, snapshot->head_dim};
     if (fwrite(head, sizeof(head), 1, stream) != 1) return -1;
     size_t n = (size_t)snapshot->count * snapshot->head_dim;
     if (n && fwrite(snapshot->compressed, sizeof(float), n, stream) != n) return -1;
-    return coli_v4_compressor_snapshot_write(snapshot->compressor, stream);
+    return lma_v4_compressor_snapshot_write(snapshot->compressor, stream);
 }
 
-int coli_v4_indexer_snapshot_read(FILE *stream, ColiV4IndexerSnapshot **output) {
+int lma_v4_indexer_snapshot_read(FILE *stream, LmaV4IndexerSnapshot **output) {
     if (!stream || !output) return -1;
     int32_t head[2];
     if (fread(head, sizeof(head), 1, stream) != 1 || head[0] < 0 || head[1] < 1 ||
         head[0] > (1 << 24) || head[1] > 4096) return -1;
-    ColiV4IndexerSnapshot *snap = calloc(1, sizeof(*snap));
+    LmaV4IndexerSnapshot *snap = calloc(1, sizeof(*snap));
     if (!snap) return -1;
     snap->count = head[0]; snap->head_dim = head[1];
     size_t n = (size_t)snap->count * snap->head_dim;
     if (n) {
         snap->compressed = malloc(n * sizeof(float));
         if (!snap->compressed || fread(snap->compressed, sizeof(float), n, stream) != n) {
-            coli_v4_indexer_snapshot_destroy(snap); return -1;
+            lma_v4_indexer_snapshot_destroy(snap); return -1;
         }
     }
-    if (coli_v4_compressor_snapshot_read(stream, &snap->compressor)) {
-        coli_v4_indexer_snapshot_destroy(snap); return -1;
+    if (lma_v4_compressor_snapshot_read(stream, &snap->compressor)) {
+        lma_v4_indexer_snapshot_destroy(snap); return -1;
     }
     *output = snap;
     return 0;
 }
 
-int coli_v4_indexer_snapshot_restore(ColiDeepSeekV4Indexer *state,
-                                     const ColiV4IndexerSnapshot *snapshot) {
+int lma_v4_indexer_snapshot_restore(LmaDeepSeekV4Indexer *state,
+                                     const LmaV4IndexerSnapshot *snapshot) {
     if (!state || !snapshot || !state->config ||
         state->config->index_head_dim != snapshot->head_dim) return -1;
     /* A fresh process (disk-loaded checkpoint) has not grown its cache yet:
@@ -6754,24 +6754,24 @@ int coli_v4_indexer_snapshot_restore(ColiDeepSeekV4Indexer *state,
     if (snapshot->count)
         memcpy(state->compressed, snapshot->compressed,
                (size_t)snapshot->count * snapshot->head_dim * sizeof(float));
-    return coli_v4_compressor_snapshot_restore(state->compressor,
+    return lma_v4_compressor_snapshot_restore(state->compressor,
                                                 snapshot->compressor);
 }
 
-void coli_v4_indexer_snapshot_destroy(ColiV4IndexerSnapshot *snapshot) {
+void lma_v4_indexer_snapshot_destroy(LmaV4IndexerSnapshot *snapshot) {
     if (!snapshot) return;
-    coli_v4_compressor_snapshot_destroy(snapshot->compressor);
+    lma_v4_compressor_snapshot_destroy(snapshot->compressor);
     free(snapshot->compressed); free(snapshot);
 }
-#endif /* COLI_V4_UNIT_INDEXER_SNAPSHOT */
+#endif /* LMA_V4_UNIT_INDEXER_SNAPSHOT */
 
-#ifdef COLI_V4_UNIT_ATTENTION_TRANSACTION
+#ifdef LMA_V4_UNIT_ATTENTION_TRANSACTION
 /* ######## deepseek_v4_attention_transaction.c ######## */
-#define coli_v4_window_attention_create transaction_copy_attention_create
-#define coli_v4_window_attention_reset transaction_copy_attention_reset
-#define coli_v4_window_attention_destroy transaction_copy_attention_destroy
-#define coli_v4_attention_token_ref transaction_copy_attention_token
-#define coli_v4_attention_window_token_ref transaction_copy_attention_window_token
+#define lma_v4_window_attention_create transaction_copy_attention_create
+#define lma_v4_window_attention_reset transaction_copy_attention_reset
+#define lma_v4_window_attention_destroy transaction_copy_attention_destroy
+#define lma_v4_attention_token_ref transaction_copy_attention_token
+#define lma_v4_attention_window_token_ref transaction_copy_attention_window_token
 /* ---- begin include deepseek_v4_attention.c ---- */
 #include "deepseek_v4_internal.h"
 
@@ -6790,21 +6790,21 @@ void coli_v4_indexer_snapshot_destroy(ColiV4IndexerSnapshot *snapshot) {
 
 static int set_error(char *error, size_t size, const char *format, ...);
 
-struct ColiDeepSeekV4WindowAttentionState {
+struct LmaDeepSeekV4WindowAttentionState {
     int window_size;
     int head_dim;
     int layer;
     int ratio;
     float *kv;
-    ColiDeepSeekV4CompressorState *compressor;
-    ColiDeepSeekV4Indexer *indexer;
+    LmaDeepSeekV4CompressorState *compressor;
+    LmaDeepSeekV4Indexer *indexer;
     float *compressed;
     int compressed_count;
     int compressed_capacity;
 };
 
-int coli_v4_window_attention_create(ColiDeepSeekV4WindowAttentionState **output,
-                                    const ColiDeepSeekV4Config *config) {
+int lma_v4_window_attention_create(LmaDeepSeekV4WindowAttentionState **output,
+                                    const LmaDeepSeekV4Config *config) {
     if (!output || !config || config->sliding_window < 1 || config->head_dim < 1)
         return -1;
     *output = calloc(1, sizeof(**output));
@@ -6822,28 +6822,28 @@ int coli_v4_window_attention_create(ColiDeepSeekV4WindowAttentionState **output,
     return 0;
 }
 
-void coli_v4_window_attention_reset(ColiDeepSeekV4WindowAttentionState *state) {
+void lma_v4_window_attention_reset(LmaDeepSeekV4WindowAttentionState *state) {
     if (!state) return;
     memset(state->kv, 0,
            (size_t)state->window_size * state->head_dim * sizeof(*state->kv));
     state->compressed_count = 0;
-    if (state->compressor) coli_v4_compressor_reset(state->compressor);
-    if (state->indexer) coli_v4_indexer_reset(state->indexer);
+    if (state->compressor) lma_v4_compressor_reset(state->compressor);
+    if (state->indexer) lma_v4_indexer_reset(state->indexer);
 }
 
-void coli_v4_window_attention_destroy(ColiDeepSeekV4WindowAttentionState *state) {
+void lma_v4_window_attention_destroy(LmaDeepSeekV4WindowAttentionState *state) {
     if (!state) return;
-    coli_v4_indexer_destroy(state->indexer);
-    coli_v4_compressor_destroy(state->compressor);
+    lma_v4_indexer_destroy(state->indexer);
+    lma_v4_compressor_destroy(state->compressor);
     free(state->compressed);
     free(state->kv);
     free(state);
 }
 
 static int prepare_compressed_state(
-    ColiDeepSeekV4WindowAttentionState *state,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config, char *error, size_t error_size) {
+    LmaDeepSeekV4WindowAttentionState *state,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config, char *error, size_t error_size) {
     int ratio = weights->plan.compression_ratio;
     if (!ratio) return 0;
     if (state->layer < 0) {
@@ -6852,22 +6852,22 @@ static int prepare_compressed_state(
         state->compressed_capacity = 16;
         state->compressed = calloc((size_t)state->compressed_capacity * state->head_dim,
                                    sizeof(*state->compressed));
-        if (!state->compressed || coli_v4_compressor_create(
+        if (!state->compressed || lma_v4_compressor_create(
                 &state->compressor, weights, config, error, error_size)) return -1;
-        if (ratio == 4 && coli_v4_indexer_create(
+        if (ratio == 4 && lma_v4_indexer_create(
                 &state->indexer, weights, config, config->max_position_embeddings,
                 error, error_size)) return -1;
     } else if (state->layer != weights->plan.layer || state->ratio != ratio) {
         return set_error(error, error_size, "attention state belongs to another layer");
     }
-    if (coli_v4_compressor_bind_weights(state->compressor, weights,
+    if (lma_v4_compressor_bind_weights(state->compressor, weights,
                                         error, error_size)) return -1;
-    if (state->indexer && coli_v4_indexer_bind_weights(
+    if (state->indexer && lma_v4_indexer_bind_weights(
             state->indexer, weights, error, error_size)) return -1;
     return 0;
 }
 
-static int grow_compressed_state(ColiDeepSeekV4WindowAttentionState *state,
+static int grow_compressed_state(LmaDeepSeekV4WindowAttentionState *state,
                                  char *error, size_t error_size) {
     if (state->compressed_count < state->compressed_capacity) return 0;
     int capacity = state->compressed_capacity * 2;
@@ -6889,34 +6889,34 @@ static int set_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
-static const void *layer_data(const ColiDeepSeekV4LayerWeights *weights,
+static const void *layer_data(const LmaDeepSeekV4LayerWeights *weights,
                               const char *suffix,
-                              const ColiDeepSeekV4TensorSpec **spec) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
+                              const LmaDeepSeekV4TensorSpec **spec) {
+    char name[LMA_V4_MAX_TENSOR_NAME];
     snprintf(name, sizeof(name), "layers.%d.%s", weights->plan.layer, suffix);
-    return coli_v4_layer_data(weights, name, spec);
+    return lma_v4_layer_data(weights, name, spec);
 }
 
-static int fp8_view(ColiTensorView *view,
-                    const ColiDeepSeekV4LayerWeights *weights,
+static int fp8_view(LmaTensorView *view,
+                    const LmaDeepSeekV4LayerWeights *weights,
                     const char *prefix) {
     char suffix[128];
-    const ColiDeepSeekV4TensorSpec *weight_spec = NULL, *scale_spec = NULL;
+    const LmaDeepSeekV4TensorSpec *weight_spec = NULL, *scale_spec = NULL;
     snprintf(suffix, sizeof(suffix), "%s.weight", prefix);
     const void *data = layer_data(weights, suffix, &weight_spec);
     snprintf(suffix, sizeof(suffix), "%s.scale", prefix);
     const void *scales = layer_data(weights, suffix, &scale_spec);
     if (!data || !scales || !weight_spec || !scale_spec ||
-        weight_spec->dtype != COLI_ST_F8_E4M3 ||
-        scale_spec->dtype != COLI_ST_F8_E8M0 || weight_spec->rank != 2)
+        weight_spec->dtype != LMA_ST_F8_E4M3 ||
+        scale_spec->dtype != LMA_ST_F8_E8M0 || weight_spec->rank != 2)
         return -1;
-    *view = (ColiTensorView){
-        COLI_TENSOR_FP8_E4M3_BLOCK, COLI_SCALE_F32, data, scales,
+    *view = (LmaTensorView){
+        LMA_TENSOR_FP8_E4M3_BLOCK, LMA_SCALE_F32, data, scales,
         (size_t)(weight_spec->shape[0] * weight_spec->shape[1]),
         (size_t)(scale_spec->shape[0] * scale_spec->shape[1]) * sizeof(float),
         weight_spec->shape[0], weight_spec->shape[1],
         weight_spec->packed_rows8 ? 8 : 128, 128,
-        coli_v4_layer_gpu(weights, prefix)
+        lma_v4_layer_gpu(weights, prefix)
     };
     return 0;
 }
@@ -6924,14 +6924,14 @@ static int fp8_view(ColiTensorView *view,
 static int decode_bf16(float *output, const void *data, size_t count) {
     if (!output || !data) return -1;
     const uint16_t *values = data;
-    for (size_t i = 0; i < count; i++) output[i] = coli_bf16_decode(values[i]);
+    for (size_t i = 0; i < count; i++) output[i] = lma_bf16_decode(values[i]);
     return 0;
 }
 
 static int attention_token_impl(float *output,
-                                ColiDeepSeekV4WindowAttentionState *state,
-                                const ColiDeepSeekV4LayerWeights *weights,
-                                const ColiDeepSeekV4Config *config,
+                                LmaDeepSeekV4WindowAttentionState *state,
+                                const LmaDeepSeekV4LayerWeights *weights,
+                                const LmaDeepSeekV4Config *config,
                                 const float *input, int position,
                                 char *error, size_t error_size) {
     if (!output || !weights || !config || !input || position < 0 ||
@@ -6948,7 +6948,7 @@ static int attention_token_impl(float *output,
         rope_dim > head_dim || q_rank < 1 || groups < 1 || heads % groups)
         return set_error(error, error_size, "unsupported attention dimensions");
 
-    ColiTensorView wq_a, wq_b, wkv, wo_a, wo_b;
+    LmaTensorView wq_a, wq_b, wkv, wo_a, wo_b;
     if (fp8_view(&wq_a, weights, "attn.wq_a") ||
         fp8_view(&wq_b, weights, "attn.wq_b") ||
         fp8_view(&wkv, weights, "attn.wkv") ||
@@ -6980,22 +6980,22 @@ static int attention_token_impl(float *output,
     float *input_act = malloc((size_t)wq_a.columns * sizeof(*input_act));
     uint8_t *input_act_scales = malloc((size_t)wq_a.columns / 128 + 1);
     int result = (!input_act || !input_act_scales ||
-                  coli_fp8_activation_qdq_ref(input_act, input_act_scales, input,
+                  lma_fp8_activation_qdq_ref(input_act, input_act_scales, input,
                                               (size_t)wq_a.columns, 128)) ? -1 : 0;
-    if (!result) result = coli_fp8_matvec_pre(qa, &wq_a, input, input_act);
-    coli_bf16_round_array(qa, (size_t)q_rank);
+    if (!result) result = lma_fp8_matvec_pre(qa, &wq_a, input, input_act);
+    lma_bf16_round_array(qa, (size_t)q_rank);
     const void *q_norm = layer_data(weights, "attn.q_norm.weight", NULL);
     if (!result && (!q_norm || decode_bf16(norm_weight, q_norm, (size_t)q_rank) ||
-                    coli_v4_rmsnorm(qa, qa, norm_weight, q_rank,
+                    lma_v4_rmsnorm(qa, qa, norm_weight, q_rank,
                                     config->rms_norm_eps))) result = -1;
-    if (!result) coli_bf16_round_array(qa, (size_t)q_rank);
+    if (!result) lma_bf16_round_array(qa, (size_t)q_rank);
     if (!result && state && weights->plan.compression_ratio) {
         result = prepare_compressed_state(state, weights, config,
                                           error, error_size);
         if (!result && (position + 1) % state->ratio == 0)
             result = grow_compressed_state(state, error, error_size);
         int produced = 0;
-        if (!result) result = coli_v4_compressor_step(
+        if (!result) result = lma_v4_compressor_step(
             state->compressor,
             state->compressed + (size_t)state->compressed_count * head_dim,
             &produced, input, position, error, error_size);
@@ -7004,33 +7004,33 @@ static int attention_token_impl(float *output,
             compressed_indices = malloc((size_t)config->index_topk *
                                         sizeof(*compressed_indices));
             if (!compressed_indices) result = -1;
-            else compressed_selected = coli_v4_indexer_step(
+            else compressed_selected = lma_v4_indexer_step(
                 state->indexer, compressed_indices, config->index_topk,
                 qa, input, position, error, error_size);
             if (compressed_selected < 0) result = -1;
         }
     }
-    if (!result) result = coli_fp8_matvec_ref(q, &wq_b, qa);
-    if (!result) coli_bf16_round_array(q, (size_t)heads * head_dim);
+    if (!result) result = lma_fp8_matvec_ref(q, &wq_b, qa);
+    if (!result) lma_bf16_round_array(q, (size_t)heads * head_dim);
     for (int head = 0; !result && head < heads; head++) {
         float *values = q + (size_t)head * head_dim;
         float mean_square = 0.0f;
         for (int i = 0; i < head_dim; i++) mean_square += values[i] * values[i];
         float scale = 1.0f / sqrtf(mean_square / head_dim + config->rms_norm_eps);
-        for (int i = 0; i < head_dim; i++) values[i] = coli_bf16_round(values[i] * scale);
+        for (int i = 0; i < head_dim; i++) values[i] = lma_bf16_round(values[i] * scale);
     }
 
-    if (!result) result = coli_fp8_matvec_pre(kv, &wkv, input, input_act);
-    if (!result) coli_bf16_round_array(kv, (size_t)head_dim);
+    if (!result) result = lma_fp8_matvec_pre(kv, &wkv, input, input_act);
+    if (!result) lma_bf16_round_array(kv, (size_t)head_dim);
     const void *kv_norm = layer_data(weights, "attn.kv_norm.weight", NULL);
     if (!result && (!kv_norm || decode_bf16(norm_weight, kv_norm, (size_t)head_dim) ||
-                    coli_v4_rmsnorm(kv, kv, norm_weight, head_dim,
+                    lma_v4_rmsnorm(kv, kv, norm_weight, head_dim,
                                     config->rms_norm_eps))) result = -1;
-    if (!result) coli_bf16_round_array(kv, (size_t)head_dim);
+    if (!result) lma_bf16_round_array(kv, (size_t)head_dim);
 
     if (!result) {
         int compressed = weights->plan.compression_ratio != 0;
-        if (coli_v4_rope_position(
+        if (lma_v4_rope_position(
                 cosines, sines, rope_dim, position,
                 compressed ? config->original_max_position_embeddings : 0,
                 compressed ? config->compress_rope_theta : config->rope_theta,
@@ -7040,20 +7040,20 @@ static int attention_token_impl(float *output,
     if (!result) {
         for (int head = 0; head < heads; head++) {
             float *rope = q + (size_t)head * head_dim + head_dim - rope_dim;
-            coli_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 0);
-            coli_bf16_round_array(rope, (size_t)rope_dim);
+            lma_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 0);
+            lma_bf16_round_array(rope, (size_t)rope_dim);
         }
         float *kv_rope = kv + head_dim - rope_dim;
-        coli_v4_rope_apply(kv_rope, 1, rope_dim, cosines, sines, 0);
-        coli_bf16_round_array(kv_rope, (size_t)rope_dim);
+        lma_v4_rope_apply(kv_rope, 1, rope_dim, cosines, sines, 0);
+        lma_bf16_round_array(kv_rope, (size_t)rope_dim);
         size_t nope = (size_t)(head_dim - rope_dim);
         float *qdq = malloc(nope * sizeof(*qdq));
         uint8_t *scales = malloc((nope + 63) / 64);
-        if (!qdq || !scales || coli_fp8_activation_qdq_ref(qdq, scales, kv, nope, 64))
+        if (!qdq || !scales || lma_fp8_activation_qdq_ref(qdq, scales, kv, nope, 64))
             result = -1;
         if (!result) {
             memcpy(kv, qdq, nope * sizeof(*kv));
-            coli_bf16_round_array(kv, nope);
+            lma_bf16_round_array(kv, nope);
         }
         free(scales); free(qdq);
     }
@@ -7092,7 +7092,7 @@ static int attention_token_impl(float *output,
                 int ordinal = state->indexer ? compressed_indices[i] : i;
                 indices[state->window_size + i] = state->window_size + ordinal;
             }
-            result = coli_v4_sparse_attention_ref(
+            result = lma_v4_sparse_attention_ref(
                 attended, q, kv_values, sinks, indices, heads, head_dim,
                 kv_count, topk,
                 1.0f / sqrtf((float)head_dim));
@@ -7107,13 +7107,13 @@ static int attention_token_impl(float *output,
         float attention_weight = 1.0f / (1.0f + expf(sinks[head] - score));
         float *head_output = attended + (size_t)head * head_dim;
         for (int i = 0; i < head_dim; i++)
-            head_output[i] = coli_bf16_round(kv[i] * attention_weight);
+            head_output[i] = lma_bf16_round(kv[i] * attention_weight);
     }
     for (int head = 0; !result && head < heads; head++) {
         float *head_output = attended + (size_t)head * head_dim;
         float *rope = head_output + head_dim - rope_dim;
-        coli_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 1);
-        coli_bf16_round_array(rope, (size_t)rope_dim);
+        lma_v4_rope_apply(rope, 1, rope_dim, cosines, sines, 1);
+        lma_bf16_round_array(rope, (size_t)rope_dim);
     }
 
     int heads_per_group = heads / groups;
@@ -7121,13 +7121,13 @@ static int attention_token_impl(float *output,
     int scale_columns = (group_width + 127) / 128;
     int scale_rows_per_group = (o_rank + 127) / 128;
     if (!result) {
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
         if (wo_a.gpu) {
-            result = coli_v4_gpu_matvec_grouped(&wo_a, oa, attended, groups);
+            result = lma_v4_gpu_matvec_grouped(&wo_a, oa, attended, groups);
         } else
 #endif
         for (int group = 0; group < groups; group++) {
-            ColiTensorView group_view = wo_a;
+            LmaTensorView group_view = wo_a;
             group_view.rows = o_rank;
             group_view.columns = group_width;
             group_view.data = (const uint8_t *)wo_a.data +
@@ -7137,13 +7137,13 @@ static int attention_token_impl(float *output,
             group_view.data_bytes = (size_t)o_rank * group_width;
             group_view.scale_bytes =
                 (size_t)scale_rows_per_group * scale_columns * sizeof(float);
-            result = coli_fp8_matvec_ref(oa + (size_t)group * o_rank, &group_view,
+            result = lma_fp8_matvec_ref(oa + (size_t)group * o_rank, &group_view,
                                          attended + (size_t)group * group_width);
         }
     }
-    if (!result) coli_bf16_round_array(oa, (size_t)groups * o_rank);
-    if (!result) result = coli_fp8_matvec_ref(output, &wo_b, oa);
-    if (!result) coli_bf16_round_array(output, (size_t)hidden);
+    if (!result) lma_bf16_round_array(oa, (size_t)groups * o_rank);
+    if (!result) result = lma_fp8_matvec_ref(output, &wo_b, oa);
+    if (!result) lma_bf16_round_array(output, (size_t)hidden);
 
     free(compressed_indices);
     free(sines); free(cosines); free(norm_weight); free(oa);
@@ -7153,46 +7153,46 @@ static int attention_token_impl(float *output,
     return 0;
 }
 
-int coli_v4_attention_token_ref(float *output,
-                                const ColiDeepSeekV4LayerWeights *weights,
-                                const ColiDeepSeekV4Config *config,
+int lma_v4_attention_token_ref(float *output,
+                                const LmaDeepSeekV4LayerWeights *weights,
+                                const LmaDeepSeekV4Config *config,
                                 const float *input, int position,
                                 char *error, size_t error_size) {
     return attention_token_impl(output, NULL, weights, config, input, position,
                                 error, error_size);
 }
 
-int coli_v4_attention_window_token_ref(
-    float *output, ColiDeepSeekV4WindowAttentionState *state,
-    const ColiDeepSeekV4LayerWeights *weights,
-    const ColiDeepSeekV4Config *config, const float *input, int position,
+int lma_v4_attention_window_token_ref(
+    float *output, LmaDeepSeekV4WindowAttentionState *state,
+    const LmaDeepSeekV4LayerWeights *weights,
+    const LmaDeepSeekV4Config *config, const float *input, int position,
     char *error, size_t error_size) {
     return attention_token_impl(output, state, weights, config, input, position,
                                 error, error_size);
 }
 /* ---- end include deepseek_v4_attention.c ---- */
 
-#undef coli_v4_attention_window_token_ref
-#undef coli_v4_attention_token_ref
-#undef coli_v4_window_attention_destroy
-#undef coli_v4_window_attention_reset
-#undef coli_v4_window_attention_create
+#undef lma_v4_attention_window_token_ref
+#undef lma_v4_attention_token_ref
+#undef lma_v4_window_attention_destroy
+#undef lma_v4_window_attention_reset
+#undef lma_v4_window_attention_create
 
 #include "deepseek_v4_internal.h"
 #include "deepseek_v4_internal.h"
 #include "deepseek_v4_internal.h"
 
-struct ColiV4AttentionSnapshot {
+struct LmaV4AttentionSnapshot {
     int window_size, head_dim, compressed_count;
     float *kv;
     float *compressed;
-    ColiV4CompressorSnapshot *compressor;
-    ColiV4IndexerSnapshot *indexer;
+    LmaV4CompressorSnapshot *compressor;
+    LmaV4IndexerSnapshot *indexer;
 };
 
-int coli_v4_attention_snapshot_create(
-    const ColiDeepSeekV4WindowAttentionState *state,
-    ColiV4AttentionSnapshot **output) {
+int lma_v4_attention_snapshot_create(
+    const LmaDeepSeekV4WindowAttentionState *state,
+    LmaV4AttentionSnapshot **output) {
     if (!state || !output) return -1;
     *output = calloc(1, sizeof(**output));
     if (!*output) return -1;
@@ -7209,18 +7209,18 @@ int coli_v4_attention_snapshot_create(
         if (!(*output)->compressed) goto failed;
         memcpy((*output)->compressed, state->compressed, count * sizeof(float));
     }
-    if (state->compressor && coli_v4_compressor_snapshot_create(
+    if (state->compressor && lma_v4_compressor_snapshot_create(
             state->compressor, &(*output)->compressor)) goto failed;
-    if (state->indexer && coli_v4_indexer_snapshot_create(
+    if (state->indexer && lma_v4_indexer_snapshot_create(
             state->indexer, &(*output)->indexer)) goto failed;
     return 0;
 failed:
-    coli_v4_attention_snapshot_destroy(*output); *output = NULL; return -1;
+    lma_v4_attention_snapshot_destroy(*output); *output = NULL; return -1;
 }
 
-int coli_v4_attention_snapshot_restore(
-    ColiDeepSeekV4WindowAttentionState *state,
-    const ColiV4AttentionSnapshot *snapshot) {
+int lma_v4_attention_snapshot_restore(
+    LmaDeepSeekV4WindowAttentionState *state,
+    const LmaV4AttentionSnapshot *snapshot) {
     if (!state || !snapshot || state->window_size != snapshot->window_size ||
         state->head_dim != snapshot->head_dim) return -1;
     /* Grow the compressed buffer for a snapshot longer than anything this
@@ -7244,21 +7244,21 @@ int coli_v4_attention_snapshot_restore(
                (size_t)snapshot->compressed_count * state->head_dim * sizeof(float));
     if ((state->compressor != NULL) != (snapshot->compressor != NULL) ||
         (state->indexer != NULL) != (snapshot->indexer != NULL)) return -1;
-    if (state->compressor && coli_v4_compressor_snapshot_restore(
+    if (state->compressor && lma_v4_compressor_snapshot_restore(
             state->compressor, snapshot->compressor)) return -1;
-    if (state->indexer && coli_v4_indexer_snapshot_restore(
+    if (state->indexer && lma_v4_indexer_snapshot_restore(
             state->indexer, snapshot->indexer)) return -1;
     return 0;
 }
 
-void coli_v4_attention_snapshot_destroy(ColiV4AttentionSnapshot *snapshot) {
+void lma_v4_attention_snapshot_destroy(LmaV4AttentionSnapshot *snapshot) {
     if (!snapshot) return;
-    coli_v4_indexer_snapshot_destroy(snapshot->indexer);
-    coli_v4_compressor_snapshot_destroy(snapshot->compressor);
+    lma_v4_indexer_snapshot_destroy(snapshot->indexer);
+    lma_v4_compressor_snapshot_destroy(snapshot->compressor);
     free(snapshot->compressed); free(snapshot->kv); free(snapshot);
 }
 
-int coli_v4_attention_snapshot_write(const ColiV4AttentionSnapshot *snapshot,
+int lma_v4_attention_snapshot_write(const LmaV4AttentionSnapshot *snapshot,
                                      FILE *stream) {
     if (!snapshot || !stream) return -1;
     int32_t head[5] = {snapshot->window_size, snapshot->head_dim,
@@ -7270,19 +7270,19 @@ int coli_v4_attention_snapshot_write(const ColiV4AttentionSnapshot *snapshot,
     size_t comp = (size_t)snapshot->compressed_count * snapshot->head_dim;
     if (comp && fwrite(snapshot->compressed, sizeof(float), comp, stream) != comp) return -1;
     if (snapshot->compressor &&
-        coli_v4_compressor_snapshot_write(snapshot->compressor, stream)) return -1;
+        lma_v4_compressor_snapshot_write(snapshot->compressor, stream)) return -1;
     if (snapshot->indexer &&
-        coli_v4_indexer_snapshot_write(snapshot->indexer, stream)) return -1;
+        lma_v4_indexer_snapshot_write(snapshot->indexer, stream)) return -1;
     return 0;
 }
 
-int coli_v4_attention_snapshot_read(FILE *stream,
-                                    ColiV4AttentionSnapshot **output) {
+int lma_v4_attention_snapshot_read(FILE *stream,
+                                    LmaV4AttentionSnapshot **output) {
     if (!stream || !output) return -1;
     int32_t head[5];
     if (fread(head, sizeof(head), 1, stream) != 1 || head[0] < 1 || head[1] < 1 ||
         head[2] < 0 || head[0] > 65536 || head[1] > 8192 || head[2] > (1 << 24)) return -1;
-    ColiV4AttentionSnapshot *snap = calloc(1, sizeof(*snap));
+    LmaV4AttentionSnapshot *snap = calloc(1, sizeof(*snap));
     if (!snap) return -1;
     snap->window_size = head[0]; snap->head_dim = head[1]; snap->compressed_count = head[2];
     size_t kv = (size_t)snap->window_size * snap->head_dim;
@@ -7294,22 +7294,22 @@ int coli_v4_attention_snapshot_read(FILE *stream,
         if (!snap->compressed || fread(snap->compressed, sizeof(float), comp, stream) != comp)
             goto failed;
     }
-    if (head[3] && coli_v4_compressor_snapshot_read(stream, &snap->compressor)) goto failed;
-    if (head[4] && coli_v4_indexer_snapshot_read(stream, &snap->indexer)) goto failed;
+    if (head[3] && lma_v4_compressor_snapshot_read(stream, &snap->compressor)) goto failed;
+    if (head[4] && lma_v4_indexer_snapshot_read(stream, &snap->indexer)) goto failed;
     *output = snap;
     return 0;
 failed:
-    coli_v4_attention_snapshot_destroy(snap);
+    lma_v4_attention_snapshot_destroy(snap);
     return -1;
 }
-#endif /* COLI_V4_UNIT_ATTENTION_TRANSACTION */
+#endif /* LMA_V4_UNIT_ATTENTION_TRANSACTION */
 
-#ifdef COLI_V4_UNIT_EXPERT_STORE_HOT_ROWS16
+#ifdef LMA_V4_UNIT_EXPERT_STORE_HOT_ROWS16
 /* ######## deepseek_v4_expert_store_hot_rows16.c ######## */
 /* Hot target experts are converted in-place to a 16-row resident layout.
  * Cold experts keep the official row-major FP4 representation. */
-#define coli_deepseek_v4_expert_store_open \
-    coli_deepseek_v4_expert_store_open_base
+#define lma_deepseek_v4_expert_store_open \
+    lma_deepseek_v4_expert_store_open_base
 /* ---- begin include deepseek_v4_expert_store.c ---- */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -7323,9 +7323,9 @@ failed:
 #include <stdlib.h>
 #include <string.h>
 
-/* The .coli_usage expert history lives in route_trace.h (#700) — one format,
+/* The .lma_usage expert history lives in route_trace.h (#700) — one format,
  * one reader, one writer for every engine. Included inside THIS unit only:
- * the amalgam builds one object per COLI_V4_UNIT_*, and the shared header's
+ * the amalgam builds one object per LMA_V4_UNIT_*, and the shared header's
  * statics must have a single owner, which is the unit that loads, counts
  * (lookup_hot) and saves the history. The router runs in other units, so V4
  * does not emit per-row ROUTE_TRACE lines; if the stream is enabled the
@@ -7333,17 +7333,17 @@ failed:
 #include "route_trace.h"
 
 
-#ifdef COLI_V4_EXPERIMENTAL_PREFETCH_BATCH
-int coli_st_prefetch_many(
-    const ColiSafetensorsIndex *index, const int *shards,
+#ifdef LMA_V4_EXPERIMENTAL_PREFETCH_BATCH
+int lma_st_prefetch_many(
+    const LmaSafetensorsIndex *index, const int *shards,
     const uint64_t *offsets, const size_t *lengths, size_t count);
 #endif
 
 enum { V4_W1 = 0, V4_W2 = 1, V4_W3 = 2, V4_MATRIX_COUNT = 3 };
 
 typedef struct {
-    const ColiSafetensorsTensor *weight[V4_MATRIX_COUNT];
-    const ColiSafetensorsTensor *scale[V4_MATRIX_COUNT];
+    const LmaSafetensorsTensor *weight[V4_MATRIX_COUNT];
+    const LmaSafetensorsTensor *scale[V4_MATRIX_COUNT];
     int scale_shard;
     int weight_shard;
     uint64_t scale_offset;
@@ -7377,7 +7377,7 @@ typedef struct {
 } V4ExpertSlot;
 
 typedef struct {
-    ColiSafetensorsIndex *index;
+    LmaSafetensorsIndex *index;
     int layers;
     int experts_per_layer;
     int slots_per_layer;
@@ -7399,7 +7399,7 @@ typedef struct {
     int pool_reserve_per_layer;
     uint64_t clock;
     unsigned active_leases;
-    ColiExpertStoreStats stats;
+    LmaExpertStoreStats stats;
     pthread_mutex_t mutex;
     pthread_cond_t load_ready;
     double disk_sec;   /* cumulative wall time spent reading expert bytes from disk */
@@ -7421,30 +7421,30 @@ static int set_error(char *error, size_t size, const char *format, ...) {
 }
 
 static int compare_tensors(const void *left, const void *right) {
-    const ColiSafetensorsTensor *const *a = left;
-    const ColiSafetensorsTensor *const *b = right;
+    const LmaSafetensorsTensor *const *a = left;
+    const LmaSafetensorsTensor *const *b = right;
     return ((*a)->off > (*b)->off) - ((*a)->off < (*b)->off);
 }
 
-static int contiguous_group(const ColiSafetensorsTensor *const input[3],
-                            const ColiSafetensorsIndex *index,
+static int contiguous_group(const LmaSafetensorsTensor *const input[3],
+                            const LmaSafetensorsIndex *index,
                             int *shard, uint64_t *offset, uint64_t *bytes) {
-    const ColiSafetensorsTensor *parts[3] = {input[0], input[1], input[2]};
+    const LmaSafetensorsTensor *parts[3] = {input[0], input[1], input[2]};
     qsort(parts, 3, sizeof(parts[0]), compare_tensors);
     if (parts[0]->fd != parts[1]->fd || parts[1]->fd != parts[2]->fd ||
         parts[0]->off + parts[0]->nbytes != parts[1]->off ||
         parts[1]->off + parts[1]->nbytes != parts[2]->off)
         return -1;
-    *shard = coli_st_tensor_shard(index, parts[0]);
+    *shard = lma_st_tensor_shard(index, parts[0]);
     *offset = (uint64_t)parts[0]->off;
     *bytes = (uint64_t)(parts[2]->off + parts[2]->nbytes - parts[0]->off);
     return *shard < 0 ? -1 : 0;
 }
 
-static int validate_matrix(const ColiSafetensorsTensor *weight,
-                           const ColiSafetensorsTensor *scale) {
-    if (!weight || !scale || weight->dtype != COLI_ST_I8 ||
-        scale->dtype != COLI_ST_F8_E8M0 || weight->rank != 2 || scale->rank != 2 ||
+static int validate_matrix(const LmaSafetensorsTensor *weight,
+                           const LmaSafetensorsTensor *scale) {
+    if (!weight || !scale || weight->dtype != LMA_ST_I8 ||
+        scale->dtype != LMA_ST_F8_E8M0 || weight->rank != 2 || scale->rank != 2 ||
         weight->shape[0] != scale->shape[0] || weight->shape[1] <= 0 ||
         scale->shape[1] <= 0)
         return -1;
@@ -7460,10 +7460,10 @@ static int build_record(V4ExpertStoreState *state, int layer, int expert,
     for (int matrix = 0; matrix < V4_MATRIX_COUNT; matrix++) {
         snprintf(name, sizeof(name), "layers.%d.ffn.experts.%d.%s.weight",
                  layer, expert, matrix_names[matrix]);
-        record->weight[matrix] = coli_st_find(state->index, name);
+        record->weight[matrix] = lma_st_find(state->index, name);
         snprintf(name, sizeof(name), "layers.%d.ffn.experts.%d.%s.scale",
                  layer, expert, matrix_names[matrix]);
-        record->scale[matrix] = coli_st_find(state->index, name);
+        record->scale[matrix] = lma_st_find(state->index, name);
         if (validate_matrix(record->weight[matrix], record->scale[matrix]) != 0)
             return set_error(error, error_size,
                              "invalid native FP4 expert matrix: layer=%d expert=%d %s",
@@ -7481,8 +7481,8 @@ static int build_record(V4ExpertStoreState *state, int layer, int expert,
         record->per_matrix = 1;
         uint64_t per_matrix_bytes = 0;
         for (int matrix = 0; matrix < V4_MATRIX_COUNT; matrix++) {
-            int matrix_scale_shard = coli_st_tensor_shard(state->index, record->scale[matrix]);
-            int matrix_weight_shard = coli_st_tensor_shard(state->index, record->weight[matrix]);
+            int matrix_scale_shard = lma_st_tensor_shard(state->index, record->scale[matrix]);
+            int matrix_weight_shard = lma_st_tensor_shard(state->index, record->weight[matrix]);
             if (matrix_scale_shard < 0 || matrix_weight_shard < 0)
                 return set_error(error, error_size,
                                  "expert shard lookup failed: layer=%d expert=%d",
@@ -7507,7 +7507,7 @@ static int build_record(V4ExpertStoreState *state, int layer, int expert,
     return 0;
 }
 
-static V4ExpertRecord *get_record(V4ExpertStoreState *state, ColiExpertKey key) {
+static V4ExpertRecord *get_record(V4ExpertStoreState *state, LmaExpertKey key) {
     if (key.layer < 0 || key.layer >= state->layers || key.expert < 0 ||
         key.expert >= state->experts_per_layer)
         return NULL;
@@ -7523,9 +7523,9 @@ static int slot_partition(const V4ExpertStoreState *state,
     return (int)(slot - state->slots) / state->slots_per_layer;
 }
 
-#ifdef COLI_V4_TEST_HOOKS
-uint64_t coli_v4_test_expert_victim_probes;
-#define V4_COUNT_VICTIM_PROBE() (coli_v4_test_expert_victim_probes++)
+#ifdef LMA_V4_TEST_HOOKS
+uint64_t lma_v4_test_expert_victim_probes;
+#define V4_COUNT_VICTIM_PROBE() (lma_v4_test_expert_victim_probes++)
 #else
 #define V4_COUNT_VICTIM_PROBE() ((void)0)
 #endif
@@ -7615,7 +7615,7 @@ static size_t expert_cell(const V4ExpertStoreState *state, int layer,
 }
 
 static V4ExpertSlot *indexed_expert_slot(V4ExpertStoreState *state,
-                                         ColiExpertKey key) {
+                                         LmaExpertKey key) {
     int slot_index = state->slot_by_expert[expert_cell(
         state, key.layer, key.expert)];
     size_t slot_count = (size_t)state->layers * state->slots_per_layer;
@@ -7657,11 +7657,11 @@ static void index_expert_slot(V4ExpertStoreState *state, int layer,
     *entry = slot_index;
 }
 
-static void fill_tensor_view(ColiTensorView *view,
+static void fill_tensor_view(LmaTensorView *view,
                              const V4ExpertRecord *record,
                              const V4ExpertSlot *slot, int matrix) {
-    const ColiSafetensorsTensor *weight = record->weight[matrix];
-    const ColiSafetensorsTensor *scale = record->scale[matrix];
+    const LmaSafetensorsTensor *weight = record->weight[matrix];
+    const LmaSafetensorsTensor *scale = record->scale[matrix];
     uint64_t scale_base = 0, weight_base = 0;
     if (record->per_matrix) {
         /* REAP fallback: slab packs per-matrix scales first, then weights. */
@@ -7677,8 +7677,8 @@ static void fill_tensor_view(ColiTensorView *view,
                       ((uint64_t)weight->off - record->weight_offset);
     }
     memset(view, 0, sizeof(*view));
-    view->format = COLI_TENSOR_FP4_NATIVE_BLOCK;
-    view->scale_format = COLI_SCALE_UE8M0;
+    view->format = LMA_TENSOR_FP4_NATIVE_BLOCK;
+    view->scale_format = LMA_SCALE_UE8M0;
     view->data = slot->slab + weight_base;
     view->scales = slot->slab + scale_base;
     view->data_bytes = (size_t)weight->nbytes;
@@ -7689,8 +7689,8 @@ static void fill_tensor_view(ColiTensorView *view,
     view->block_columns = 32;
 }
 
-static int lookup(ColiExpertStore *store, ColiExpertKey key,
-                  ColiExpertView *view) {
+static int lookup(LmaExpertStore *store, LmaExpertKey key,
+                  LmaExpertView *view) {
     if (!store || !store->state || !view) {
         if (view) memset(view, 0, sizeof(*view));
         return -1;
@@ -7730,14 +7730,14 @@ static int lookup(ColiExpertStore *store, ColiExpertKey key,
         unindex_expert_slot(state, slot);
         slot->expert = -1;
         /* DUAL-SSD: this expert's replica (deterministic per layer,eid). */
-        int rep = coli_st_expert_route(key.layer, key.expert);
+        int rep = lma_st_expert_route(key.layer, key.expert);
         struct timespec disk_t0;
         clock_gettime(CLOCK_MONOTONIC, &disk_t0);
         int read_failed = 0;
         if (record->per_matrix) {
             uint64_t scale_cursor = 0;
             for (int matrix = 0; matrix < V4_MATRIX_COUNT; matrix++) {
-                if (coli_st_read_at_streaming_rep(
+                if (lma_st_read_at_streaming_rep(
                         state->index, record->m_scale_shard[matrix], rep,
                         record->m_scale_offset[matrix],
                         (size_t)record->m_scale_bytes[matrix],
@@ -7751,7 +7751,7 @@ static int lookup(ColiExpertStore *store, ColiExpertKey key,
                 for (int matrix = 0; matrix < V4_MATRIX_COUNT; matrix++)
                     weight_cursor += record->m_scale_bytes[matrix];
                 for (int matrix = 0; matrix < V4_MATRIX_COUNT && !read_failed; matrix++) {
-                    if (coli_st_read_at_streaming_rep(
+                    if (lma_st_read_at_streaming_rep(
                             state->index, record->m_weight_shard[matrix], rep,
                             record->m_weight_offset[matrix],
                             (size_t)record->m_weight_bytes[matrix],
@@ -7761,10 +7761,10 @@ static int lookup(ColiExpertStore *store, ColiExpertKey key,
                 }
             }
         } else {
-            if (coli_st_read_at_streaming_rep(
+            if (lma_st_read_at_streaming_rep(
                     state->index, record->scale_shard, rep, record->scale_offset,
                     (size_t)record->scale_bytes, slot->slab) != 0 ||
-                coli_st_read_at_streaming_rep(
+                lma_st_read_at_streaming_rep(
                     state->index, record->weight_shard, rep, record->weight_offset,
                     (size_t)record->weight_bytes,
                     slot->slab + record->scale_bytes) != 0)
@@ -7813,7 +7813,7 @@ static int lookup(ColiExpertStore *store, ColiExpertKey key,
     return 0;
 }
 
-static void release(ColiExpertStore *store, ColiExpertView *view) {
+static void release(LmaExpertStore *store, LmaExpertView *view) {
     if (!store || !store->state || !view || !view->lease) {
         if (view) memset(view, 0, sizeof(*view));
         return;
@@ -7827,12 +7827,12 @@ static void release(ColiExpertStore *store, ColiExpertView *view) {
     memset(view, 0, sizeof(*view));
 }
 
-static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
+static int prefetch(LmaExpertStore *store, const LmaExpertKey *keys,
                     size_t count) {
     if (!store || !store->state || (!keys && count)) return 0;
     V4ExpertStoreState *state = store->state;
     int accepted = 0;
-#ifdef COLI_V4_EXPERIMENTAL_PREFETCH_BATCH
+#ifdef LMA_V4_EXPERIMENTAL_PREFETCH_BATCH
     size_t capacity = count * 6, ranges = 0;
     int *shards = malloc(capacity * sizeof(*shards));
     uint64_t *offsets = malloc(capacity * sizeof(*offsets));
@@ -7870,7 +7870,7 @@ static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
         candidates++;
     }
     pthread_mutex_unlock(&state->mutex);
-    if (candidates && !coli_st_prefetch_many(
+    if (candidates && !lma_st_prefetch_many(
             state->index, shards, offsets, lengths, ranges))
         accepted = candidates;
     free(lengths); free(offsets); free(shards);
@@ -7878,7 +7878,7 @@ static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
     for (size_t i = 0; i < count; i++) {
         V4ExpertRecord *record = get_record(state, keys[i]);
         if (!record) continue;
-        int rep = coli_st_expert_route(keys[i].layer, keys[i].expert);
+        int rep = lma_st_expert_route(keys[i].layer, keys[i].expert);
         int all_weights_prefetched = 1;
         int matrix_count = record->per_matrix ? V4_MATRIX_COUNT : 1;
         for (int segment = 0; segment < matrix_count && all_weights_prefetched; segment++) {
@@ -7894,7 +7894,7 @@ static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
                 offset = record->weight_offset;
                 length = (size_t)record->weight_bytes;
             }
-            if (coli_st_prefetch_at_rep(state->index, shard, rep,
+            if (lma_st_prefetch_at_rep(state->index, shard, rep,
                                         offset, length) != 0)
                 all_weights_prefetched = 0;
         }
@@ -7913,7 +7913,7 @@ static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
                 offset = record->scale_offset;
                 length = (size_t)record->scale_bytes;
             }
-            all_scales_prefetched &= coli_st_prefetch_at_rep(state->index, shard, rep,
+            all_scales_prefetched &= lma_st_prefetch_at_rep(state->index, shard, rep,
                                                               offset, length) == 0;
         }
         if (all_weights_prefetched && all_scales_prefetched) accepted++;
@@ -7925,7 +7925,7 @@ static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
     return accepted;
 }
 
-static void stats(const ColiExpertStore *store, ColiExpertStoreStats *output) {
+static void stats(const LmaExpertStore *store, LmaExpertStoreStats *output) {
     if (!store || !store->state || !output) return;
     V4ExpertStoreState *state = store->state;
     pthread_mutex_lock(&state->mutex);
@@ -7933,7 +7933,7 @@ static void stats(const ColiExpertStore *store, ColiExpertStoreStats *output) {
     pthread_mutex_unlock(&state->mutex);
 }
 
-static void destroy(ColiExpertStore *store) {
+static void destroy(LmaExpertStore *store) {
     if (!store) return;
     V4ExpertStoreState *state = store->state;
     if (state) {
@@ -7947,7 +7947,7 @@ static void destroy(ColiExpertStore *store) {
                 free(state->slots[i].slab);
         pthread_cond_destroy(&state->load_ready);
         pthread_mutex_destroy(&state->mutex);
-        coli_st_index_close(state->index);
+        lma_st_index_close(state->index);
         free(state->records);
         free(state->slots);
         free(state->slot_by_expert);
@@ -7962,17 +7962,17 @@ static void destroy(ColiExpertStore *store) {
     free(store);
 }
 
-int coli_deepseek_v4_expert_store_open(
-    const ColiDeepSeekV4ExpertStoreOptions *options, ColiExpertStore **output,
+int lma_deepseek_v4_expert_store_open(
+    const LmaDeepSeekV4ExpertStoreOptions *options, LmaExpertStore **output,
     char *error, size_t error_size) {
-    static const ColiExpertStoreOps operations = {
+    static const LmaExpertStoreOps operations = {
         lookup, release, prefetch, stats, destroy
     };
     if (!options || !output || !options->model_dir || options->layers < 1 ||
         options->experts_per_layer < 1 || !options->cache_bytes)
         return set_error(error, error_size, "invalid DeepSeek-V4 ExpertStore options");
     *output = NULL;
-    ColiExpertStore *store = calloc(1, sizeof(*store));
+    LmaExpertStore *store = calloc(1, sizeof(*store));
     V4ExpertStoreState *state = calloc(1, sizeof(*state));
     if (!store || !state) {
         free(store);
@@ -7990,13 +7990,13 @@ int coli_deepseek_v4_expert_store_open(
     state->layers = options->layers;
     state->experts_per_layer = options->experts_per_layer;
     state->pool_layer = -1;
-    if (coli_st_index_open(&state->index, options->model_dir, error, error_size) != 0)
+    if (lma_st_index_open(&state->index, options->model_dir, error, error_size) != 0)
         goto fail;
-    /* DUAL-SSD: register COLI_MODEL_MIRROR copies and derive the read split
+    /* DUAL-SSD: register LMA_MODEL_MIRROR copies and derive the read split
      * before any expert load, so pin warmup and demand reads stream from all
      * drives. */
     if (!options->skip_mirror_setup)
-        coli_st_mirror_setup(state->index, options->model_dir,
+        lma_st_mirror_setup(state->index, options->model_dir,
                              options->experts_per_layer);
     size_t record_count = (size_t)state->layers * state->experts_per_layer;
     state->records = malloc(record_count * sizeof(*state->records)); /* build_record zeroes each */
@@ -8086,7 +8086,7 @@ fail:
     free(state->lru_tail);
     free(state->ehit);
     free(state->eheat);
-    coli_st_index_close(state->index);
+    lma_st_index_close(state->index);
     pthread_cond_destroy(&state->load_ready);
     pthread_mutex_destroy(&state->mutex);
     free(state);
@@ -8095,7 +8095,7 @@ fail:
 }
 /* ---- end include deepseek_v4_expert_store.c ---- */
 
-#undef coli_deepseek_v4_expert_store_open
+#undef lma_deepseek_v4_expert_store_open
 
 #include "native_quant_fp4_rows16.h"
 #include <limits.h>
@@ -8104,7 +8104,7 @@ fail:
 #include "deepseek_v4_internal.h"
 
 typedef struct V4HotPolicy {
-    ColiExpertStore *store;
+    LmaExpertStore *store;
     int pin_count;
     uint64_t repin_interval;
     uint64_t *usage;
@@ -8129,7 +8129,7 @@ static double hot_now(void) {
 
 static char *hot_history_path(const char *model_dir) {
     if (!model_dir) return NULL;
-    const char suffix[] = "/.coli_usage";
+    const char suffix[] = "/.lma_usage";
     size_t length = strlen(model_dir) + sizeof(suffix);
     char *path = malloc(length);
     if (path) snprintf(path, length, "%s%s", model_dir, suffix);
@@ -8182,10 +8182,10 @@ static uint64_t hot_usage_load(V4HotPolicy *policy,
 static void hot_usage_save(const V4HotPolicy *policy,
                            const V4ExpertStoreState *state) {
     if (!policy || !state || !policy->history_path || !policy->usage) return;
-    const char *enabled = getenv("COLI_V4_SAVE_USAGE");
+    const char *enabled = getenv("LMA_V4_SAVE_USAGE");
     if (enabled && atoi(enabled) == 0) return;
     /* rt_save persists the shared counters fed at each store lookup, with the
-     * standard [STATS] summary line and the COLI_USAGE_DECAY knob every other
+     * standard [STATS] summary line and the LMA_USAGE_DECAY knob every other
      * engine already honours. */
     if (!rt_save(policy->history_path, 0))
         fprintf(stderr, "v4_autopin warning=cannot-save-history path=%s\n",
@@ -8193,7 +8193,7 @@ static void hot_usage_save(const V4HotPolicy *policy,
 }
 
 
-static V4HotPolicy *hot_find(ColiExpertStore *store) {
+static V4HotPolicy *hot_find(LmaExpertStore *store) {
     pthread_mutex_lock(&hot_policies_mutex);
     V4HotPolicy *policy = hot_policies;
     while (policy && policy->store != store) policy = policy->next;
@@ -8201,17 +8201,17 @@ static V4HotPolicy *hot_find(ColiExpertStore *store) {
     return policy;
 }
 
-#ifndef COLI_V4_PIN_RAMP_REQUESTS
-#define COLI_V4_PIN_RAMP_REQUESTS 0
+#ifndef LMA_V4_PIN_RAMP_REQUESTS
+#define LMA_V4_PIN_RAMP_REQUESTS 0
 #endif
 
 static int hot_is_pinned(const V4HotPolicy *policy, int layer, int expert) {
     if (!policy || policy->pin_count < 1 || layer < 0 || expert < 0) return 0;
     int active = policy->pin_count;
-#if COLI_V4_PIN_RAMP_REQUESTS > 0
+#if LMA_V4_PIN_RAMP_REQUESTS > 0
     if (!policy->history_seeded && active > 4) {
         uint64_t grown = policy->layer_requests[layer] /
-                         COLI_V4_PIN_RAMP_REQUESTS;
+                         LMA_V4_PIN_RAMP_REQUESTS;
         active = grown >= (uint64_t)(active - 4)
             ? active : 4 + (int)grown;
     }
@@ -8242,9 +8242,9 @@ static uint64_t v4_direct_flock_reads;
 static uint64_t v4_direct_payload_bytes;
 static uint64_t v4_direct_fallbacks;
 
-#ifdef COLI_V4_TEST_HOOKS
-void (*coli_v4_test_expert_read_hook)(ColiExpertKey key);
-void (*coli_v4_test_expert_wait_hook)(ColiExpertKey key);
+#ifdef LMA_V4_TEST_HOOKS
+void (*lma_v4_test_expert_read_hook)(LmaExpertKey key);
+void (*lma_v4_test_expert_wait_hook)(LmaExpertKey key);
 #endif
 
 static int v4_pread_full_try(int fd, void *destination, size_t length,
@@ -8313,7 +8313,7 @@ static int v4_try_direct_segment(V4ExpertStoreState *state, int shard, int rep,
                                  V4ExpertSlot *slot, uint64_t dest,
                                  uint64_t offset, uint64_t bytes) {
     if (!slot->aligned_slab ||
-        !coli_st_streaming_direct_available_rep(state->index, shard, rep))
+        !lma_st_streaming_direct_available_rep(state->index, shard, rep))
         return -1;
     size_t length = (size_t)bytes;
     if (dest == 0)
@@ -8333,9 +8333,9 @@ static int v4_read_per_matrix_segment(V4ExpertStoreState *state, int shard,
         return 0;
     }
     if (slot->aligned_slab &&
-        coli_st_streaming_direct_available_rep(state->index, shard, rep))
+        lma_st_streaming_direct_available_rep(state->index, shard, rep))
         *used_fallback = 1;
-    return coli_st_read_at_rep(state->index, shard, rep, offset, (size_t)bytes,
+    return lma_st_read_at_rep(state->index, shard, rep, offset, (size_t)bytes,
                                slot->slab + dest);
 }
 
@@ -8376,7 +8376,7 @@ static int v4_read_expert_record(V4ExpertStoreState *state,
         return 0;
     }
     int direct_available = slot->aligned_slab &&
-        coli_st_streaming_direct_available_rep(state->index, record->scale_shard, rep);
+        lma_st_streaming_direct_available_rep(state->index, record->scale_shard, rep);
     int same_shard = record->scale_shard == record->weight_shard;
     if (direct_available && same_shard &&
         record->scale_offset + record->scale_bytes == record->weight_offset &&
@@ -8398,39 +8398,39 @@ static int v4_read_expert_record(V4ExpertStoreState *state,
         __atomic_fetch_add(&v4_direct_reads, UINT64_C(1), __ATOMIC_RELAXED);
         __atomic_fetch_add(&v4_direct_payload_bytes, record->weight_bytes,
                            __ATOMIC_RELAXED);
-        return coli_st_read_at_rep(state->index, record->scale_shard, rep,
+        return lma_st_read_at_rep(state->index, record->scale_shard, rep,
                                    record->scale_offset,
                                    (size_t)record->scale_bytes, slot->slab);
     }
     if (direct_available)
         __atomic_fetch_add(&v4_direct_fallbacks, UINT64_C(1),
                            __ATOMIC_RELAXED);
-    if (coli_st_read_at_rep(state->index, record->weight_shard, rep,
+    if (lma_st_read_at_rep(state->index, record->weight_shard, rep,
                             record->weight_offset,
                             (size_t)record->weight_bytes,
                             slot->slab + record->scale_bytes)) return -1;
-    return coli_st_read_at_rep(state->index, record->scale_shard, rep,
+    return lma_st_read_at_rep(state->index, record->scale_shard, rep,
                                record->scale_offset,
                                (size_t)record->scale_bytes, slot->slab);
 }
 
-static void hot_fill_view(ColiTensorView *view,
+static void hot_fill_view(LmaTensorView *view,
                           const V4ExpertRecord *record,
                           const V4ExpertSlot *slot, int matrix,
                           const V4HotPolicy *policy,
                           const V4ExpertStoreState *state) {
     fill_tensor_view(view, record, slot, matrix);
-#ifdef COLI_FP4_ROWS16_KERNEL
+#ifdef LMA_FP4_ROWS16_KERNEL
     if (policy->packed[hot_slot_index(state, slot)]) view->block_rows = 16;
 #endif
 }
 
-static int hot_pack_matrix(ColiTensorView *view, unsigned char *scratch) {
-#ifndef COLI_FP4_ROWS16_KERNEL
+static int hot_pack_matrix(LmaTensorView *view, unsigned char *scratch) {
+#ifndef LMA_FP4_ROWS16_KERNEL
     (void)view; (void)scratch; return -1;
 #else
     unsigned char *packed_scales = scratch + view->data_bytes;
-    if (coli_fp4_pack_rows16_v10(scratch, packed_scales, view)) return -1;
+    if (lma_fp4_pack_rows16_v10(scratch, packed_scales, view)) return -1;
     memcpy((void *)view->data, scratch, view->data_bytes);
     memcpy((void *)view->scales, packed_scales, view->scale_bytes);
     return 0;
@@ -8438,7 +8438,7 @@ static int hot_pack_matrix(ColiTensorView *view, unsigned char *scratch) {
 }
 
 /* state->mutex is held and the slot has at least one reference. */
-/* COLI_V4_ROWS16=0: never repack hot experts into the rows16 layout, so
+/* LMA_V4_ROWS16=0: never repack hot experts into the rows16 layout, so
  * every expert runs the reference matvec. The rows16 kernel accumulates in a
  * different order (not bitwise the reference), which makes greedy text depend
  * on which experts happen to be hot; this valve removes that variable for
@@ -8446,7 +8446,7 @@ static int hot_pack_matrix(ColiTensorView *view, unsigned char *scratch) {
 static int hot_rows16_wanted(void) {
     static int rows16 = -1;
     if (rows16 < 0) {
-        const char *env = getenv("COLI_V4_ROWS16");
+        const char *env = getenv("LMA_V4_ROWS16");
         rows16 = !(env && *env == '0');
     }
     return rows16;
@@ -8456,17 +8456,17 @@ static int hot_pack_slot_locked(V4HotPolicy *policy,
                                 V4ExpertStoreState *state,
                                 const V4ExpertRecord *record,
                                 V4ExpertSlot *slot) {
-#ifndef COLI_FP4_ROWS16_KERNEL
+#ifndef LMA_FP4_ROWS16_KERNEL
     (void)policy; (void)state; (void)record; (void)slot; return -1;
 #else
     size_t slot_index = hot_slot_index(state, slot);
     if (policy->packed[slot_index]) return 0;
     if (!hot_rows16_wanted()) return -1;
-    ColiTensorView gate, down, up;
+    LmaTensorView gate, down, up;
     fill_tensor_view(&gate, record, slot, V4_W1);
     fill_tensor_view(&down, record, slot, V4_W2);
     fill_tensor_view(&up, record, slot, V4_W3);
-    const ColiTensorView *views[3] = {&gate, &down, &up};
+    const LmaTensorView *views[3] = {&gate, &down, &up};
     size_t scratch_size = 0;
     for (int i = 0; i < 3; i++) {
         size_t needed = views[i]->data_bytes + views[i]->scale_bytes;
@@ -8496,15 +8496,15 @@ static int hot_pack_slot_locked(V4HotPolicy *policy,
  * fails. Call outside state->mutex. */
 static unsigned char *hot_pack_slot_prepare(const V4ExpertRecord *record,
                                             V4ExpertSlot *slot) {
-#ifndef COLI_FP4_ROWS16_KERNEL
+#ifndef LMA_FP4_ROWS16_KERNEL
     (void)record; (void)slot; return NULL;
 #else
     if (!hot_rows16_wanted()) return NULL;
-    ColiTensorView gate, down, up;
+    LmaTensorView gate, down, up;
     fill_tensor_view(&gate, record, slot, V4_W1);
     fill_tensor_view(&down, record, slot, V4_W2);
     fill_tensor_view(&up, record, slot, V4_W3);
-    const ColiTensorView *views[3] = {&gate, &down, &up};
+    const LmaTensorView *views[3] = {&gate, &down, &up};
     size_t total = 0;
     for (int i = 0; i < 3; i++)
         total += views[i]->data_bytes + views[i]->scale_bytes;
@@ -8514,7 +8514,7 @@ static unsigned char *hot_pack_slot_prepare(const V4ExpertRecord *record,
     for (int i = 0; i < 3; i++) {
         unsigned char *packed_data = buf + off;
         unsigned char *packed_scales = buf + off + views[i]->data_bytes;
-        if (coli_fp4_pack_rows16_v10(packed_data, packed_scales, views[i])) {
+        if (lma_fp4_pack_rows16_v10(packed_data, packed_scales, views[i])) {
             free(buf);
             return NULL;
         }
@@ -8532,15 +8532,15 @@ static void hot_pack_slot_commit(V4HotPolicy *policy,
                                  const V4ExpertRecord *record,
                                  V4ExpertSlot *slot,
                                  unsigned char *buf) {
-#ifndef COLI_FP4_ROWS16_KERNEL
+#ifndef LMA_FP4_ROWS16_KERNEL
     (void)policy; (void)state; (void)record; (void)slot; (void)buf;
 #else
     if (!buf) return;
-    ColiTensorView gate, down, up;
+    LmaTensorView gate, down, up;
     fill_tensor_view(&gate, record, slot, V4_W1);
     fill_tensor_view(&down, record, slot, V4_W2);
     fill_tensor_view(&up, record, slot, V4_W3);
-    const ColiTensorView *views[3] = {&gate, &down, &up};
+    const LmaTensorView *views[3] = {&gate, &down, &up};
     size_t off = 0;
     for (int i = 0; i < 3; i++) {
         memcpy((void *)views[i]->data, buf + off, views[i]->data_bytes);
@@ -8580,7 +8580,7 @@ static void hot_repin_locked(V4HotPolicy *policy, V4ExpertStoreState *state,
         int expert = pins[rank];
         if (expert < 0) continue;
         V4ExpertSlot *slot = indexed_expert_slot(
-            state, (ColiExpertKey){layer, expert});
+            state, (LmaExpertKey){layer, expert});
         if (slot && slot->slab && slot->expert == expert) {
             slot->used = ++state->clock;
             touch_lru_slot(state, slot);
@@ -8666,8 +8666,8 @@ static V4ExpertSlot *hot_oldest_pool_victim(
     return last_resort;
 }
 
-static int lookup_hot(ColiExpertStore *store, ColiExpertKey key,
-                      ColiExpertView *view) {
+static int lookup_hot(LmaExpertStore *store, LmaExpertKey key,
+                      LmaExpertView *view) {
     if (!store || !store->state || !view) {
         if (view) memset(view, 0, sizeof(*view));
         return -1;
@@ -8726,9 +8726,9 @@ retry_lookup:
      * of issuing the same SSD read into a second slab. Different experts do
      * not match this reservation and continue to load concurrently. */
     if (slot && slot->loading_expert == key.expert) {
-#ifdef COLI_V4_TEST_HOOKS
-        if (coli_v4_test_expert_wait_hook)
-            coli_v4_test_expert_wait_hook(key);
+#ifdef LMA_V4_TEST_HOOKS
+        if (lma_v4_test_expert_wait_hook)
+            lma_v4_test_expert_wait_hook(key);
 #endif
         if (pthread_cond_wait(&state->load_ready, &state->mutex) != 0) {
             pthread_mutex_unlock(&state->mutex);
@@ -8769,12 +8769,12 @@ retry_lookup:
     slot->used = ++state->clock;
     touch_lru_slot(state, slot);
     pthread_mutex_unlock(&state->mutex);
-    int rep = coli_st_expert_route(key.layer, key.expert);
+    int rep = lma_st_expert_route(key.layer, key.expert);
     struct timespec disk_t0;
     clock_gettime(CLOCK_MONOTONIC, &disk_t0);
-#ifdef COLI_V4_TEST_HOOKS
-    if (coli_v4_test_expert_read_hook)
-        coli_v4_test_expert_read_hook(key);
+#ifdef LMA_V4_TEST_HOOKS
+    if (lma_v4_test_expert_read_hook)
+        lma_v4_test_expert_read_hook(key);
 #endif
     int read_result = v4_read_expert_record(state, record, slot, rep);
     struct timespec disk_t1;
@@ -8818,8 +8818,8 @@ retry_lookup:
     pthread_mutex_unlock(&state->mutex); return 0;
 }
 
-#ifdef COLI_V4_TEST_HOOKS
-int coli_v4_test_expert_slot_index(ColiExpertStore *store, ColiExpertKey key) {
+#ifdef LMA_V4_TEST_HOOKS
+int lma_v4_test_expert_slot_index(LmaExpertStore *store, LmaExpertKey key) {
     if (!store || !store->state || key.layer < 0 || key.expert < 0) return -1;
     V4ExpertStoreState *state = store->state;
     if (key.layer >= state->layers || key.expert >= state->experts_per_layer)
@@ -8831,22 +8831,22 @@ int coli_v4_test_expert_slot_index(ColiExpertStore *store, ColiExpertKey key) {
     return result;
 }
 
-void coli_v4_test_reset_direct_io_stats(void) {
+void lma_v4_test_reset_direct_io_stats(void) {
     __atomic_store_n(&v4_direct_reads, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&v4_direct_flock_reads, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&v4_direct_payload_bytes, 0, __ATOMIC_RELAXED);
     __atomic_store_n(&v4_direct_fallbacks, 0, __ATOMIC_RELAXED);
 }
 
-uint64_t coli_v4_test_direct_reads(void) {
+uint64_t lma_v4_test_direct_reads(void) {
     return __atomic_load_n(&v4_direct_reads, __ATOMIC_RELAXED);
 }
 
-uint64_t coli_v4_test_direct_fallbacks(void) {
+uint64_t lma_v4_test_direct_fallbacks(void) {
     return __atomic_load_n(&v4_direct_fallbacks, __ATOMIC_RELAXED);
 }
 
-int coli_v4_test_force_streaming_direct(ColiExpertStore *store) {
+int lma_v4_test_force_streaming_direct(LmaExpertStore *store) {
     if (!store || !store->state) return -1;
     V4ExpertStoreState *state = store->state;
     if (!state->index) return -1;
@@ -8872,7 +8872,7 @@ int coli_v4_test_force_streaming_direct(ColiExpertStore *store) {
  * The capability is intentionally private to the production hot store.  A
  * registered alternative ExpertStore backend receives a safe no-op rather
  * than having its opaque state reinterpreted here. */
-void coli_v4_expert_store_prefill_pool(ColiExpertStore *store, int layer) {
+void lma_v4_expert_store_prefill_pool(LmaExpertStore *store, int layer) {
     if (!store || !store->state || store->gpu || !hot_find(store)) return;
     V4ExpertStoreState *state = store->state;
     if (layer < 0 || layer >= state->layers) layer = -1;
@@ -8881,7 +8881,7 @@ void coli_v4_expert_store_prefill_pool(ColiExpertStore *store, int layer) {
     pthread_mutex_unlock(&state->mutex);
 }
 
-static void destroy_hot(ColiExpertStore *store) {
+static void destroy_hot(LmaExpertStore *store) {
     pthread_mutex_lock(&hot_policies_mutex);
     V4HotPolicy **link = &hot_policies;
     while (*link && (*link)->store != store) link = &(*link)->next;
@@ -8915,7 +8915,7 @@ static int hot_prewarm_history(V4HotPolicy *policy,
     if (!policy || !state || !policy->history_seeded ||
         policy->pin_count < 1) return 0;
     size_t capacity = (size_t)state->layers * policy->pin_count;
-    ColiExpertKey *keys = malloc(capacity * sizeof(*keys));
+    LmaExpertKey *keys = malloc(capacity * sizeof(*keys));
     if (!keys) return -1;
     size_t count = 0;
     for (int layer = 0; layer < state->layers; layer++) {
@@ -8923,7 +8923,7 @@ static int hot_prewarm_history(V4HotPolicy *policy,
         const int *pins = policy->pins + (size_t)layer * policy->pin_count;
         for (int rank = 0; rank < policy->pin_count; rank++)
             if (pins[rank] >= 0)
-                keys[count++] = (ColiExpertKey){layer, pins[rank]};
+                keys[count++] = (LmaExpertKey){layer, pins[rank]};
     }
 
     double began = hot_now();
@@ -8932,7 +8932,7 @@ static int hot_prewarm_history(V4HotPolicy *policy,
     policy->repin_interval = 0;
     #pragma omp parallel for schedule(dynamic, 1) reduction(+:warmed)
     for (size_t i = 0; i < count; i++) {
-        ColiExpertView view;
+        LmaExpertView view;
         if (!lookup_hot(policy->store, keys[i], &view)) {
             release(policy->store, &view);
             warmed++;
@@ -8957,33 +8957,33 @@ static int hot_prewarm_history(V4HotPolicy *policy,
     return warmed == (int)count ? 0 : -1;
 }
 
-#ifndef COLI_V4_ROWS16_STORE_OPEN
-#define COLI_V4_ROWS16_STORE_OPEN coli_deepseek_v4_expert_store_open
+#ifndef LMA_V4_ROWS16_STORE_OPEN
+#define LMA_V4_ROWS16_STORE_OPEN lma_deepseek_v4_expert_store_open
 #endif
 
-int COLI_V4_ROWS16_STORE_OPEN(
-    const ColiDeepSeekV4ExpertStoreOptions *options, ColiExpertStore **output,
+int LMA_V4_ROWS16_STORE_OPEN(
+    const LmaDeepSeekV4ExpertStoreOptions *options, LmaExpertStore **output,
     char *error, size_t error_size) {
-    static const ColiExpertStoreOps hot_operations = {
+    static const LmaExpertStoreOps hot_operations = {
         lookup_hot, release, prefetch, stats, destroy_hot
     };
-    int result = coli_deepseek_v4_expert_store_open_base(
+    int result = lma_deepseek_v4_expert_store_open_base(
         options, output, error, error_size);
     if (result) return result;
     V4ExpertStoreState *state = (*output)->state;
     int direct_io = state->layers > 0 && state->experts_per_layer > 0 &&
-        coli_st_streaming_direct_available(
+        lma_st_streaming_direct_available(
             state->index, state->records[0].weight_shard);
     fprintf(stderr, "v4_ssd_io mode=%s fallback=buffered-pread\n",
             direct_io ? "direct-aligned" : "buffered-pread");
     int minimum_slots = state->experts_per_layer < 6
         ? state->experts_per_layer : 6;
     int maximum_pins = state->slots_per_layer - minimum_slots;
-#ifndef COLI_V4_MAX_PIN_SLOTS_PER_LAYER
-#define COLI_V4_MAX_PIN_SLOTS_PER_LAYER 4
+#ifndef LMA_V4_MAX_PIN_SLOTS_PER_LAYER
+#define LMA_V4_MAX_PIN_SLOTS_PER_LAYER 4
 #endif
-    if (maximum_pins > COLI_V4_MAX_PIN_SLOTS_PER_LAYER)
-        maximum_pins = COLI_V4_MAX_PIN_SLOTS_PER_LAYER;
+    if (maximum_pins > LMA_V4_MAX_PIN_SLOTS_PER_LAYER)
+        maximum_pins = LMA_V4_MAX_PIN_SLOTS_PER_LAYER;
     int pin_requested = options->pin_slots_per_layer;
     /* -1 / 0 => implementation default (use maximum_pins). */
     uint64_t requested = pin_requested > 0
@@ -9015,7 +9015,7 @@ int COLI_V4_ROWS16_STORE_OPEN(
     policy->repin_interval = options->repin_interval
         ? options->repin_interval : (uint64_t)minimum_slots;
     if (!policy->repin_interval) policy->repin_interval = 1;
-    const char *autopin = getenv("COLI_V4_AUTOPIN");
+    const char *autopin = getenv("LMA_V4_AUTOPIN");
     rt_init("deepseek_v4", state->layers, state->experts_per_layer);
     if (rt_tracing())
         fprintf(stderr, "[ROUTE_TRACE] note: deepseek_v4 keeps the expert "
@@ -9038,7 +9038,7 @@ int COLI_V4_ROWS16_STORE_OPEN(
             "v4_hot_policy pin_slots_per_layer=%d repin_interval=%llu "
             "mode=resident-ram rows16=hot-pins\n", pin_count,
             (unsigned long long)policy->repin_interval);
-    const char *prewarm = getenv("COLI_V4_PREWARM");
+    const char *prewarm = getenv("LMA_V4_PREWARM");
     if (policy->history_seeded && prewarm && atoi(prewarm) != 0 &&
         hot_prewarm_history(policy, state))
         fprintf(stderr, "v4_autopin warning=partial-warmup; continuing\n");
@@ -9053,14 +9053,14 @@ int COLI_V4_ROWS16_STORE_OPEN(
  *   EMAP  rows cols hex        (per expert: 2 hex digits, tier<<6 | heat)
  *   HITS  rows cols hex        (per-turn routed-expert bitmap, then cleared)
  *
- * The serve unit (COLI_V4_UNIT_GENERATE_STATS) calls these at turn
+ * The serve unit (LMA_V4_UNIT_GENERATE_STATS) calls these at turn
  * boundaries; the per-expert state lives here, so the store emits them.
  * V4 is CPU-only, so the VRAM tier is always 0 and "ram" means "resident in
  * the expert-store cache slots". Heat is the cumulative routing-selection
  * count (capped at 63, matching the GLM map's low-6-bit field).
  * ---------------------------------------------------------------------- */
 
-void coli_v4_expert_store_emit_tiers(ColiExpertStore *store) {
+void lma_v4_expert_store_emit_tiers(LmaExpertStore *store) {
     V4ExpertStoreState *state;
     if (!store || !store->state) return;
     state = store->state;
@@ -9078,7 +9078,7 @@ void coli_v4_expert_store_emit_tiers(ColiExpertStore *store) {
     fflush(stdout);
 }
 
-void coli_v4_expert_store_emit_emap(ColiExpertStore *store) {
+void lma_v4_expert_store_emit_emap(LmaExpertStore *store) {
     V4ExpertStoreState *state;
     if (!store || !store->state) return;
     state = store->state;
@@ -9090,7 +9090,7 @@ void coli_v4_expert_store_emit_emap(ColiExpertStore *store) {
     for (size_t i = 0; i < cells; i++) {
         int layer = (int)(i / (size_t)cols), expert = (int)(i % (size_t)cols);
         V4ExpertSlot *slot = indexed_expert_slot(
-            state, (ColiExpertKey){layer, expert});
+            state, (LmaExpertKey){layer, expert});
         int tier = slot && slot->slab && slot->expert == expert;
         int heat = state->eheat ? state->eheat[i] : 0;
         if (heat > 63) heat = 63;
@@ -9105,7 +9105,7 @@ void coli_v4_expert_store_emit_emap(ColiExpertStore *store) {
     free(hex);
 }
 
-void coli_v4_expert_store_emit_hits(ColiExpertStore *store) {
+void lma_v4_expert_store_emit_hits(LmaExpertStore *store) {
     V4ExpertStoreState *state;
     if (!store || !store->state) return;
     state = store->state;
@@ -9137,7 +9137,7 @@ void coli_v4_expert_store_emit_hits(ColiExpertStore *store) {
     free(hex);
 }
 
-double coli_v4_expert_store_disk_sec(ColiExpertStore *store) {
+double lma_v4_expert_store_disk_sec(LmaExpertStore *store) {
     V4ExpertStoreState *state;
     if (!store || !store->state) return 0.0;
     state = store->state;
@@ -9151,14 +9151,14 @@ double coli_v4_expert_store_disk_sec(ColiExpertStore *store) {
 /* #890: the compute phase, accumulated by the MoE and read by the serve loop —
  * the disk_sec twin. add is called from the block units around expert forward;
  * the getter is read per-turn in v4_serve_one, same as disk_sec. */
-void coli_v4_expert_store_add_matmul(ColiExpertStore *store, double sec) {
+void lma_v4_expert_store_add_matmul(LmaExpertStore *store, double sec) {
     if (!store || !store->state || sec <= 0.0) return;
     V4ExpertStoreState *state = store->state;
     pthread_mutex_lock(&state->mutex);
     state->matmul_sec += sec;
     pthread_mutex_unlock(&state->mutex);
 }
-double coli_v4_expert_store_matmul_sec(ColiExpertStore *store) {
+double lma_v4_expert_store_matmul_sec(LmaExpertStore *store) {
     V4ExpertStoreState *state;
     if (!store || !store->state) return 0.0;
     state = store->state;
@@ -9168,11 +9168,11 @@ double coli_v4_expert_store_matmul_sec(ColiExpertStore *store) {
     pthread_mutex_unlock(&state->mutex);
     return value;
 }
-#endif /* COLI_V4_UNIT_EXPERT_STORE_HOT_ROWS16 */
+#endif /* LMA_V4_UNIT_EXPERT_STORE_HOT_ROWS16 */
 
-#ifdef COLI_V4_UNIT_EXPERT_ROWS16
+#ifdef LMA_V4_UNIT_EXPERT_ROWS16
 /* ######## deepseek_v4_expert_rows16.c ######## */
-#define coli_v4_expert_forward_ref coli_v4_expert_forward_v17_fallback
+#define lma_v4_expert_forward_ref lma_v4_expert_forward_v17_fallback
 /* ---- begin include deepseek_v4_expert_dual.c ---- */
 #include "deepseek_v4_internal.h"
 
@@ -9182,7 +9182,7 @@ double coli_v4_expert_store_matmul_sec(ColiExpertStore *store) {
 #include "native_quant.h"
 #include "native_quant_dual.h"
 
-int coli_v4_expert_forward_ref(float *output, const ColiExpertView *expert,
+int lma_v4_expert_forward_ref(float *output, const LmaExpertView *expert,
                                const float *input, float route_weight,
                                float swiglu_limit) {
     if (!output || !expert || !input || swiglu_limit < 0.0f ||
@@ -9198,34 +9198,34 @@ int coli_v4_expert_forward_ref(float *output, const ColiExpertView *expert,
     if (!gate || !up || !activated) {
         free(activated); free(up); free(gate); return -1;
     }
-    int result = coli_fp4_dual_matvec_ref(
+    int result = lma_fp4_dual_matvec_ref(
         gate, up, &expert->gate, &expert->up, input);
     if (!result) {
-        coli_bf16_round_array(gate, intermediate);
-        coli_bf16_round_array(up, intermediate);
-        result = coli_v4_swiglu(activated, gate, up,
+        lma_bf16_round_array(gate, intermediate);
+        lma_bf16_round_array(up, intermediate);
+        result = lma_v4_swiglu(activated, gate, up,
                                 (int)intermediate, swiglu_limit);
     }
     if (!result) {
         for (size_t i = 0; i < intermediate; i++)
-            activated[i] = coli_bf16_round(activated[i] * route_weight);
-        result = coli_fp4_matvec_ref(output, &expert->down, activated);
+            activated[i] = lma_bf16_round(activated[i] * route_weight);
+        result = lma_fp4_matvec_ref(output, &expert->down, activated);
     }
-    if (!result) coli_bf16_round_array(output, output_size);
+    if (!result) lma_bf16_round_array(output, output_size);
     free(activated); free(up); free(gate);
     return result ? -1 : 0;
 }
 
-int coli_v4_shared_expert_forward_ref(float *output,
-                                      const ColiTensorView *gate_weight,
-                                      const ColiTensorView *down_weight,
-                                      const ColiTensorView *up_weight,
+int lma_v4_shared_expert_forward_ref(float *output,
+                                      const LmaTensorView *gate_weight,
+                                      const LmaTensorView *down_weight,
+                                      const LmaTensorView *up_weight,
                                       const float *input,
                                       float swiglu_limit) {
     if (!output || !gate_weight || !down_weight || !up_weight || !input ||
-        gate_weight->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
-        down_weight->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
-        up_weight->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
+        gate_weight->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
+        down_weight->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
+        up_weight->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
         gate_weight->rows != up_weight->rows ||
         gate_weight->columns != up_weight->columns ||
         down_weight->columns != gate_weight->rows ||
@@ -9238,39 +9238,39 @@ int coli_v4_shared_expert_forward_ref(float *output,
     if (!gate || !up || !activated) {
         free(activated); free(up); free(gate); return -1;
     }
-    int result = coli_fp8_dual_matvec_ref(
+    int result = lma_fp8_dual_matvec_ref(
         gate, up, gate_weight, up_weight, input);
     if (!result) {
-        coli_bf16_round_array(gate, intermediate);
-        coli_bf16_round_array(up, intermediate);
-        result = coli_v4_swiglu(activated, gate, up,
+        lma_bf16_round_array(gate, intermediate);
+        lma_bf16_round_array(up, intermediate);
+        result = lma_v4_swiglu(activated, gate, up,
                                 (int)intermediate, swiglu_limit);
     }
     if (!result) {
-        coli_bf16_round_array(activated, intermediate);
-        result = coli_fp8_matvec_ref(output, down_weight, activated);
+        lma_bf16_round_array(activated, intermediate);
+        result = lma_fp8_matvec_ref(output, down_weight, activated);
     }
-    if (!result) coli_bf16_round_array(output, output_size);
+    if (!result) lma_bf16_round_array(output, output_size);
     free(activated); free(up); free(gate);
     return result ? -1 : 0;
 }
 /* ---- end include deepseek_v4_expert_dual.c ---- */
 
-#undef coli_v4_expert_forward_ref
+#undef lma_v4_expert_forward_ref
 
 #include "native_quant_fp4_rows16.h"
 
 
-int coli_v4_expert_forward_ref(float *output, const ColiExpertView *expert,
+int lma_v4_expert_forward_ref(float *output, const LmaExpertView *expert,
                                const float *input, float route_weight,
                                float swiglu_limit) {
-#ifndef COLI_FP4_ROWS16_KERNEL
-    return coli_v4_expert_forward_v17_fallback(
+#ifndef LMA_FP4_ROWS16_KERNEL
+    return lma_v4_expert_forward_v17_fallback(
         output, expert, input, route_weight, swiglu_limit);
 #else
     if (!expert || expert->gate.block_rows != 16 ||
         expert->down.block_rows != 16 || expert->up.block_rows != 16)
-        return coli_v4_expert_forward_v17_fallback(
+        return lma_v4_expert_forward_v17_fallback(
             output, expert, input, route_weight, swiglu_limit);
     if (!output || !input || swiglu_limit < 0.0f) return -1;
     size_t intermediate = (size_t)expert->gate.rows;
@@ -9281,28 +9281,28 @@ int coli_v4_expert_forward_ref(float *output, const ColiExpertView *expert,
     if (!gate || !up || !activated) {
         free(activated); free(up); free(gate); return -1;
     }
-    int result = coli_fp4_dual_matvec_rows16_v10(
+    int result = lma_fp4_dual_matvec_rows16_v10(
         gate, up, &expert->gate, &expert->up, input);
     if (!result) {
-        coli_bf16_round_array(gate, intermediate);
-        coli_bf16_round_array(up, intermediate);
-        result = coli_v4_swiglu(activated, gate, up,
+        lma_bf16_round_array(gate, intermediate);
+        lma_bf16_round_array(up, intermediate);
+        result = lma_v4_swiglu(activated, gate, up,
                                 (int)intermediate, swiglu_limit);
     }
     if (!result) {
         for (size_t i = 0; i < intermediate; i++)
-            activated[i] = coli_bf16_round(activated[i] * route_weight);
-        result = coli_fp4_matvec_rows16_v10(
+            activated[i] = lma_bf16_round(activated[i] * route_weight);
+        result = lma_fp4_matvec_rows16_v10(
             output, &expert->down, activated);
     }
-    if (!result) coli_bf16_round_array(output, output_size);
+    if (!result) lma_bf16_round_array(output, output_size);
     free(activated); free(up); free(gate);
     return result ? -1 : 0;
 #endif
 }
 
-int coli_v4_expert_forward_batch_ref(float *outputs,
-                                     const ColiExpertView *expert,
+int lma_v4_expert_forward_batch_ref(float *outputs,
+                                     const LmaExpertView *expert,
                                      const float *inputs,
                                      const float *route_weights,
                                      int batch, float swiglu_limit) {
@@ -9320,7 +9320,7 @@ int coli_v4_expert_forward_batch_ref(float *outputs,
     if (expert->gate.block_rows != 1 || expert->up.block_rows != 1 ||
         expert->down.block_rows != 1) {
         for (int item = 0; item < batch; item++)
-            if (coli_v4_expert_forward_ref(
+            if (lma_v4_expert_forward_ref(
                     outputs + (size_t)item * expert->down.rows, expert,
                     inputs + (size_t)item * expert->gate.columns,
                     route_weights[item], swiglu_limit))
@@ -9338,36 +9338,36 @@ int coli_v4_expert_forward_batch_ref(float *outputs,
     float *up = gate + cells;
     float *activated = up + cells;
 
-    int result = coli_fp4_matmul_batch_ref(
+    int result = lma_fp4_matmul_batch_ref(
         gate, &expert->gate, inputs, batch);
     if (!result)
-        result = coli_fp4_matmul_batch_ref(
+        result = lma_fp4_matmul_batch_ref(
             up, &expert->up, inputs, batch);
     for (int item = 0; !result && item < batch; item++) {
         float *item_gate = gate + (size_t)item * intermediate;
         float *item_up = up + (size_t)item * intermediate;
         float *item_activated = activated + (size_t)item * intermediate;
-        coli_bf16_round_array(item_gate, intermediate);
-        coli_bf16_round_array(item_up, intermediate);
-        result = coli_v4_swiglu(item_activated, item_gate, item_up,
+        lma_bf16_round_array(item_gate, intermediate);
+        lma_bf16_round_array(item_up, intermediate);
+        result = lma_v4_swiglu(item_activated, item_gate, item_up,
                                 (int)intermediate, swiglu_limit);
         if (!result)
             for (size_t column = 0; column < intermediate; column++)
-                item_activated[column] = coli_bf16_round(
+                item_activated[column] = lma_bf16_round(
                     item_activated[column] * route_weights[item]);
     }
     if (!result)
-        result = coli_fp4_matmul_batch_ref(
+        result = lma_fp4_matmul_batch_ref(
             outputs, &expert->down, activated, batch);
     if (!result)
-        coli_bf16_round_array(
+        lma_bf16_round_array(
             outputs, (size_t)batch * (size_t)expert->down.rows);
     free(workspace);
     return result ? -1 : 0;
 }
-#endif /* COLI_V4_UNIT_EXPERT_ROWS16 */
+#endif /* LMA_V4_UNIT_EXPERT_ROWS16 */
 
-#ifdef COLI_V4_UNIT_ROUTE_BF16
+#ifdef LMA_V4_UNIT_ROUTE_BF16
 /* ######## deepseek_v4_route_bf16.c ######## */
 #include <math.h>
 #include <stdint.h>
@@ -9387,15 +9387,15 @@ static float route_softplus(float value) {
 
 #include "moe_router.h"
 
-int coli_v4_route_bf16(float *weights, int *indices, const float *hidden,
+int lma_v4_route_bf16(float *weights, int *indices, const float *hidden,
                        const uint16_t *gate, const float *bias,
                        const int *forced_indices, int experts, int dimension,
                        int topk, float route_scale) {
     if (!weights || !indices || !hidden || !gate || experts < 1 ||
         dimension < 1 || topk < 1 || topk > experts) return -1;
-    float scores_buf[COLI_V4_ROUTE_STACK_EXPERTS];
-    float selection_buf[COLI_V4_ROUTE_STACK_EXPERTS];
-    int on_stack = experts <= COLI_V4_ROUTE_STACK_EXPERTS;
+    float scores_buf[LMA_V4_ROUTE_STACK_EXPERTS];
+    float selection_buf[LMA_V4_ROUTE_STACK_EXPERTS];
+    int on_stack = experts <= LMA_V4_ROUTE_STACK_EXPERTS;
     float *scores = on_stack ? scores_buf : malloc((size_t)experts * sizeof(*scores));
     float *selection = on_stack ? selection_buf : malloc((size_t)experts * sizeof(*selection));
     if (!scores || !selection) {
@@ -9418,7 +9418,7 @@ int coli_v4_route_bf16(float *weights, int *indices, const float *hidden,
             }
             indices[rank] = forced_indices[rank];
         }
-    } else if (coli_router_topk(selection, NULL, NULL, experts, topk, indices, NULL, -1, 0) < topk) {
+    } else if (lma_router_topk(selection, NULL, NULL, experts, topk, indices, NULL, -1, 0) < topk) {
         if (!on_stack) { free(selection); free(scores); }   /* non-finite scores: fail loud, as above */
         return -1;
     }
@@ -9434,9 +9434,9 @@ int coli_v4_route_bf16(float *weights, int *indices, const float *hidden,
     if (!on_stack) { free(selection); free(scores); }
     return 0;
 }
-#endif /* COLI_V4_UNIT_ROUTE_BF16 */
+#endif /* LMA_V4_UNIT_ROUTE_BF16 */
 
-#ifdef COLI_V4_UNIT_RUNTIME
+#ifdef LMA_V4_UNIT_RUNTIME
 /* ######## deepseek_v4_runtime.c / engine ######## */
 #include "deepseek_v4_internal.h"
 #include <time.h>
@@ -9448,28 +9448,28 @@ int coli_v4_route_bf16(float *weights, int *indices, const float *hidden,
 #include <string.h>
 
 /* Provided by LAYER_RESIDENT. */
-void coli_v4_layer_resident_reference_free(ColiV4Engine *engine,
-                                           ColiDeepSeekV4LayerWeights *weights);
+void lma_v4_layer_resident_reference_free(LmaV4Engine *engine,
+                                           LmaDeepSeekV4LayerWeights *weights);
 
-#ifdef COLI_V4_TEST_HOOKS
-int coli_v4_test_fail_expert_store_open = 0;
-int coli_v4_test_skip_expert_store_open = 0;
-int coli_v4_test_closed_owned_index = 0;
+#ifdef LMA_V4_TEST_HOOKS
+int lma_v4_test_fail_expert_store_open = 0;
+int lma_v4_test_skip_expert_store_open = 0;
+int lma_v4_test_closed_owned_index = 0;
 #endif
 
-void coli_v4_engine_attach_session(ColiV4Engine *engine) {
+void lma_v4_engine_attach_session(LmaV4Engine *engine) {
     if (engine) engine->active_sessions++;
 }
 
-void coli_v4_engine_detach_session(ColiV4Engine *engine) {
+void lma_v4_engine_detach_session(LmaV4Engine *engine) {
     if (!engine) return;
     assert(engine->active_sessions > 0);
     engine->active_sessions--;
 }
 
-int coli_v4_full_dspark_wanted;
+int lma_v4_full_dspark_wanted;
 
-double coli_v4_dspark_cache_gb(void) {
+double lma_v4_dspark_cache_gb(void) {
     const char *setting = getenv("V4_MTP_GB");
     double value = setting ? atof(setting) : 0.45;
     if (value < 0.15) value = 0.15;
@@ -9480,7 +9480,7 @@ double coli_v4_dspark_cache_gb(void) {
 }
 
 static int v4_dspark_full_wanted(
-    const ColiV4EngineOpenOptions *options) {
+    const LmaV4EngineOpenOptions *options) {
     if (!options || options->no_dspark) return 0;
     const char *mtp = getenv("V4_MTP");
     const char *draft = getenv("V4_DRAFT");
@@ -9498,8 +9498,8 @@ enum {
 };
 
 static int v4_dspark_full_profile_present(
-    const ColiSafetensorsIndex *index,
-    const ColiDeepSeekV4Config *config) {
+    const LmaSafetensorsIndex *index,
+    const LmaDeepSeekV4Config *config) {
     if (!index || !config) return 0;
 
     /* Converted checkpoints may omit these optional fields, but an explicit
@@ -9522,12 +9522,12 @@ static int v4_dspark_full_profile_present(
     };
     for (size_t item = 0;
          item < sizeof(profile_tensors) / sizeof(profile_tensors[0]); item++)
-        if (!coli_st_find(index, profile_tensors[item])) return 0;
+        if (!lma_st_find(index, profile_tensors[item])) return 0;
     return 1;
 }
 
 static uint64_t v4_dspark_full_reserve_bytes(void) {
-    double cache = coli_v4_dspark_cache_gb() * 1e9;
+    double cache = lma_v4_dspark_cache_gb() * 1e9;
     /* The released Flash checkpoint has ~0.56 GiB of resident MTP dense,
      * projection, Markov and norm tensors.  Add head/scratch/tap margin. */
     double total = cache + 768.0 * 1024.0 * 1024.0;
@@ -9536,9 +9536,9 @@ static uint64_t v4_dspark_full_reserve_bytes(void) {
 
 /* Lightweight fallback: keep only the official low-rank Markov head resident
  * when explicitly requested without the complete three-stage drafter. */
-static int v4_dspark_markov_probe(ColiV4Engine *engine,
-                                  const ColiSafetensorsTensor **w1_out,
-                                  const ColiSafetensorsTensor **w2_out) {
+static int v4_dspark_markov_probe(LmaV4Engine *engine,
+                                  const LmaSafetensorsTensor **w1_out,
+                                  const LmaSafetensorsTensor **w2_out) {
     if (!engine || !engine->target_index || !w1_out || !w2_out) return -1;
     *w1_out = NULL;
     *w2_out = NULL;
@@ -9546,15 +9546,15 @@ static int v4_dspark_markov_probe(ColiV4Engine *engine,
     for (int stage = 0; stage < 16; stage++) {
         snprintf(name, sizeof(name),
                  "mtp.%d.markov_head.markov_w1.weight", stage);
-        const ColiSafetensorsTensor *w1 = coli_st_find(engine->target_index,
+        const LmaSafetensorsTensor *w1 = lma_st_find(engine->target_index,
                                                        name);
         snprintf(name, sizeof(name),
                  "mtp.%d.markov_head.markov_w2.weight", stage);
-        const ColiSafetensorsTensor *w2 = coli_st_find(engine->target_index,
+        const LmaSafetensorsTensor *w2 = lma_st_find(engine->target_index,
                                                        name);
         if (!w1 || !w2) continue;
         int rank = engine->config.dspark_markov_rank;
-        if (w1->dtype != COLI_ST_BF16 || w2->dtype != COLI_ST_BF16 ||
+        if (w1->dtype != LMA_ST_BF16 || w2->dtype != LMA_ST_BF16 ||
             w1->rank != 2 || w2->rank != 2 || rank < 1 ||
             w1->shape[0] != engine->config.vocab_size ||
             w2->shape[0] != engine->config.vocab_size ||
@@ -9566,7 +9566,7 @@ static int v4_dspark_markov_probe(ColiV4Engine *engine,
          * rollback cost on prose where the low-rank bigram is uncertain; a
          * benchmarker may raise it up to the checkpoint's trained block. */
         engine->dspark.block_size = 2;
-        const char *block_setting = getenv("COLI_V4_MARKOV_BLOCK");
+        const char *block_setting = getenv("LMA_V4_MARKOV_BLOCK");
         if (block_setting && atoi(block_setting) > 1)
             engine->dspark.block_size = atoi(block_setting);
         if (engine->dspark.block_size > engine->config.dspark_block_size)
@@ -9582,23 +9582,23 @@ static int v4_dspark_markov_probe(ColiV4Engine *engine,
     return -1;
 }
 
-static int v4_dspark_markov_wanted(const ColiV4EngineOpenOptions *options) {
+static int v4_dspark_markov_wanted(const LmaV4EngineOpenOptions *options) {
     if (!options || options->no_dspark) return 0;
-    const char *setting = getenv("COLI_V4_MARKOV_SPEC");
+    const char *setting = getenv("LMA_V4_MARKOV_SPEC");
     /* Opt-in while real-hardware acceptance is being measured. */
     return setting && atoi(setting) != 0;
 }
 
-static int v4_dspark_markov_load(ColiV4Engine *engine,
-                                 const ColiSafetensorsTensor *w1,
-                                 const ColiSafetensorsTensor *w2) {
+static int v4_dspark_markov_load(LmaV4Engine *engine,
+                                 const LmaSafetensorsTensor *w1,
+                                 const LmaSafetensorsTensor *w2) {
     if (!engine || !w1 || !w2) return -1;
     engine->dspark.markov_w1 = malloc((size_t)w1->nbytes);
     engine->dspark.markov_w2 = malloc((size_t)w2->nbytes);
     if (!engine->dspark.markov_w1 || !engine->dspark.markov_w2 ||
-        coli_st_read_tensor(engine->target_index, w1,
+        lma_st_read_tensor(engine->target_index, w1,
                             engine->dspark.markov_w1) ||
-        coli_st_read_tensor(engine->target_index, w2,
+        lma_st_read_tensor(engine->target_index, w2,
                             engine->dspark.markov_w2)) {
         free(engine->dspark.markov_w2);
         free(engine->dspark.markov_w1);
@@ -9616,20 +9616,20 @@ static int v4_dspark_markov_load(ColiV4Engine *engine,
     return 0;
 }
 
-#ifdef COLI_V4_TEST_HOOKS
-ColiV4Session *coli_v4_test_session_bare_create(ColiV4Engine *engine) {
+#ifdef LMA_V4_TEST_HOOKS
+LmaV4Session *lma_v4_test_session_bare_create(LmaV4Engine *engine) {
     if (!engine) return NULL;
-    ColiV4Session *session = calloc(1, sizeof(*session));
+    LmaV4Session *session = calloc(1, sizeof(*session));
     if (!session) return NULL;
     session->engine = engine;
-    coli_v4_engine_attach_session(engine);
+    lma_v4_engine_attach_session(engine);
     return session;
 }
 
-void coli_v4_test_session_bare_destroy(ColiV4Session *session) {
+void lma_v4_test_session_bare_destroy(LmaV4Session *session) {
     if (!session) return;
     if (session->engine) {
-        coli_v4_engine_detach_session(session->engine);
+        lma_v4_engine_detach_session(session->engine);
         session->engine = NULL;
     }
     free(session);
@@ -9637,20 +9637,20 @@ void coli_v4_test_session_bare_destroy(ColiV4Session *session) {
 
 #endif
 
-const ColiDeepSeekV4Config *coli_v4_engine_config(const ColiV4Engine *engine) {
+const LmaDeepSeekV4Config *lma_v4_engine_config(const LmaV4Engine *engine) {
     return engine ? &engine->config : NULL;
 }
 
-ColiSafetensorsIndex *coli_v4_engine_target_index(ColiV4Engine *engine) {
+LmaSafetensorsIndex *lma_v4_engine_target_index(LmaV4Engine *engine) {
     return engine ? engine->target_index : NULL;
 }
 
-ColiExpertStore *coli_v4_engine_expert_store(ColiV4Engine *engine) {
+LmaExpertStore *lma_v4_engine_expert_store(LmaV4Engine *engine) {
     return engine ? engine->experts : NULL;
 }
 
-void coli_v4_engine_memory_summary(const ColiV4Engine *engine,
-                                   ColiV4EngineMemorySummary *summary) {
+void lma_v4_engine_memory_summary(const LmaV4Engine *engine,
+                                   LmaV4EngineMemorySummary *summary) {
     if (!summary) return;
     if (!engine) {
         memset(summary, 0, sizeof(*summary));
@@ -9659,22 +9659,22 @@ void coli_v4_engine_memory_summary(const ColiV4Engine *engine,
     *summary = engine->summary;
 }
 
-const char *coli_v4_engine_target_model_dir(const ColiV4Engine *engine) {
+const char *lma_v4_engine_target_model_dir(const LmaV4Engine *engine) {
     return engine ? engine->runtime.target_model_dir : NULL;
 }
 
-void coli_v4_engine_destroy(ColiV4Engine *engine) {
+void lma_v4_engine_destroy(LmaV4Engine *engine) {
     if (!engine) return;
     assert(engine->active_sessions == 0 &&
            "destroy engine while sessions are still alive");
 
-#ifdef COLI_V4_GPU_TIER
-    coli_v4_gpu_engine_close(engine);
+#ifdef LMA_V4_GPU_TIER
+    lma_v4_gpu_engine_close(engine);
 #endif
 
-    for (int layer = 0; layer < COLI_V4_RESIDENT_MAX_LAYERS; layer++) {
+    for (int layer = 0; layer < LMA_V4_RESIDENT_MAX_LAYERS; layer++) {
         if (!engine->dense_resident.ready[layer]) continue;
-        coli_v4_layer_resident_reference_free(
+        lma_v4_layer_resident_reference_free(
             NULL, &engine->dense_resident.layers[layer]);
         engine->dense_resident.ready[layer] = 0;
     }
@@ -9693,10 +9693,10 @@ void coli_v4_engine_destroy(ColiV4Engine *engine) {
         engine->experts->ops->destroy(engine->experts);
     engine->experts = NULL;
     if (engine->owns_index && engine->target_index) {
-#ifdef COLI_V4_TEST_HOOKS
-        coli_v4_test_closed_owned_index++;
+#ifdef LMA_V4_TEST_HOOKS
+        lma_v4_test_closed_owned_index++;
 #endif
-        coli_st_index_close(engine->target_index);
+        lma_st_index_close(engine->target_index);
     }
     engine->target_index = NULL;
     engine->runtime.target_model_dir = NULL;
@@ -9708,8 +9708,8 @@ void coli_v4_engine_destroy(ColiV4Engine *engine) {
 /* Cross-unit: written by engine open, printed by the auto store planner. */
 double g_v4_open_index_seconds;
 
-int coli_v4_engine_open(ColiV4Engine **output,
-                        const ColiV4EngineOpenOptions *options,
+int lma_v4_engine_open(LmaV4Engine **output,
+                        const LmaV4EngineOpenOptions *options,
                         char *error, size_t error_size) {
     if (!output || !options || !options->target_model_dir) {
         if (error && error_size)
@@ -9717,7 +9717,7 @@ int coli_v4_engine_open(ColiV4Engine **output,
         return -1;
     }
     *output = NULL;
-    ColiV4Engine *engine = calloc(1, sizeof(*engine));
+    LmaV4Engine *engine = calloc(1, sizeof(*engine));
     if (!engine) {
         if (error && error_size)
             snprintf(error, error_size, "out of memory creating V4 engine");
@@ -9738,13 +9738,13 @@ int coli_v4_engine_open(ColiV4Engine **output,
     engine->runtime.pin_slots_per_layer = options->pin_slots_per_layer;
 
     /* Set owns_* immediately after each acquire so destroy cleans partial opens. */
-    if (coli_v4_config_load(&engine->config, engine->runtime.target_model_dir,
+    if (lma_v4_config_load(&engine->config, engine->runtime.target_model_dir,
                             error, error_size))
         goto fail;
     {
         struct timespec ix0, ix1;
         clock_gettime(CLOCK_MONOTONIC, &ix0);
-        if (coli_st_index_open(&engine->target_index,
+        if (lma_st_index_open(&engine->target_index,
                                engine->runtime.target_model_dir, error,
                                error_size))
             goto fail;
@@ -9753,7 +9753,7 @@ int coli_v4_engine_open(ColiV4Engine **output,
                                   (ix1.tv_nsec - ix0.tv_nsec) * 1e-9;
     }
     engine->owns_index = 1;
-    const ColiSafetensorsTensor *dspark_w1 = NULL, *dspark_w2 = NULL;
+    const LmaSafetensorsTensor *dspark_w1 = NULL, *dspark_w2 = NULL;
     int requested_full_dspark = v4_dspark_full_wanted(options);
     int want_full_dspark = requested_full_dspark &&
                            v4_dspark_full_profile_present(
@@ -9775,20 +9775,20 @@ int coli_v4_engine_open(ColiV4Engine **output,
     engine->runtime.dspark_reserve_bytes = want_full_dspark
         ? v4_dspark_full_reserve_bytes()
         : (want_dspark ? engine->dspark.bytes : 0);
-    coli_v4_full_dspark_wanted = want_full_dspark;
+    lma_v4_full_dspark_wanted = want_full_dspark;
     if (want_full_dspark)
         fprintf(stderr,
                 "v4_dspark mode=full-3stage cache=%.2fGB reserve=%.2fGiB "
                 "load=lazy verification=exact-target\n",
-                coli_v4_dspark_cache_gb(),
+                lma_v4_dspark_cache_gb(),
                 engine->runtime.dspark_reserve_bytes / 1073741824.0);
-#ifdef COLI_V4_TEST_HOOKS
-    if (coli_v4_test_fail_expert_store_open) {
+#ifdef LMA_V4_TEST_HOOKS
+    if (lma_v4_test_fail_expert_store_open) {
         if (error && error_size)
             snprintf(error, error_size, "forced expert store open failure");
         goto fail;
     }
-    if (coli_v4_test_skip_expert_store_open) {
+    if (lma_v4_test_skip_expert_store_open) {
         engine->summary.dense_resident = engine->runtime.dense_resident;
         engine->summary.head_resident = engine->head_cache.data != NULL;
         engine->summary.expert_cache_bytes =
@@ -9797,9 +9797,9 @@ int coli_v4_engine_open(ColiV4Engine **output,
         return 0;
     }
 #endif
-    if (coli_expert_store_backend_open_selected(
+    if (lma_expert_store_backend_open_selected(
             engine, &engine->config,
-            &(ColiDeepSeekV4ExpertStoreOptions){
+            &(LmaDeepSeekV4ExpertStoreOptions){
                 engine->runtime.target_model_dir,
                 engine->config.num_hidden_layers,
                 engine->config.n_routed_experts,
@@ -9818,31 +9818,31 @@ int coli_v4_engine_open(ColiV4Engine **output,
     engine->summary.head_resident = engine->head_cache.data != NULL;
     engine->summary.expert_cache_bytes =
         engine->runtime.target_expert_cache_bytes;
-#ifdef COLI_V4_GPU_TIER
-    coli_v4_gpu_engine_open(engine);
+#ifdef LMA_V4_GPU_TIER
+    lma_v4_gpu_engine_open(engine);
 #endif
     *output = engine;
     return 0;
 
 fail:
-    coli_v4_engine_destroy(engine);
+    lma_v4_engine_destroy(engine);
     return -1;
 }
-#endif /* COLI_V4_UNIT_RUNTIME */
+#endif /* LMA_V4_UNIT_RUNTIME */
 
-#ifdef COLI_V4_UNIT_GPU
+#ifdef LMA_V4_UNIT_GPU
 /* ######## deepseek_v4_gpu.c ########
  *
  * Optional CUDA tier for the dense projections. The kernels live in
  * backend_cuda_dsv4.cu and are resolved at runtime through
- * backend_loader_dsv4.c (coli_cuda_dsv4.dll); this unit is the engine-side
+ * backend_loader_dsv4.c (lma_cuda_dsv4.dll); this unit is the engine-side
  * glue: it initialises the tier at engine open, uploads each resident layer's
  * fp8 attention tensors as mirrors, and dispatches the fp8 matvecs through
- * Dsv4CudaTensor handles carried on ColiTensorView.gpu. Every symbol is
- * referenced only from code guarded by COLI_V4_GPU_TIER, so non-GPU engine
+ * Dsv4CudaTensor handles carried on LmaTensorView.gpu. Every symbol is
+ * referenced only from code guarded by LMA_V4_GPU_TIER, so non-GPU engine
  * builds never pull this translation unit's dependencies.
  */
-#if defined(COLI_V4_GPU_TIER)
+#if defined(LMA_V4_GPU_TIER)
 #include "deepseek_v4_internal.h"
 #include "backend_cuda_dsv4.h"
 
@@ -9863,9 +9863,9 @@ static V4GpuExpertMirrorCache *v4_gpu_expert_mirrors_create(int device,
                                                             int suggested);
 static void v4_gpu_expert_mirrors_free(V4GpuExpertMirrorCache *cache);
 static int v4_gpu_expert_attach_cached_ex(V4GpuExpertMirrorCache *cache,
-                                          ColiExpertView *view, int sync);
+                                          LmaExpertView *view, int sync);
 
-int coli_v4_gpu_engine_open(ColiV4Engine *engine) {
+int lma_v4_gpu_engine_open(LmaV4Engine *engine) {
     if (!engine) return -1;
     engine->gpu.enabled = 0;
     engine->gpu.device = 0;
@@ -9894,7 +9894,7 @@ int coli_v4_gpu_engine_open(ColiV4Engine *engine) {
      * forces a mirror eviction mid-generation; override with
      * DSV4_CUDA_EXPERT_MIRRORS. */
     int mirror_suggested = engine->config.num_hidden_layers *
-                           COLI_V4_MAX_PIN_SLOTS_PER_LAYER;
+                           LMA_V4_MAX_PIN_SLOTS_PER_LAYER;
     if (mirror_suggested < 128) mirror_suggested = 128;
     if (mirror_suggested > 2048) mirror_suggested = 2048;
     /* The cache grows only while the VRAM reserve stays free (growth guard
@@ -9909,11 +9909,11 @@ int coli_v4_gpu_engine_open(ColiV4Engine *engine) {
     return 0;
 }
 
-void coli_v4_gpu_engine_close(ColiV4Engine *engine) {
+void lma_v4_gpu_engine_close(LmaV4Engine *engine) {
     if (!engine || !engine->gpu.enabled) return;
-    for (int layer = 0; layer < COLI_V4_RESIDENT_MAX_LAYERS; layer++) {
+    for (int layer = 0; layer < LMA_V4_RESIDENT_MAX_LAYERS; layer++) {
         if (!engine->gpu.layer_ready[layer]) continue;
-        ColiDeepSeekV4LayerWeights *weights =
+        LmaDeepSeekV4LayerWeights *weights =
             &engine->dense_resident.layers[layer];
         for (size_t i = 0; i < weights->plan.tensor_count; i++) {
             if (weights->gpu[i]) {
@@ -9941,20 +9941,20 @@ void coli_v4_gpu_engine_close(ColiV4Engine *engine) {
 /* The resident copy of an fp8 tensor may be transposed inside each 8-row tile
  * for the AVX2 CPU path. The CUDA kernels consume plain row-major bytes, so
  * unpack into a scratch buffer before upload (one-time per resident layer). */
-static void *v4_gpu_upload_fp8_fmt(ColiDeepSeekV4LayerWeights *weights,
+static void *v4_gpu_upload_fp8_fmt(LmaDeepSeekV4LayerWeights *weights,
                                    int device, const char *prefix,
                                    long long *bytes, int bf16_rounded) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
-    const ColiDeepSeekV4TensorSpec *weight_spec = NULL, *scale_spec = NULL;
+    char name[LMA_V4_MAX_TENSOR_NAME];
+    const LmaDeepSeekV4TensorSpec *weight_spec = NULL, *scale_spec = NULL;
     snprintf(name, sizeof(name), "layers.%d.%s.weight", weights->plan.layer,
              prefix);
-    const void *data = coli_v4_layer_data(weights, name, &weight_spec);
+    const void *data = lma_v4_layer_data(weights, name, &weight_spec);
     snprintf(name, sizeof(name), "layers.%d.%s.scale", weights->plan.layer,
              prefix);
-    const void *scales = coli_v4_layer_data(weights, name, &scale_spec);
+    const void *scales = lma_v4_layer_data(weights, name, &scale_spec);
     if (!data || !scales || !weight_spec || !scale_spec ||
-        weight_spec->dtype != COLI_ST_F8_E4M3 ||
-        scale_spec->dtype != COLI_ST_F8_E8M0 || weight_spec->rank != 2)
+        weight_spec->dtype != LMA_ST_F8_E4M3 ||
+        scale_spec->dtype != LMA_ST_F8_E8M0 || weight_spec->rank != 2)
         return NULL;
     int64_t rows = weight_spec->shape[0], columns = weight_spec->shape[1];
     if (rows < 1 || columns < 1 || columns % 128) return NULL;
@@ -10011,21 +10011,21 @@ static void *v4_gpu_upload_fp8_fmt(ColiDeepSeekV4LayerWeights *weights,
     return tensor;
 }
 
-static void *v4_gpu_upload_fp8(ColiDeepSeekV4LayerWeights *weights, int device,
+static void *v4_gpu_upload_fp8(LmaDeepSeekV4LayerWeights *weights, int device,
                                const char *prefix, long long *bytes) {
     return v4_gpu_upload_fp8_fmt(weights, device, prefix, bytes, 0);
 }
 
 /* f32 mirror with element-count validation (mHC fn/scale/base tensors). */
-static void *v4_gpu_upload_f32_tensor(ColiDeepSeekV4LayerWeights *weights,
+static void *v4_gpu_upload_f32_tensor(LmaDeepSeekV4LayerWeights *weights,
                                       int device, const char *key,
                                       int rows, int columns,
                                       long long *bytes) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
-    const ColiDeepSeekV4TensorSpec *spec = NULL;
+    char name[LMA_V4_MAX_TENSOR_NAME];
+    const LmaDeepSeekV4TensorSpec *spec = NULL;
     snprintf(name, sizeof(name), "layers.%d.%s", weights->plan.layer, key);
-    const void *data = coli_v4_layer_data(weights, name, &spec);
-    if (!data || !spec || spec->dtype != COLI_ST_F32) return NULL;
+    const void *data = lma_v4_layer_data(weights, name, &spec);
+    if (!data || !spec || spec->dtype != LMA_ST_F32) return NULL;
     int64_t elements = 1;
     for (int axis = 0; axis < spec->rank; axis++) elements *= spec->shape[axis];
     if (elements != (int64_t)rows * columns) return NULL;
@@ -10038,15 +10038,15 @@ static void *v4_gpu_upload_f32_tensor(ColiDeepSeekV4LayerWeights *weights,
 }
 
 /* Decoded-f32 mirror of a bf16 norm-weight vector (mHC kernels read fmt 32). */
-static void *v4_gpu_upload_norm_f32(ColiDeepSeekV4LayerWeights *weights,
+static void *v4_gpu_upload_norm_f32(LmaDeepSeekV4LayerWeights *weights,
                                     int device, const char *key,
                                     int dimension, long long *bytes) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
-    const ColiDeepSeekV4TensorSpec *spec = NULL;
+    char name[LMA_V4_MAX_TENSOR_NAME];
+    const LmaDeepSeekV4TensorSpec *spec = NULL;
     snprintf(name, sizeof(name), "layers.%d.%s.weight", weights->plan.layer,
              key);
-    const void *data = coli_v4_layer_data(weights, name, &spec);
-    if (!data || !spec || spec->dtype != COLI_ST_BF16 || spec->rank != 1 ||
+    const void *data = lma_v4_layer_data(weights, name, &spec);
+    if (!data || !spec || spec->dtype != LMA_ST_BF16 || spec->rank != 1 ||
         spec->shape[0] != dimension)
         return NULL;
     float *decoded = malloc((size_t)dimension * sizeof(*decoded));
@@ -10066,16 +10066,16 @@ static void *v4_gpu_upload_norm_f32(ColiDeepSeekV4LayerWeights *weights,
 
 /* bf16 projection mirror (compressor / indexer-compressor wkv & wgate).
  * Shape-checked here so the batched projection can trust the mirror. */
-static void *v4_gpu_upload_bf16_matrix(ColiDeepSeekV4LayerWeights *weights,
+static void *v4_gpu_upload_bf16_matrix(LmaDeepSeekV4LayerWeights *weights,
                                        int device, const char *prefix,
                                        int expected_rows, int expected_columns,
                                        long long *bytes) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
-    const ColiDeepSeekV4TensorSpec *spec = NULL;
+    char name[LMA_V4_MAX_TENSOR_NAME];
+    const LmaDeepSeekV4TensorSpec *spec = NULL;
     snprintf(name, sizeof(name), "layers.%d.%s.weight", weights->plan.layer,
              prefix);
-    const void *data = coli_v4_layer_data(weights, name, &spec);
-    if (!data || !spec || spec->dtype != COLI_ST_BF16 || spec->rank != 2 ||
+    const void *data = lma_v4_layer_data(weights, name, &spec);
+    if (!data || !spec || spec->dtype != LMA_ST_BF16 || spec->rank != 2 ||
         spec->shape[0] != expected_rows || spec->shape[1] != expected_columns)
         return NULL;
     Dsv4CudaTensor *tensor = NULL;
@@ -10088,13 +10088,13 @@ static void *v4_gpu_upload_bf16_matrix(ColiDeepSeekV4LayerWeights *weights,
 
 /* The MoE router gate is resident as bf16; dsv4_cuda_route wants an f32 mirror
  * (fmt 32, O=experts, I=hidden). Decode once at upload, like the fp8 path. */
-static void *v4_gpu_upload_gate(ColiDeepSeekV4LayerWeights *weights, int device,
+static void *v4_gpu_upload_gate(LmaDeepSeekV4LayerWeights *weights, int device,
                                 long long *bytes) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
-    const ColiDeepSeekV4TensorSpec *spec = NULL;
+    char name[LMA_V4_MAX_TENSOR_NAME];
+    const LmaDeepSeekV4TensorSpec *spec = NULL;
     snprintf(name, sizeof(name), "layers.%d.ffn.gate.weight", weights->plan.layer);
-    const void *data = coli_v4_layer_data(weights, name, &spec);
-    if (!data || !spec || spec->dtype != COLI_ST_BF16 || spec->rank != 2)
+    const void *data = lma_v4_layer_data(weights, name, &spec);
+    if (!data || !spec || spec->dtype != LMA_ST_BF16 || spec->rank != 2)
         return NULL;
     int64_t experts = spec->shape[0], dimension = spec->shape[1];
     if (experts != 256 || dimension < 1) return NULL;
@@ -10117,13 +10117,13 @@ static void *v4_gpu_upload_gate(ColiDeepSeekV4LayerWeights *weights, int device,
 }
 
 /* The router bias is resident as f32 [experts]; upload as O=experts, I=1. */
-static void *v4_gpu_upload_gate_bias(ColiDeepSeekV4LayerWeights *weights,
+static void *v4_gpu_upload_gate_bias(LmaDeepSeekV4LayerWeights *weights,
                                      int device, long long *bytes) {
-    char name[COLI_V4_MAX_TENSOR_NAME];
-    const ColiDeepSeekV4TensorSpec *spec = NULL;
+    char name[LMA_V4_MAX_TENSOR_NAME];
+    const LmaDeepSeekV4TensorSpec *spec = NULL;
     snprintf(name, sizeof(name), "layers.%d.ffn.gate.bias", weights->plan.layer);
-    const void *data = coli_v4_layer_data(weights, name, &spec);
-    if (!data || !spec || spec->dtype != COLI_ST_F32 || spec->rank != 1)
+    const void *data = lma_v4_layer_data(weights, name, &spec);
+    if (!data || !spec || spec->dtype != LMA_ST_F32 || spec->rank != 1)
         return NULL;
     int64_t experts = spec->shape[0];
     if (experts != 256) return NULL;
@@ -10134,10 +10134,10 @@ static void *v4_gpu_upload_gate_bias(ColiDeepSeekV4LayerWeights *weights,
     return tensor;
 }
 
-int coli_v4_gpu_layer_upload(ColiV4Engine *engine, int layer,
-                             ColiDeepSeekV4LayerWeights *weights) {
+int lma_v4_gpu_layer_upload(LmaV4Engine *engine, int layer,
+                             LmaDeepSeekV4LayerWeights *weights) {
     if (!engine || !weights || !engine->gpu.enabled) return 0;
-    if (layer < 0 || layer >= COLI_V4_RESIDENT_MAX_LAYERS) return 0;
+    if (layer < 0 || layer >= LMA_V4_RESIDENT_MAX_LAYERS) return 0;
     if (engine->gpu.layer_ready[layer]) return 0;
     static const char *const tensors[] = {
         "attn.wq_a", "attn.wq_b", "attn.wkv", "attn.wo_a", "attn.wo_b",
@@ -10150,21 +10150,21 @@ int coli_v4_gpu_layer_upload(ColiV4Engine *engine, int layer,
          * (fmt 9): the batched attention-output DeepGEMM needs the per-group
          * scale packing that format carries. Off by default so the decode
          * grouped matvec keeps its historical fmt-8 numerics. */
-        int bf16_rounded = coli_v4_gpu_attn_batch_wanted() &&
+        int bf16_rounded = lma_v4_gpu_attn_batch_wanted() &&
                            strcmp(tensors[i], "attn.wo_a") == 0;
         void *handle = v4_gpu_upload_fp8_fmt(weights, engine->gpu.device,
                                              tensors[i], &bytes, bf16_rounded);
         if (!handle) continue;
-        if (coli_v4_layer_gpu_set(weights, tensors[i], handle)) {
+        if (lma_v4_layer_gpu_set(weights, tensors[i], handle)) {
             dsv4_cuda_tensor_free((Dsv4CudaTensor *)handle);
             continue;
         }
     }
     /* Compressor / indexer-compressor projection mirrors for the batched
-     * attention path (COLI_CUDA_ATTN_BATCH=1). Missing tensors (layers
+     * attention path (LMA_CUDA_ATTN_BATCH=1). Missing tensors (layers
      * without compression) simply leave the mirror NULL. */
-    if (coli_v4_gpu_attn_batch_wanted()) {
-        const ColiDeepSeekV4Config *config = coli_v4_engine_config(engine);
+    if (lma_v4_gpu_attn_batch_wanted()) {
+        const LmaDeepSeekV4Config *config = lma_v4_engine_config(engine);
         int ratio = weights->plan.compression_ratio;
         if (config && ratio) {
             int comp_rows = (ratio == 4 ? 2 : 1) * config->head_dim;
@@ -10174,7 +10174,7 @@ int coli_v4_gpu_layer_upload(ColiV4Engine *engine, int layer,
                 void *handle = v4_gpu_upload_bf16_matrix(
                     weights, engine->gpu.device, comp_keys[k], comp_rows,
                     config->hidden_size, &bytes);
-                if (handle && coli_v4_layer_gpu_set(weights, comp_keys[k],
+                if (handle && lma_v4_layer_gpu_set(weights, comp_keys[k],
                                                     handle))
                     dsv4_cuda_tensor_free((Dsv4CudaTensor *)handle);
             }
@@ -10187,7 +10187,7 @@ int coli_v4_gpu_layer_upload(ColiV4Engine *engine, int layer,
                 void *handle = v4_gpu_upload_bf16_matrix(
                     weights, engine->gpu.device, idx_keys[k], idx_rows,
                     config->hidden_size, &bytes);
-                if (handle && coli_v4_layer_gpu_set(weights, idx_keys[k],
+                if (handle && lma_v4_layer_gpu_set(weights, idx_keys[k],
                                                     handle))
                     dsv4_cuda_tensor_free((Dsv4CudaTensor *)handle);
             }
@@ -10205,20 +10205,20 @@ int coli_v4_gpu_layer_upload(ColiV4Engine *engine, int layer,
                 void *fn = v4_gpu_upload_f32_tensor(
                     weights, engine->gpu.device, hc_keys[b][0], mix_rows,
                     hc * d, &bytes);
-                if (fn && coli_v4_layer_gpu_set(weights, hc_keys[b][0], fn))
+                if (fn && lma_v4_layer_gpu_set(weights, hc_keys[b][0], fn))
                     dsv4_cuda_tensor_free((Dsv4CudaTensor *)fn);
                 void *sc = v4_gpu_upload_f32_tensor(
                     weights, engine->gpu.device, hc_keys[b][1], 3, 1, &bytes);
-                if (sc && coli_v4_layer_gpu_set(weights, hc_keys[b][1], sc))
+                if (sc && lma_v4_layer_gpu_set(weights, hc_keys[b][1], sc))
                     dsv4_cuda_tensor_free((Dsv4CudaTensor *)sc);
                 void *bs = v4_gpu_upload_f32_tensor(
                     weights, engine->gpu.device, hc_keys[b][2], mix_rows, 1,
                     &bytes);
-                if (bs && coli_v4_layer_gpu_set(weights, hc_keys[b][2], bs))
+                if (bs && lma_v4_layer_gpu_set(weights, hc_keys[b][2], bs))
                     dsv4_cuda_tensor_free((Dsv4CudaTensor *)bs);
                 void *nm = v4_gpu_upload_norm_f32(
                     weights, engine->gpu.device, norm_keys[b], d, &bytes);
-                if (nm && coli_v4_layer_gpu_set(weights, norm_keys[b], nm))
+                if (nm && lma_v4_layer_gpu_set(weights, norm_keys[b], nm))
                     dsv4_cuda_tensor_free((Dsv4CudaTensor *)nm);
             }
         }
@@ -10226,12 +10226,12 @@ int coli_v4_gpu_layer_upload(ColiV4Engine *engine, int layer,
     /* Router mirrors (gate f32, bias f32). Missing/shape-mismatched uploads
      * leave the mirror NULL and moe_token_pipeline falls back to the CPU route. */
     void *gate = v4_gpu_upload_gate(weights, engine->gpu.device, &bytes);
-    if (gate && coli_v4_layer_gpu_set(weights, "ffn.gate", gate)) {
+    if (gate && lma_v4_layer_gpu_set(weights, "ffn.gate", gate)) {
         dsv4_cuda_tensor_free((Dsv4CudaTensor *)gate);
         gate = NULL;
     }
     void *bias = v4_gpu_upload_gate_bias(weights, engine->gpu.device, &bytes);
-    if (bias && coli_v4_layer_gpu_set(weights, "ffn.gate.bias", bias)) {
+    if (bias && lma_v4_layer_gpu_set(weights, "ffn.gate.bias", bias)) {
         dsv4_cuda_tensor_free((Dsv4CudaTensor *)bias);
         bias = NULL;
     }
@@ -10245,14 +10245,14 @@ int coli_v4_gpu_layer_upload(ColiV4Engine *engine, int layer,
     return 0;
 }
 
-int coli_v4_gpu_fp8_matvec(const ColiTensorView *w, float *output,
+int lma_v4_gpu_fp8_matvec(const LmaTensorView *w, float *output,
                            const float *input) {
     Dsv4CudaTensor *tensor = (Dsv4CudaTensor *)w->gpu;
     if (!tensor) return -1;
     return dsv4_cuda_matvec(tensor, output, (float *)input) ? 0 : -1;
 }
 
-int coli_v4_gpu_matvec_grouped(const ColiTensorView *w, float *output,
+int lma_v4_gpu_matvec_grouped(const LmaTensorView *w, float *output,
                                const float *input, int groups) {
     Dsv4CudaTensor *tensor = (Dsv4CudaTensor *)w->gpu;
     if (!tensor || groups < 1) return -1;
@@ -10267,7 +10267,7 @@ int coli_v4_gpu_matvec_grouped(const ColiTensorView *w, float *output,
  * single-threaded (the scheduler admits one request and target_batch's chunk
  * loop is sequential), so plain statics are safe, matching the backend's own
  * per-device scratch buffers. */
-int coli_v4_gpu_fp8_matmul_batch(const ColiTensorView *w, float *outputs,
+int lma_v4_gpu_fp8_matmul_batch(const LmaTensorView *w, float *outputs,
                                  const float *inputs, int batch) {
     static Dsv4CudaActivation *input_mirror, *output_mirror;
     static long long input_capacity, output_capacity;
@@ -10303,15 +10303,15 @@ int coli_v4_gpu_fp8_matmul_batch(const ColiTensorView *w, float *outputs,
     return 0;
 }
 
-int coli_v4_gpu_route(float *route_weights, int *indices, const float *input,
-                      const ColiDeepSeekV4LayerWeights *weights,
+int lma_v4_gpu_route(float *route_weights, int *indices, const float *input,
+                      const LmaDeepSeekV4LayerWeights *weights,
                       const float *bias, const int *forced_indices,
                       int experts, int dimension, int topk, float route_scale) {
     if (!route_weights || !indices || !input || !weights) return -1;
     /* The backend route kernel is hardwired to 256 experts / top-k 6. */
     if (experts != 256 || topk != 6 || dimension < 1) return -1;
-    Dsv4CudaTensor *gate = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "ffn.gate");
-    Dsv4CudaTensor *bias_t = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "ffn.gate.bias");
+    Dsv4CudaTensor *gate = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "ffn.gate");
+    Dsv4CudaTensor *bias_t = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "ffn.gate.bias");
     if (!gate || (bias && !bias_t)) return -1;
     int device = dsv4_cuda_tensor_device(gate);
     if (device < 0) return -1;
@@ -10336,7 +10336,7 @@ int coli_v4_gpu_route(float *route_weights, int *indices, const float *input,
  * layout the backend dsv4_cuda_matvec_grouped expects, so an expert's gate /
  * up / down views can be uploaded byte-for-byte on first use and reused for
  * every token that routes to it. A small LRU cache keyed by (layer, expert)
- * hangs off ColiExpertStore.gpu, created at engine open and torn down in
+ * hangs off LmaExpertStore.gpu, created at engine open and torn down in
  * engine close (before the store itself is destroyed). Only block_rows==1
  * views are attached; rows16-packed slots stay on the CPU kernel. */
 typedef struct {
@@ -10396,7 +10396,7 @@ static void v4_gpu_expert_mirrors_free(V4GpuExpertMirrorCache *cache) {
 }
 
 static int v4_gpu_expert_attach_cached_ex(V4GpuExpertMirrorCache *cache,
-                                          ColiExpertView *view, int sync) {
+                                          LmaExpertView *view, int sync) {
     if (!cache || !view) return -1;
     if (view->gate.block_rows != 1 || view->up.block_rows != 1 ||
         view->down.block_rows != 1)
@@ -10423,14 +10423,14 @@ static int v4_gpu_expert_attach_cached_ex(V4GpuExpertMirrorCache *cache,
          * the next large prefill still fits. */
         int grow = cache->count < cache->capacity;
         /* VRAM reserve kept free while mirrors grow: the transient prefill
-         * expert bank (~2.2 GiB, COLI_CUDA_MOE_BATCH) plus attention buffers.
+         * expert bank (~2.2 GiB, LMA_CUDA_MOE_BATCH) plus attention buffers.
          * DSV4_CUDA_VRAM_RESERVE_MB overrides; the default only reserves the
          * bank when that path is enabled, so small cards can still mirror. */
         static long long reserve_mb = -1;
         if (reserve_mb < 0) {
             const char *env = getenv("DSV4_CUDA_VRAM_RESERVE_MB");
             reserve_mb = env ? atoll(env)
-                             : (coli_v4_gpu_moe_batch_wanted() ? 2800 : 600);
+                             : (lma_v4_gpu_moe_batch_wanted() ? 2800 : 600);
             if (reserve_mb < 256) reserve_mb = 256;
         }
         /* cudaMemGetInfo is a driver round trip; with a large capacity the
@@ -10572,7 +10572,7 @@ static int v4_gpu_expert_attach_cached_ex(V4GpuExpertMirrorCache *cache,
     return 0;
 }
 
-int coli_v4_gpu_expert_attach(ColiExpertStore *store, ColiExpertView *view) {
+int lma_v4_gpu_expert_attach(LmaExpertStore *store, LmaExpertView *view) {
     if (!store || !view) return -1;
     return v4_gpu_expert_attach_cached_ex(
         (V4GpuExpertMirrorCache *)store->gpu, view, 1);
@@ -10582,16 +10582,16 @@ int coli_v4_gpu_expert_attach(ColiExpertStore *store, ColiExpertView *view) {
  * in flight when this returns. Safe because later work on the same stream
  * (the expert group, the fused MoE) is ordered after it, and because the
  * caller holds the expert leases until after compute; anyone releasing the
- * host slabs earlier must drain first (coli_v4_gpu_expert_drain). */
-int coli_v4_gpu_expert_attach_async(ColiExpertStore *store,
-                                    ColiExpertView *view) {
+ * host slabs earlier must drain first (lma_v4_gpu_expert_drain). */
+int lma_v4_gpu_expert_attach_async(LmaExpertStore *store,
+                                    LmaExpertView *view) {
     if (!store || !view) return -1;
     return v4_gpu_expert_attach_cached_ex(
         (V4GpuExpertMirrorCache *)store->gpu, view, 0);
 }
 
 extern int dsv4_cuda_stream_drain(int device);
-int coli_v4_gpu_expert_drain(ColiExpertStore *store) {
+int lma_v4_gpu_expert_drain(LmaExpertStore *store) {
     if (!store || !store->gpu) return 0;
     V4GpuExpertMirrorCache *cache = (V4GpuExpertMirrorCache *)store->gpu;
     return dsv4_cuda_stream_drain(cache->device) ? 0 : -1;
@@ -10602,7 +10602,7 @@ int coli_v4_gpu_expert_drain(ColiExpertStore *store) {
  * hybrid decode split peeks the whole token first and decides its uploads
  * afterwards with the q* policy, instead of paying a blocking PCIe copy per
  * miss the moment it is discovered. */
-int coli_v4_gpu_expert_peek(ColiExpertStore *store, ColiExpertView *view) {
+int lma_v4_gpu_expert_peek(LmaExpertStore *store, LmaExpertView *view) {
     if (!store || !view || !store->gpu) return -1;
     V4GpuExpertMirrorCache *cache = (V4GpuExpertMirrorCache *)store->gpu;
     pthread_mutex_lock(&cache->mutex);
@@ -10623,7 +10623,7 @@ int coli_v4_gpu_expert_peek(ColiExpertStore *store, ColiExpertView *view) {
     return -1;
 }
 
-int coli_v4_gpu_dspark_expert_attach(void *cache, ColiExpertView *view) {
+int lma_v4_gpu_dspark_expert_attach(void *cache, LmaExpertView *view) {
     if (!view) return -1;
     return v4_gpu_expert_attach_cached_ex((V4GpuExpertMirrorCache *)cache, view, 1);
 }
@@ -10632,7 +10632,7 @@ int coli_v4_gpu_dspark_expert_attach(void *cache, ColiExpertView *view) {
  * mirrors so drafting can never evict the target's learned expert cache.
  * Capacity defaults small (a draft round touches at most V4_MTP_MISS records)
  * and is configurable via V4_MTP_GPU_MIRRORS. Returns 0 when ready. */
-int coli_v4_gpu_dspark_mirrors_ensure(ColiV4Engine *engine) {
+int lma_v4_gpu_dspark_mirrors_ensure(LmaV4Engine *engine) {
     if (!engine || !engine->gpu.enabled) return -1;
     if (engine->gpu.dspark_mirrors) return 0;
     const char *setting = getenv("V4_MTP_GPU_MIRRORS");
@@ -10646,7 +10646,7 @@ int coli_v4_gpu_dspark_mirrors_ensure(ColiV4Engine *engine) {
     return 0;
 }
 
-/* ---- Batched GPU MoE for prefill (COLI_CUDA_MOE_BATCH=1) ----
+/* ---- Batched GPU MoE for prefill (LMA_CUDA_MOE_BATCH=1) ----
  *
  * The routed experts dominate prefill wall time on CPU (0.7-0.9 s/token
  * measured on DeepSeek-V4-Flash). dsv4_cuda_route_moe_batch runs a whole
@@ -10657,14 +10657,14 @@ int coli_v4_gpu_dspark_mirrors_ensure(ColiV4Engine *engine) {
  * serves every chunk of that layer, and the shared/gate mirrors rebind for
  * free (they are the layer's resident fp8 mirrors).
  *
- * Opt-in via COLI_CUDA_MOE_BATCH=1: the bank competes for VRAM with the
+ * Opt-in via LMA_CUDA_MOE_BATCH=1: the bank competes for VRAM with the
  * decode-path expert mirror cache (engine open clamps that cache when this
  * is enabled). Any failure — allocation, missing mirror, backend stub —
  * falls back to the CPU union for the whole generation. */
-int coli_v4_gpu_moe_batch_wanted(void) {
+int lma_v4_gpu_moe_batch_wanted(void) {
     static int wanted = -1;
     if (wanted < 0) {
-        const char *setting = getenv("COLI_CUDA_MOE_BATCH");
+        const char *setting = getenv("LMA_CUDA_MOE_BATCH");
         wanted = setting && atoi(setting) != 0;
     }
     return wanted;
@@ -10672,14 +10672,14 @@ int coli_v4_gpu_moe_batch_wanted(void) {
 
 /* Total fresh prompt tokens for the CURRENT prefill, set by generate():
  * the 43-layer bank refill only pays for itself on prompts long enough to
- * amortize it (default 256 tokens, COLI_CUDA_MOE_BATCH_MIN overrides). */
+ * amortize it (default 256 tokens, LMA_CUDA_MOE_BATCH_MIN overrides). */
 static int v4_gpu_moe_batch_hint_tokens;
 
-void coli_v4_gpu_moe_batch_hint(int total_fresh_tokens) {
+void lma_v4_gpu_moe_batch_hint(int total_fresh_tokens) {
     v4_gpu_moe_batch_hint_tokens = total_fresh_tokens;
 }
 
-int coli_v4_route_bf16(float *weights, int *indices, const float *hidden,
+int lma_v4_route_bf16(float *weights, int *indices, const float *hidden,
                        const uint16_t *gate, const float *bias,
                        const int *forced_indices, int experts, int dimension,
                        int topk, float route_scale);
@@ -10698,7 +10698,7 @@ static int v4_moe_bank_hash_layer = -1;
 static unsigned char v4_moe_bank_valid[256];
 static int v4_moe_bank_failed;
 
-/* ---- double-buffered bank (COLI_CUDA_MOE_DOUBLE=1, opt-in) ----
+/* ---- double-buffered bank (LMA_CUDA_MOE_DOUBLE=1, opt-in) ----
  * While the compute stream chews layer L from the active bank, a worker
  * thread loads layer L+1's complete expert set into the second bank over the
  * aux stream — the transfer starts before L+1's routing is known. On the
@@ -10717,12 +10717,12 @@ static pthread_t v4_bank2_thread;
 static int v4_bank2_running;
 static int v4_bank2_disabled;
 static unsigned long long v4_bank2_swaps, v4_bank2_prefetched;
-static struct { ColiExpertStore *store; int layer; } v4_bank2_job;
+static struct { LmaExpertStore *store; int layer; } v4_bank2_job;
 
 static int v4_bank_double_on(void) {
     static int on = -1;
     if (on < 0) {
-        const char *setting = getenv("COLI_CUDA_MOE_DOUBLE");
+        const char *setting = getenv("LMA_CUDA_MOE_DOUBLE");
         on = setting && atoi(setting) != 0;
     }
     return on;
@@ -10730,14 +10730,14 @@ static int v4_bank_double_on(void) {
 
 static void *v4_bank2_worker(void *argument) {
     (void)argument;
-    ColiExpertStore *store = v4_bank2_job.store;
+    LmaExpertStore *store = v4_bank2_job.store;
     int layer = v4_bank2_job.layer;
     memset(v4_bank2_valid, 0, sizeof(v4_bank2_valid));
     int loaded = 0;
     for (int expert = 0; expert < 256; expert++) {
-        ColiExpertView view;
+        LmaExpertView view;
         memset(&view, 0, sizeof(view));
-        if (coli_expert_lookup(store, (ColiExpertKey){layer, expert},
+        if (lma_expert_lookup(store, (LmaExpertKey){layer, expert},
                                &view) != 0)
             continue;
         Dsv4CudaTensor *bg = NULL, *bu = NULL, *bd = NULL;
@@ -10757,7 +10757,7 @@ static void *v4_bank2_worker(void *argument) {
                 (const uint8_t *)view.down.data,
                 (const uint8_t *)view.down.scales,
                 &bg, &bu, &bd);
-        coli_expert_release(store, &view);
+        lma_expert_release(store, &view);
         if (bg) dsv4_cuda_tensor_free(bg);
         if (bu) dsv4_cuda_tensor_free(bu);
         if (bd) dsv4_cuda_tensor_free(bd);
@@ -10789,7 +10789,7 @@ static void v4_bank2_join(void) {
     }
 }
 
-void coli_v4_gpu_moe_batch_release(void) {
+void lma_v4_gpu_moe_batch_release(void) {
     /* A create failure is retried after every release: the freed VRAM is
      * exactly what the next attempt needs. */
     v4_moe_bank_failed = 0;
@@ -10812,10 +10812,10 @@ void coli_v4_gpu_moe_batch_release(void) {
     memset(v4_moe_bank_valid, 0, sizeof(v4_moe_bank_valid));
 }
 
-int coli_v4_gpu_moe_batch_union(float *outputs,
-                                const ColiDeepSeekV4LayerWeights *weights,
-                                const ColiDeepSeekV4Config *config,
-                                ColiExpertStore *store,
+int lma_v4_gpu_moe_batch_union(float *outputs,
+                                const LmaDeepSeekV4LayerWeights *weights,
+                                const LmaDeepSeekV4Config *config,
+                                LmaExpertStore *store,
                                 const float *inputs, const int *tokens,
                                 int batch) {
 #define bank v4_moe_bank
@@ -10832,11 +10832,11 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
         } \
         return -1; \
     } while (0)
-    if (!coli_v4_gpu_moe_batch_wanted() || bank_failed) return -1;
+    if (!lma_v4_gpu_moe_batch_wanted() || bank_failed) return -1;
     {
         static int minimum = -1;
         if (minimum < 0) {
-            const char *setting = getenv("COLI_CUDA_MOE_BATCH_MIN");
+            const char *setting = getenv("LMA_CUDA_MOE_BATCH_MIN");
             minimum = setting ? atoi(setting) : 256;
         }
         if (v4_gpu_moe_batch_hint_tokens &&
@@ -10848,11 +10848,11 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
     if (config->n_routed_experts != 256 || config->hidden_size != 4096 ||
         config->num_experts_per_tok != 6)
         V4_MOE_BATCH_REFUSE("unsupported model geometry");
-    Dsv4CudaTensor *gate = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "ffn.gate");
-    Dsv4CudaTensor *bias = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "ffn.gate.bias");
-    Dsv4CudaTensor *sg = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "ffn.shared_experts.w1");
-    Dsv4CudaTensor *su = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "ffn.shared_experts.w3");
-    Dsv4CudaTensor *sd = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "ffn.shared_experts.w2");
+    Dsv4CudaTensor *gate = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "ffn.gate");
+    Dsv4CudaTensor *bias = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "ffn.gate.bias");
+    Dsv4CudaTensor *sg = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "ffn.shared_experts.w1");
+    Dsv4CudaTensor *su = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "ffn.shared_experts.w3");
+    Dsv4CudaTensor *sd = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "ffn.shared_experts.w2");
     if (!gate) V4_MOE_BATCH_REFUSE("no ffn.gate mirror");
     if (!sg || !su || !sd) V4_MOE_BATCH_REFUSE("no shared-expert mirrors");
 #undef V4_MOE_BATCH_REFUSE
@@ -10879,7 +10879,7 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
     if (bank_layer != weights->plan.layer) {
         v4_bank2_join();
         int double_on = v4_bank_double_on() && !v4_bank2_disabled;
-        if (coli_v4_bank_pair_decide(double_on, v4_bank2_layer,
+        if (lma_v4_bank_pair_decide(double_on, v4_bank2_layer,
                                      weights->plan.layer) == V4_BANK_SWAP) {
             /* The prefetched bank becomes the active one; its valid map
              * travels with the swap, so a partial prefetch is topped up by
@@ -10896,7 +10896,7 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
         if (!dsv4_cuda_expert_bank_set_shared(bank, sg, su, sd)) return -1;
         bank_layer = weights->plan.layer;
         if (double_on) {
-            int next = coli_v4_bank_pair_prefetch_target(
+            int next = lma_v4_bank_pair_prefetch_target(
                 1, bank_layer, config->num_hidden_layers);
             if (next >= 0) {
                 if (!v4_moe_bank2) {
@@ -10939,17 +10939,17 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
     if (weights->plan.uses_hash_router) {
         /* Hash layers route on the CPU: ids from the token table, weights
          * from the bf16 gate logits — identical to the CPU union. */
-        const ColiDeepSeekV4TensorSpec *spec = NULL;
-        char name[COLI_V4_MAX_TENSOR_NAME];
+        const LmaDeepSeekV4TensorSpec *spec = NULL;
+        char name[LMA_V4_MAX_TENSOR_NAME];
         snprintf(name, sizeof(name), "layers.%d.ffn.gate.tid2eid",
                  weights->plan.layer);
-        const int64_t *table = coli_v4_layer_data(weights, name, &spec);
+        const int64_t *table = lma_v4_layer_data(weights, name, &spec);
         snprintf(name, sizeof(name), "layers.%d.ffn.gate.weight",
                  weights->plan.layer);
-        const uint16_t *raw_gate = coli_v4_layer_data(weights, name, NULL);
+        const uint16_t *raw_gate = lma_v4_layer_data(weights, name, NULL);
         snprintf(name, sizeof(name), "layers.%d.ffn.gate.bias",
                  weights->plan.layer);
-        const float *raw_bias = coli_v4_layer_data(weights, name, NULL);
+        const float *raw_bias = lma_v4_layer_data(weights, name, NULL);
         if (!table || !spec || spec->rank != 2 || spec->shape[1] != topk ||
             !raw_gate)
             return -1;
@@ -10957,7 +10957,7 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
             for (int rank = 0; rank < topk; rank++)
                 ids[item * topk + rank] =
                     (int)table[(size_t)tokens[item] * topk + rank];
-            if (coli_v4_route_bf16(
+            if (lma_v4_route_bf16(
                     route_weights + (size_t)item * topk,
                     ids + (size_t)item * topk,
                     inputs + (size_t)item * config->hidden_size,
@@ -11045,7 +11045,7 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
         if (pipe_group > (V4_MOE_REFILL_GROUP_MAX * 2) / 3)
             pipe_group = (V4_MOE_REFILL_GROUP_MAX * 2) / 3;
         if (pipe_group < 1) pipe_group = 1;
-        ColiExpertView views[2][V4_MOE_REFILL_GROUP_MAX];
+        LmaExpertView views[2][V4_MOE_REFILL_GROUP_MAX];
         int fetched[2][V4_MOE_REFILL_GROUP_MAX];
         int gcount[2] = {0, 0};
         int cur = 0;
@@ -11061,8 +11061,8 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
             clock_gettime(CLOCK_MONOTONIC, &_t0);
             #pragma omp parallel for schedule(dynamic, 1)
             for (int i = 0; i < group; i++) {
-                ColiExpertKey key = {weights->plan.layer, missing[i]};
-                fetched[0][i] = coli_expert_lookup(store, key, &views[0][i]) == 0;
+                LmaExpertKey key = {weights->plan.layer, missing[i]};
+                fetched[0][i] = lma_expert_lookup(store, key, &views[0][i]) == 0;
             }
             clock_gettime(CLOCK_MONOTONIC, &_t1);
             t_lookup += (_t1.tv_sec - _t0.tv_sec) + (_t1.tv_nsec - _t0.tv_nsec) / 1e9;
@@ -11082,8 +11082,8 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
                     /* Upload the current group (sequential, this thread). */
                     for (int i = 0; i < gcount[cur]; i++) {
                         if (!fetched[cur][i]) { retry[retry_count++] = missing[base + i]; continue; }
-                        ColiExpertView view = views[cur][i];
-                        if (refill_failed) { coli_expert_release(store, &view); continue; }
+                        LmaExpertView view = views[cur][i];
+                        if (refill_failed) { lma_expert_release(store, &view); continue; }
                         Dsv4CudaTensor *bg = NULL, *bu = NULL, *bd = NULL;
                         int uploaded =
                             view.gate.data && view.gate.scales && view.gate.block_rows == 1 &&
@@ -11101,7 +11101,7 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
                                 (const uint8_t *)view.down.data,
                                 (const uint8_t *)view.down.scales,
                                 &bg, &bu, &bd);
-                        coli_expert_release(store, &view);
+                        lma_expert_release(store, &view);
                         if (bg) dsv4_cuda_tensor_free(bg);
                         if (bu) dsv4_cuda_tensor_free(bu);
                         if (bd) dsv4_cuda_tensor_free(bd);
@@ -11110,8 +11110,8 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
                     }
                 } else {
                     int i = item - 1;
-                    ColiExpertKey key = {weights->plan.layer, missing[next_base + i]};
-                    fetched[nxt][i] = coli_expert_lookup(store, key, &views[nxt][i]) == 0;
+                    LmaExpertKey key = {weights->plan.layer, missing[next_base + i]};
+                    fetched[nxt][i] = lma_expert_lookup(store, key, &views[nxt][i]) == 0;
                 }
             }
             clock_gettime(CLOCK_MONOTONIC, &_t1);
@@ -11120,7 +11120,7 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
             if (refill_failed) {
                 /* Release whatever the last lookups pinned. */
                 for (int i = 0; i < gcount[cur]; i++)
-                    if (fetched[cur][i]) coli_expert_release(store, &views[cur][i]);
+                    if (fetched[cur][i]) lma_expert_release(store, &views[cur][i]);
                 break;
             }
         }
@@ -11128,10 +11128,10 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
          * nothing else is held now, so a single lookup needs one free slot. */
         int retried = 0;
         for (int r = 0; !refill_failed && r < retry_count; r++) {
-            ColiExpertKey key = {weights->plan.layer, retry[r]};
-            ColiExpertView view;
+            LmaExpertKey key = {weights->plan.layer, retry[r]};
+            LmaExpertView view;
             clock_gettime(CLOCK_MONOTONIC, &_t0);
-            if (coli_expert_lookup(store, key, &view) != 0) { refill_failed = 1; break; }
+            if (lma_expert_lookup(store, key, &view) != 0) { refill_failed = 1; break; }
             Dsv4CudaTensor *bg = NULL, *bu = NULL, *bd = NULL;
             int uploaded =
                 view.gate.data && view.gate.scales && view.gate.block_rows == 1 &&
@@ -11146,7 +11146,7 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
                     (const uint8_t *)view.up.data, (const uint8_t *)view.up.scales,
                     (const uint8_t *)view.down.data, (const uint8_t *)view.down.scales,
                     &bg, &bu, &bd);
-            coli_expert_release(store, &view);
+            lma_expert_release(store, &view);
             if (bg) dsv4_cuda_tensor_free(bg);
             if (bu) dsv4_cuda_tensor_free(bu);
             if (bd) dsv4_cuda_tensor_free(bd);
@@ -11184,32 +11184,32 @@ int coli_v4_gpu_moe_batch_union(float *outputs,
 #undef bank_failed
 }
 
-/* ---- Batched GPU attention offloads for prefill (COLI_CUDA_ATTN_BATCH=1) --
+/* ---- Batched GPU attention offloads for prefill (LMA_CUDA_ATTN_BATCH=1) --
  *
  * The batched attention path keeps every piece of model STATE (window ring,
  * compressed cache, compressor/indexer internals) on the CPU; the GPU only
  * evaluates the stateless heavy math — compressor/indexer projections, the
  * sparse window attention itself, and the grouped wo_a / wo_b output GEMMs.
  * Any refusal returns non-zero and the caller runs the CPU reference. */
-int coli_v4_gpu_attn_batch_wanted(void) {
+int lma_v4_gpu_attn_batch_wanted(void) {
     static int wanted = -1;
     if (wanted < 0) {
-        const char *setting = getenv("COLI_CUDA_ATTN_BATCH");
+        const char *setting = getenv("LMA_CUDA_ATTN_BATCH");
         wanted = setting && atoi(setting) != 0;
     }
     return wanted;
 }
 
-int coli_v4_gpu_compressor_project_batch(
-    const ColiDeepSeekV4LayerWeights *weights, const char *wkv_key,
+int lma_v4_gpu_compressor_project_batch(
+    const LmaDeepSeekV4LayerWeights *weights, const char *wkv_key,
     const char *wgate_key, int expected_rows, float *kv_proj,
     float *gate_proj, const float *inputs, int batch) {
     (void)expected_rows; /* shapes are validated when the mirror is uploaded */
-    if (!coli_v4_gpu_attn_batch_wanted() || !weights || !kv_proj ||
+    if (!lma_v4_gpu_attn_batch_wanted() || !weights || !kv_proj ||
         !gate_proj || !inputs || batch < 1) return -1;
-    Dsv4CudaTensor *wkv = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, wkv_key);
+    Dsv4CudaTensor *wkv = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, wkv_key);
     Dsv4CudaTensor *wgate =
-        (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, wgate_key);
+        (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, wgate_key);
     if (!wkv || !wgate) return -1;
     if (!dsv4_cuda_matmul_bf16_batch(wkv, inputs, batch, kv_proj)) return -1;
     if (!dsv4_cuda_matmul_bf16_batch(wgate, inputs, batch, gate_proj))
@@ -11217,14 +11217,14 @@ int coli_v4_gpu_compressor_project_batch(
     return 0;
 }
 
-int coli_v4_gpu_sparse_attention_batch(
-    const ColiDeepSeekV4LayerWeights *weights, float *attended,
+int lma_v4_gpu_sparse_attention_batch(
+    const LmaDeepSeekV4LayerWeights *weights, float *attended,
     const float *q, const float *values, const float *sinks, const int *meta,
     int value_rows, int comp_base, int heads, int head_dim, int batch) {
-    if (!coli_v4_gpu_attn_batch_wanted() || !weights || !attended || !q ||
+    if (!lma_v4_gpu_attn_batch_wanted() || !weights || !attended || !q ||
         !values || !sinks || !meta || batch < 1) return -1;
     Dsv4CudaTensor *anchor =
-        (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "attn.wq_a");
+        (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "attn.wq_a");
     if (!anchor) return -1;
     int device = dsv4_cuda_tensor_device(anchor);
     if (device < 0) return -1;
@@ -11250,11 +11250,11 @@ static int v4_kv_window[V4_KV_CACHE_MAX_LAYERS];
 /* Any restore/reset of the CPU attention state: drop every layer's
  * continuity mark. Position continuity alone would miss the (rare) case of a
  * restored state whose length equals the position the ring last served. */
-void coli_v4_gpu_kv_cache_invalidate_all(void) {
+void lma_v4_gpu_kv_cache_invalidate_all(void) {
     for (int i = 0; i < V4_KV_CACHE_MAX_LAYERS; i++) v4_kv_upto[i] = -1;
 }
 
-void coli_v4_gpu_kv_cache_poison(const ColiDeepSeekV4LayerWeights *weights) {
+void lma_v4_gpu_kv_cache_poison(const LmaDeepSeekV4LayerWeights *weights) {
     int layer = weights ? weights->plan.layer : -1;
     if (layer >= 0 && layer < V4_KV_CACHE_MAX_LAYERS) v4_kv_upto[layer] = -1;
 }
@@ -11263,7 +11263,7 @@ void coli_v4_gpu_kv_cache_poison(const ColiDeepSeekV4LayerWeights *weights) {
  * start_position: reseed the ring from the CPU window ring on discontinuity,
  * append any new compressed rows. cpu_ring is the CPU window ring (slot =
  * position % window). Returns 1 when the device state is usable. */
-int coli_v4_gpu_kv_cache_sync(const ColiDeepSeekV4LayerWeights *weights,
+int lma_v4_gpu_kv_cache_sync(const LmaDeepSeekV4LayerWeights *weights,
                               const float *cpu_ring, int window, int head_dim,
                               int start_position, const float *compressed,
                               int comp_total) {
@@ -11279,7 +11279,7 @@ int coli_v4_gpu_kv_cache_sync(const ColiDeepSeekV4LayerWeights *weights,
         int first = start_position - window + 1;
         if (first < 0) first = 0;
         for (int p = first; ok && p < start_position; p++)
-            ok = coli_v4_gpu_kv_ring_append(
+            ok = lma_v4_gpu_kv_ring_append(
                 weights, cpu_ring + (size_t)(p % window) * head_dim, p, 1,
                 window, head_dim) == 0;
         if (ok && start_position == 0) {
@@ -11289,7 +11289,7 @@ int coli_v4_gpu_kv_cache_sync(const ColiDeepSeekV4LayerWeights *weights,
     }
     if (ok && comp_total > v4_kv_comp[layer]) {
         if (!compressed) ok = 0;
-        else ok = coli_v4_gpu_kv_comp_append(
+        else ok = lma_v4_gpu_kv_comp_append(
                  weights, compressed + (size_t)v4_kv_comp[layer] * head_dim,
                  v4_kv_comp[layer], comp_total - v4_kv_comp[layer],
                  head_dim) == 0;
@@ -11302,13 +11302,13 @@ int coli_v4_gpu_kv_cache_sync(const ColiDeepSeekV4LayerWeights *weights,
 
 /* After attention succeeded: enter the attended rows into the ring and move
  * the continuity mark; on failure poison so the next call reseeds. */
-void coli_v4_gpu_kv_cache_advance(const ColiDeepSeekV4LayerWeights *weights,
+void lma_v4_gpu_kv_cache_advance(const LmaDeepSeekV4LayerWeights *weights,
                                   const float *rows, int start_position,
                                   int count, int window, int head_dim,
                                   int comp_total) {
     int layer = weights ? weights->plan.layer : -1;
     if (layer < 0 || layer >= V4_KV_CACHE_MAX_LAYERS) return;
-    if (coli_v4_gpu_kv_ring_append(weights, rows, start_position, count,
+    if (lma_v4_gpu_kv_ring_append(weights, rows, start_position, count,
                                    window, head_dim) == 0) {
         v4_kv_upto[layer] = start_position + count;
         v4_kv_comp[layer] = comp_total;
@@ -11318,12 +11318,12 @@ void coli_v4_gpu_kv_cache_advance(const ColiDeepSeekV4LayerWeights *weights,
     }
 }
 
-int coli_v4_gpu_kv_ring_append(const ColiDeepSeekV4LayerWeights *weights,
+int lma_v4_gpu_kv_ring_append(const LmaDeepSeekV4LayerWeights *weights,
                                const float *rows, int start_pos, int count,
                                int window, int dim) {
-    if (!coli_v4_gpu_attn_batch_wanted() || !weights || !rows) return -1;
+    if (!lma_v4_gpu_attn_batch_wanted() || !weights || !rows) return -1;
     Dsv4CudaTensor *anchor =
-        (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "attn.wq_a");
+        (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "attn.wq_a");
     if (!anchor) return -1;
     int device = dsv4_cuda_tensor_device(anchor);
     if (device < 0) return -1;
@@ -11331,12 +11331,12 @@ int coli_v4_gpu_kv_ring_append(const ColiDeepSeekV4LayerWeights *weights,
                                     start_pos, count, window, dim) ? 0 : -1;
 }
 
-int coli_v4_gpu_kv_comp_append(const ColiDeepSeekV4LayerWeights *weights,
+int lma_v4_gpu_kv_comp_append(const LmaDeepSeekV4LayerWeights *weights,
                                const float *rows, int start_idx, int count,
                                int dim) {
-    if (!coli_v4_gpu_attn_batch_wanted() || !weights || !rows) return -1;
+    if (!lma_v4_gpu_attn_batch_wanted() || !weights || !rows) return -1;
     Dsv4CudaTensor *anchor =
-        (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "attn.wq_a");
+        (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "attn.wq_a");
     if (!anchor) return -1;
     int device = dsv4_cuda_tensor_device(anchor);
     if (device < 0) return -1;
@@ -11344,15 +11344,15 @@ int coli_v4_gpu_kv_comp_append(const ColiDeepSeekV4LayerWeights *weights,
                                     start_idx, count, dim) ? 0 : -1;
 }
 
-int coli_v4_gpu_sparse_attention_batch_cached(
-    const ColiDeepSeekV4LayerWeights *weights, float *attended,
+int lma_v4_gpu_sparse_attention_batch_cached(
+    const LmaDeepSeekV4LayerWeights *weights, float *attended,
     const float *q, const float *chunk, int chunk_start, const float *sinks,
     const int *meta, int abs_base, int comp_limit, int heads, int head_dim,
     int batch) {
-    if (!coli_v4_gpu_attn_batch_wanted() || !weights || !attended || !q ||
+    if (!lma_v4_gpu_attn_batch_wanted() || !weights || !attended || !q ||
         !chunk || !sinks || !meta || batch < 1) return -1;
     Dsv4CudaTensor *anchor =
-        (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "attn.wq_a");
+        (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "attn.wq_a");
     if (!anchor) return -1;
     int device = dsv4_cuda_tensor_device(anchor);
     if (device < 0) return -1;
@@ -11363,16 +11363,16 @@ int coli_v4_gpu_sparse_attention_batch_cached(
         ? 0 : -1;
 }
 
-int coli_v4_gpu_sparse_attention_batch_cached_idx(
-    const ColiDeepSeekV4LayerWeights *weights, float *attended,
+int lma_v4_gpu_sparse_attention_batch_cached_idx(
+    const LmaDeepSeekV4LayerWeights *weights, float *attended,
     const float *q, const float *chunk, int chunk_start, const float *sinks,
     const int *meta, const int *sel, int selstride, int abs_base,
     int comp_limit, int heads, int head_dim, int batch) {
-    if (!coli_v4_gpu_attn_batch_wanted() || !weights || !attended || !q ||
+    if (!lma_v4_gpu_attn_batch_wanted() || !weights || !attended || !q ||
         !chunk || !sinks || !meta || !sel || selstride < 1 || batch < 1)
         return -1;
     Dsv4CudaTensor *anchor =
-        (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "attn.wq_a");
+        (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "attn.wq_a");
     if (!anchor) return -1;
     int device = dsv4_cuda_tensor_device(anchor);
     if (device < 0) return -1;
@@ -11383,16 +11383,16 @@ int coli_v4_gpu_sparse_attention_batch_cached_idx(
         ? 0 : -1;
 }
 
-int coli_v4_gpu_fp8_ref_matmul(const ColiDeepSeekV4LayerWeights *weights,
-                               const ColiTensorView *w, const float *x_qdq,
+int lma_v4_gpu_fp8_ref_matmul(const LmaDeepSeekV4LayerWeights *weights,
+                               const LmaTensorView *w, const float *x_qdq,
                                int tokens, float *y) {
-    if (!coli_v4_gpu_attn_batch_wanted() || !weights || !w || !x_qdq || !y ||
-        tokens < 1 || w->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
-        w->scale_format != COLI_SCALE_F32 ||
+    if (!lma_v4_gpu_attn_batch_wanted() || !weights || !w || !x_qdq || !y ||
+        tokens < 1 || w->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
+        w->scale_format != LMA_SCALE_F32 ||
         (w->block_rows != 128 && w->block_rows != 8) ||
         w->block_columns != 128 || w->columns % 128) return -1;
     Dsv4CudaTensor *anchor =
-        (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "attn.wq_a");
+        (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "attn.wq_a");
     if (!anchor) return -1;
     int device = dsv4_cuda_tensor_device(anchor);
     if (device < 0) return -1;
@@ -11403,14 +11403,14 @@ int coli_v4_gpu_fp8_ref_matmul(const ColiDeepSeekV4LayerWeights *weights,
         ? 0 : -1;
 }
 
-int coli_v4_gpu_indexer_score_batch(
-    const ColiDeepSeekV4LayerWeights *weights, float *scores,
+int lma_v4_gpu_indexer_score_batch(
+    const LmaDeepSeekV4LayerWeights *weights, float *scores,
     const float *queries, const float *keys, const float *head_w,
     const int *counts, int tokens, int heads, int dim, int count) {
-    if (!coli_v4_gpu_attn_batch_wanted() || !weights || !scores || !queries ||
+    if (!lma_v4_gpu_attn_batch_wanted() || !weights || !scores || !queries ||
         !keys || !head_w || !counts || tokens < 1 || count < 1) return -1;
     Dsv4CudaTensor *anchor =
-        (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "attn.wq_a");
+        (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "attn.wq_a");
     if (!anchor) return -1;
     int device = dsv4_cuda_tensor_device(anchor);
     if (device < 0) return -1;
@@ -11419,17 +11419,17 @@ int coli_v4_gpu_indexer_score_batch(
         ? 0 : -1;
 }
 
-int coli_v4_gpu_attention_wo_batch(
-    const ColiDeepSeekV4LayerWeights *weights, float *outputs,
+int lma_v4_gpu_attention_wo_batch(
+    const LmaDeepSeekV4LayerWeights *weights, float *outputs,
     const float *attended, int groups, int q_width, int hidden, int batch) {
     static Dsv4CudaActivation *context_mirror, *output_mirror;
     static long long context_capacity, output_capacity;
     static int mirror_device = -1;
-    if (!coli_v4_gpu_attn_batch_wanted() || !weights || !outputs ||
+    if (!lma_v4_gpu_attn_batch_wanted() || !weights || !outputs ||
         !attended || groups < 1 || q_width < 1 || hidden < 1 || batch < 1)
         return -1;
-    Dsv4CudaTensor *wa = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "attn.wo_a");
-    Dsv4CudaTensor *wb = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "attn.wo_b");
+    Dsv4CudaTensor *wa = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "attn.wo_a");
+    Dsv4CudaTensor *wb = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "attn.wo_b");
     if (!wa || !wb) return -1;
     int device = dsv4_cuda_tensor_device(wa);
     if (device < 0) return -1;
@@ -11514,21 +11514,21 @@ static void v4_gpu_mhc_tags_clear(void) {
     v4_gpu_mhc_state_tag = (struct V4GpuMhcTag){0};
 }
 
-int coli_v4_gpu_mhc_pre_norm_batch(
-    const ColiDeepSeekV4LayerWeights *weights, const char *branch,
+int lma_v4_gpu_mhc_pre_norm_batch(
+    const LmaDeepSeekV4LayerWeights *weights, const char *branch,
     const char *norm_key, float *posts, float *combs, float *normalized,
     const float *inputs_hc, int hc, int hidden, int batch) {
-    if (!coli_v4_gpu_attn_batch_wanted() || !weights || !branch || !norm_key ||
+    if (!lma_v4_gpu_attn_batch_wanted() || !weights || !branch || !norm_key ||
         !posts || !combs || !normalized || !inputs_hc ||
         hc != 4 || hidden != 4096 || batch < 1) return -1;
     char key[64];
     snprintf(key, sizeof(key), "hc_%s_fn", branch);
-    Dsv4CudaTensor *fn = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, key);
+    Dsv4CudaTensor *fn = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, key);
     snprintf(key, sizeof(key), "hc_%s_scale", branch);
-    Dsv4CudaTensor *scale = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, key);
+    Dsv4CudaTensor *scale = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, key);
     snprintf(key, sizeof(key), "hc_%s_base", branch);
-    Dsv4CudaTensor *base = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, key);
-    Dsv4CudaTensor *norm = (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, norm_key);
+    Dsv4CudaTensor *base = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, key);
+    Dsv4CudaTensor *norm = (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, norm_key);
     if (!fn || !scale || !base || !norm) return -1;
     int device = dsv4_cuda_tensor_device(fn);
     if (device < 0) return -1;
@@ -11560,15 +11560,15 @@ int coli_v4_gpu_mhc_pre_norm_batch(
     return good ? 0 : -1;
 }
 
-int coli_v4_gpu_mhc_post_batch(
-    const ColiDeepSeekV4LayerWeights *weights, float *outputs_hc,
+int lma_v4_gpu_mhc_post_batch(
+    const LmaDeepSeekV4LayerWeights *weights, float *outputs_hc,
     const float *branch, const float *residual_hc, const float *posts,
     const float *combs, int hc, int hidden, int batch) {
-    if (!coli_v4_gpu_attn_batch_wanted() || !weights || !outputs_hc ||
+    if (!lma_v4_gpu_attn_batch_wanted() || !weights || !outputs_hc ||
         !branch || !residual_hc || !posts || !combs ||
         hc != 4 || hidden != 4096 || batch < 1) return -1;
     Dsv4CudaTensor *anchor =
-        (Dsv4CudaTensor *)coli_v4_layer_gpu(weights, "hc_attn_fn");
+        (Dsv4CudaTensor *)lma_v4_layer_gpu(weights, "hc_attn_fn");
     if (!anchor) return -1;
     int device = dsv4_cuda_tensor_device(anchor);
     if (device < 0) return -1;
@@ -11603,10 +11603,10 @@ int coli_v4_gpu_mhc_post_batch(
     free(state_host);
     return good ? 0 : -1;
 }
-#endif /* COLI_V4_GPU_TIER && _WIN32 */
-#endif /* COLI_V4_UNIT_GPU */
+#endif /* LMA_V4_GPU_TIER && _WIN32 */
+#endif /* LMA_V4_UNIT_GPU */
 
-#ifdef COLI_V4_UNIT_PROMPT
+#ifdef LMA_V4_UNIT_PROMPT
 /* ######## deepseek_v4_prompt.c ######## */
 #include "deepseek_v4_internal.h"
 
@@ -11624,15 +11624,15 @@ static int add_size(size_t *total, size_t value) {
     return 0;
 }
 
-int coli_v4_prompt_build(char **output, size_t *output_length,
+int lma_v4_prompt_build(char **output, size_t *output_length,
                          const char *user_message, const char *system_message,
-                         ColiDeepSeekV4PromptMode mode) {
-    if (!output || !user_message || mode < COLI_V4_PROMPT_CHAT ||
-        mode > COLI_V4_PROMPT_RAW) return -1;
+                         LmaDeepSeekV4PromptMode mode) {
+    if (!output || !user_message || mode < LMA_V4_PROMPT_CHAT ||
+        mode > LMA_V4_PROMPT_RAW) return -1;
     *output = NULL;
     if (output_length) *output_length = 0;
     const char *system = system_message ? system_message : "";
-    if (mode == COLI_V4_PROMPT_RAW) {
+    if (mode == LMA_V4_PROMPT_RAW) {
         size_t length = strlen(user_message);
         char *copy = malloc(length + 1);
         if (!copy) return -1;
@@ -11641,7 +11641,7 @@ int coli_v4_prompt_build(char **output, size_t *output_length,
         if (output_length) *output_length = length;
         return 0;
     }
-    const char *thinking = mode == COLI_V4_PROMPT_THINKING
+    const char *thinking = mode == LMA_V4_PROMPT_THINKING
         ? "<think>" : "</think>";
     size_t length = 0;
     if (add_size(&length, strlen(v4_bos)) ||
@@ -11669,12 +11669,12 @@ int coli_v4_prompt_build(char **output, size_t *output_length,
     if (output_length) *output_length = length;
     return 0;
 }
-#endif /* COLI_V4_UNIT_PROMPT */
+#endif /* LMA_V4_UNIT_PROMPT */
 
-#ifdef COLI_V4_UNIT_GENERATE_STATS
+#ifdef LMA_V4_UNIT_GENERATE_STATS
 /* ######## tools/deepseek_v4_generate_stats.c ######## */
-#define COLI_V4_GENERATE_MAIN coli_v4_generate_stats_legacy_main
-#define COLI_V4_GENERATE_HELPERS_ONLY
+#define LMA_V4_GENERATE_MAIN lma_v4_generate_stats_legacy_main
+#define LMA_V4_GENERATE_HELPERS_ONLY
 #define spec_print spec_print_diagnostic_legacy
 /* Target-only generation helpers. */
 #include <time.h>
@@ -11686,7 +11686,7 @@ int coli_v4_prompt_build(char **output, size_t *output_length,
 #include <omp.h>                                  /* team sizing around the expert loaders */
 #endif
 
-#define main coli_v4_first_token_legacy_main
+#define main lma_v4_first_token_legacy_main
 /* ---- begin include tools/deepseek_v4_first_token.c ---- */
 #include <float.h>
 #include <math.h>
@@ -11706,18 +11706,18 @@ int coli_v4_prompt_build(char **output, size_t *output_length,
 #include "json.h"
 #include "native_quant.h"
 #include "serve_codec.h"
-#include "decode_batch.h"   /* coli_logprob_tail: the numeric channel's tail, same bytes as the other engines */
+#include "decode_batch.h"   /* lma_logprob_tail: the numeric channel's tail, same bytes as the other engines */
 #include "tok.h"
 
-static int load_embedding(float *state, const ColiSafetensorsIndex *index,
-                          const ColiDeepSeekV4Config *config, int token) {
-    const ColiSafetensorsTensor *embed = coli_st_find(index, "embed.weight");
+static int load_embedding(float *state, const LmaSafetensorsIndex *index,
+                          const LmaDeepSeekV4Config *config, int token) {
+    const LmaSafetensorsTensor *embed = lma_st_find(index, "embed.weight");
     int d = config->hidden_size, hc = config->hc_mult;
-    int shard = coli_st_tensor_shard(index, embed);
+    int shard = lma_st_tensor_shard(index, embed);
     uint16_t *row = malloc((size_t)d * sizeof(*row));
-    if (!embed || embed->dtype != COLI_ST_BF16 || !row || token < 0 ||
+    if (!embed || embed->dtype != LMA_ST_BF16 || !row || token < 0 ||
         token >= config->vocab_size ||
-        coli_st_read_at(index, shard,
+        lma_st_read_at(index, shard,
                         (uint64_t)embed->off + (uint64_t)token * d * sizeof(*row),
                         (size_t)d * sizeof(*row), row)) {
         free(row);
@@ -11725,25 +11725,25 @@ static int load_embedding(float *state, const ColiSafetensorsIndex *index,
     }
     for (int copy = 0; copy < hc; copy++)
         for (int i = 0; i < d; i++)
-            state[(size_t)copy * d + i] = coli_bf16_decode(row[i]);
+            state[(size_t)copy * d + i] = lma_bf16_decode(row[i]);
     free(row);
     return 0;
 }
 
 static int final_hidden(float *output, const float *state,
-                        const ColiSafetensorsIndex *index,
-                        const ColiDeepSeekV4Config *config,
+                        const LmaSafetensorsIndex *index,
+                        const LmaDeepSeekV4Config *config,
                         char *error, size_t error_size) {
-    ColiFloatTensor function = {0}, base = {0}, scale = {0}, norm = {0};
-    if (coli_tensor_load_f32(&function, index, "hc_head_fn", error, error_size) ||
-        coli_tensor_load_f32(&base, index, "hc_head_base", error, error_size) ||
-        coli_tensor_load_f32(&scale, index, "hc_head_scale", error, error_size) ||
-        coli_tensor_load_f32(&norm, index, "norm.weight", error, error_size))
+    LmaFloatTensor function = {0}, base = {0}, scale = {0}, norm = {0};
+    if (lma_tensor_load_f32(&function, index, "hc_head_fn", error, error_size) ||
+        lma_tensor_load_f32(&base, index, "hc_head_base", error, error_size) ||
+        lma_tensor_load_f32(&scale, index, "hc_head_scale", error, error_size) ||
+        lma_tensor_load_f32(&norm, index, "norm.weight", error, error_size))
         return -1;
     int d = config->hidden_size, hc = config->hc_mult;
     /* SEC (GHSA-9gjf): these global tensors are loaded by their declared numel
      * with no shape reconciliation (unlike the per-layer tensors, which
-     * coli_v4_layer_validate checks against config). final_hidden then indexes
+     * lma_v4_layer_validate checks against config). final_hidden then indexes
      * hc_head_fn at [copy*hc*d + i], hc_head_base at [copy], hc_head_scale at
      * [0], and norm over d — a truncated global tensor turns each into a heap
      * OOB read whose stale bytes leak into the logits. Require enough elements
@@ -11754,10 +11754,10 @@ static int final_hidden(float *output, const float *state,
         base.count < (uint64_t)hc ||
         scale.count < 1 ||
         norm.count < (uint64_t)d) {
-        coli_float_tensor_free(&norm);
-        coli_float_tensor_free(&scale);
-        coli_float_tensor_free(&base);
-        coli_float_tensor_free(&function);
+        lma_float_tensor_free(&norm);
+        lma_float_tensor_free(&scale);
+        lma_float_tensor_free(&base);
+        lma_float_tensor_free(&function);
         if (error && error_size) snprintf(error, error_size, "global tensor shape mismatch");
         return -1;
     }
@@ -11781,14 +11781,14 @@ static int final_hidden(float *output, const float *state,
         float value = 0.0f;
         for (int copy = 0; copy < hc; copy++)
             value += pre[copy] * state[(size_t)copy * d + i];
-        output[i] = coli_bf16_round(value);
+        output[i] = lma_bf16_round(value);
     }
-    coli_v4_rmsnorm(output, output, norm.data, d, config->rms_norm_eps);
-    coli_bf16_round_array(output, (size_t)d);
-    coli_float_tensor_free(&norm);
-    coli_float_tensor_free(&scale);
-    coli_float_tensor_free(&base);
-    coli_float_tensor_free(&function);
+    lma_v4_rmsnorm(output, output, norm.data, d, config->rms_norm_eps);
+    lma_bf16_round_array(output, (size_t)d);
+    lma_float_tensor_free(&norm);
+    lma_float_tensor_free(&scale);
+    lma_float_tensor_free(&base);
+    lma_float_tensor_free(&function);
     return 0;
 }
 
@@ -11817,7 +11817,7 @@ static float head_bf16_dot(const uint16_t *weight, const float *hidden,
     }
 #endif
     for (; column < dimension; column++)
-        sum += coli_bf16_decode(weight[column]) * hidden[column];
+        sum += lma_bf16_decode(weight[column]) * hidden[column];
     return sum;
 }
 
@@ -11831,13 +11831,13 @@ static double g_v4_prof_block_s = 0.0, g_v4_prof_head_s = 0.0;
 static long long g_v4_prof_forwards = 0;
 static double spec_now(void);   /* defined with the speculative-decode helpers below */
 
-static int head_argmax_impl(ColiV4Engine *engine, const float *hidden,
-                            const ColiSafetensorsIndex *index,
-                            const ColiDeepSeekV4Config *config,
+static int head_argmax_impl(LmaV4Engine *engine, const float *hidden,
+                            const LmaSafetensorsIndex *index,
+                            const LmaDeepSeekV4Config *config,
                             int *best_token, float *best_logit);
-static int head_argmax(ColiV4Engine *engine, const float *hidden,
-                       const ColiSafetensorsIndex *index,
-                       const ColiDeepSeekV4Config *config,
+static int head_argmax(LmaV4Engine *engine, const float *hidden,
+                       const LmaSafetensorsIndex *index,
+                       const LmaDeepSeekV4Config *config,
                        int *best_token, float *best_logit) {
     double t0 = spec_now();
     int result = head_argmax_impl(engine, hidden, index, config, best_token, best_logit);
@@ -11849,16 +11849,16 @@ static int head_argmax(ColiV4Engine *engine, const float *hidden,
  * logprobs=k, docs/brio.md) needs the whole row, so the row is computed here
  * once and the argmax is a scan over it. Same head_bf16_dot per row, same scan
  * order: the token picked and its logit do not change. */
-static int head_scores_impl(ColiV4Engine *engine, const float *hidden,
-                            const ColiSafetensorsIndex *index,
-                            const ColiDeepSeekV4Config *config, float *scores) {
-    const ColiSafetensorsTensor *head = coli_st_find(index, "head.weight");
+static int head_scores_impl(LmaV4Engine *engine, const float *hidden,
+                            const LmaSafetensorsIndex *index,
+                            const LmaDeepSeekV4Config *config, float *scores) {
+    const LmaSafetensorsTensor *head = lma_st_find(index, "head.weight");
     int d = config->hidden_size, vocab = config->vocab_size;
-    if (!head || head->dtype != COLI_ST_BF16 || d < 1 || vocab < 1 || !scores)
+    if (!head || head->dtype != LMA_ST_BF16 || d < 1 || vocab < 1 || !scores)
         return -1;
-    int shard = coli_st_tensor_shard(index, head);
+    int shard = lma_st_tensor_shard(index, head);
     size_t resident_bytes = (size_t)vocab * (size_t)d * sizeof(uint16_t);
-    const uint16_t *resident = coli_v4_head_cache_data(
+    const uint16_t *resident = lma_v4_head_cache_data(
         engine, shard, (uint64_t)head->off, resident_bytes);
     /* The normal V4 memory plan keeps the BF16 head resident.  Compute all
      * rows in one OpenMP team directly from that allocation: the old tiled
@@ -11880,7 +11880,7 @@ static int head_scores_impl(ColiV4Engine *engine, const float *hidden,
     for (int start = 0; start < vocab; start += ROWS) {
         int rows = vocab - start < ROWS ? vocab - start : ROWS;
         size_t bytes = (size_t)rows * d * sizeof(*raw);
-        if (coli_st_read_at_engine(
+        if (lma_st_read_at_engine(
                 engine, index, shard,
                 (uint64_t)head->off + (uint64_t)start * d * sizeof(*raw),
                 bytes, raw)) {
@@ -11910,9 +11910,9 @@ static int head_scores_argmax(const float *scores, int vocab,
     *best_logit = maximum;
     return winner < 0 ? -1 : 0;
 }
-static int head_argmax_impl(ColiV4Engine *engine, const float *hidden,
-                            const ColiSafetensorsIndex *index,
-                            const ColiDeepSeekV4Config *config,
+static int head_argmax_impl(LmaV4Engine *engine, const float *hidden,
+                            const LmaSafetensorsIndex *index,
+                            const LmaDeepSeekV4Config *config,
                             int *best_token, float *best_logit) {
     int vocab = config->vocab_size;
     if (vocab < 1) return -1;
@@ -11924,28 +11924,28 @@ static int head_argmax_impl(ColiV4Engine *engine, const float *hidden,
     return result;
 }
 /* The whole row, under the same head-time meter as head_argmax. */
-static int head_scores(ColiV4Engine *engine, const float *hidden,
-                       const ColiSafetensorsIndex *index,
-                       const ColiDeepSeekV4Config *config, float *scores) {
+static int head_scores(LmaV4Engine *engine, const float *hidden,
+                       const LmaSafetensorsIndex *index,
+                       const LmaDeepSeekV4Config *config, float *scores) {
     double t0 = spec_now();
     int result = head_scores_impl(engine, hidden, index, config, scores);
     g_v4_prof_head_s += spec_now() - t0;
     return result;
 }
-static int head_argmax_batch(ColiV4Engine *engine, const float *hidden,
-                             const ColiSafetensorsIndex *index,
-                             const ColiDeepSeekV4Config *config, int batch,
+static int head_argmax_batch(LmaV4Engine *engine, const float *hidden,
+                             const LmaSafetensorsIndex *index,
+                             const LmaDeepSeekV4Config *config, int batch,
                              int *best_tokens, float *best_logits) {
     if (!engine || !hidden || !index || !config || batch < 1 ||
         !best_tokens || !best_logits) return -1;
     if (batch == 1)
         return head_argmax(engine, hidden, index, config, best_tokens,
                            best_logits);
-    const ColiSafetensorsTensor *head = coli_st_find(index, "head.weight");
+    const LmaSafetensorsTensor *head = lma_st_find(index, "head.weight");
     int d = config->hidden_size, vocab = config->vocab_size;
-    if (!head || head->dtype != COLI_ST_BF16) return -1;
-    int shard = coli_st_tensor_shard(index, head);
-    const uint16_t *resident = coli_v4_head_cache_data(
+    if (!head || head->dtype != LMA_ST_BF16) return -1;
+    int shard = lma_st_tensor_shard(index, head);
+    const uint16_t *resident = lma_v4_head_cache_data(
         engine, shard, (uint64_t)head->off,
         (size_t)vocab * d * sizeof(uint16_t));
     if (!resident) {
@@ -11979,7 +11979,7 @@ static int head_argmax_batch(ColiV4Engine *engine, const float *hidden,
     return 0;
 }
 
-static int dspark_markov_argmax(const ColiV4Engine *engine, int token,
+static int dspark_markov_argmax(const LmaV4Engine *engine, int token,
                                 int *best_token) {
     if (!engine || !engine->dspark.enabled || !best_token || token < 0 ||
         token >= engine->config.vocab_size) return -1;
@@ -11991,7 +11991,7 @@ static int dspark_markov_argmax(const ColiV4Engine *engine, int token,
     }
     const uint16_t *source = engine->dspark.markov_w1 + (size_t)token * rank;
     for (int column = 0; column < rank; column++)
-        embedding[column] = coli_bf16_decode(source[column]);
+        embedding[column] = lma_bf16_decode(source[column]);
     #pragma omp parallel for schedule(static)
     for (int row = 0; row < vocab; row++)
         scores[row] = head_bf16_dot(
@@ -12041,31 +12041,31 @@ int main(int argc, char **argv) {
                                 : (argc == 4 ? atoi(argv[3]) : 1);
     if (token_count < 1) return 2;
     char error[512] = {0};
-    ColiDeepSeekV4Config config;
-    ColiSafetensorsIndex *index = NULL;
-    ColiExpertStore *experts = NULL;
-    if (coli_v4_config_load(&config, argv[1], error, sizeof(error)) ||
-        coli_st_index_open(&index, argv[1], error, sizeof(error))) {
+    LmaDeepSeekV4Config config;
+    LmaSafetensorsIndex *index = NULL;
+    LmaExpertStore *experts = NULL;
+    if (lma_v4_config_load(&config, argv[1], error, sizeof(error)) ||
+        lma_st_index_open(&index, argv[1], error, sizeof(error))) {
         fprintf(stderr, "%s\n", error);
         return 1;
     }
-    ColiDeepSeekV4ExpertStoreOptions store_opts = {
+    LmaDeepSeekV4ExpertStoreOptions store_opts = {
         argv[1], config.num_hidden_layers, config.n_routed_experts,
         UINT64_C(4) * 1024 * 1024 * 1024, -1, 0, 0,
     };
-    /* Route through the pluggable backend registry when COLI_EXPERT_STORE names
+    /* Route through the pluggable backend registry when LMA_EXPERT_STORE names
      * a non-"auto" backend (e.g. a networked/remote store). The
-     * CLI has no ColiV4Engine, so pass NULL engine + the loaded config; the
+     * CLI has no LmaV4Engine, so pass NULL engine + the loaded config; the
      * backend derives expert geometry from the config. Unset/"auto" keeps the
      * historical direct on-disk open. */
-    const char *coli_be = getenv("COLI_EXPERT_STORE");
-    if (coli_be && *coli_be && strcmp(coli_be, "auto") != 0) {
-        if (coli_expert_store_backend_open_selected(
+    const char *lma_be = getenv("LMA_EXPERT_STORE");
+    if (lma_be && *lma_be && strcmp(lma_be, "auto") != 0) {
+        if (lma_expert_store_backend_open_selected(
                 NULL, &config, &store_opts, &experts, error, sizeof(error))) {
             fprintf(stderr, "%s\n", error);
             return 1;
         }
-    } else if (coli_deepseek_v4_expert_store_open(
+    } else if (lma_deepseek_v4_expert_store_open(
                    &store_opts, &experts, error, sizeof(error))) {
         fprintf(stderr, "%s\n", error);
         return 1;
@@ -12093,11 +12093,11 @@ int main(int argc, char **argv) {
     float *state = malloc(state_count * sizeof(*state));
     float *next = malloc(state_count * sizeof(*next));
     float *hidden = malloc((size_t)config.hidden_size * sizeof(*hidden));
-    ColiDeepSeekV4WindowAttentionState **attention = calloc(
+    LmaDeepSeekV4WindowAttentionState **attention = calloc(
         (size_t)config.num_hidden_layers, sizeof(*attention));
     if (!state || !next || !hidden || !attention) return 1;
     for (int layer = 0; layer < config.num_hidden_layers; layer++)
-        if (coli_v4_window_attention_create(&attention[layer], &config)) return 1;
+        if (lma_v4_window_attention_create(&attention[layer], &config)) return 1;
 
     int current_token = text_mode ? prompt_ids[0] : input_token;
     int total_steps = text_mode ? prompt_count + token_count - 1 : token_count;
@@ -12106,17 +12106,17 @@ int main(int argc, char **argv) {
             current_token = prompt_ids[position];
         if (load_embedding(state, index, &config, current_token)) return 1;
         for (int layer_id = 0; layer_id < config.num_hidden_layers; layer_id++) {
-            ColiDeepSeekV4LayerWeights layer;
-            if (coli_v4_layer_load(NULL, &layer, &config, index, layer_id,
+            LmaDeepSeekV4LayerWeights layer;
+            if (lma_v4_layer_load(NULL, &layer, &config, index, layer_id,
                                    error, sizeof(error)) ||
-                coli_v4_block_window_token_ref(
+                lma_v4_block_window_token_ref(
                     next, attention[layer_id], &layer, &config, experts, state,
                     current_token, position, error, sizeof(error))) {
                 fprintf(stderr, "position %d layer %d: %s\n",
                         position, layer_id, error);
                 return 1;
             }
-            coli_v4_layer_free(NULL, &layer);
+            lma_v4_layer_free(NULL, &layer);
             float *swap = state; state = next; next = swap;
         }
         fprintf(stderr, "position %d/%d complete (%d layers)\n", position,
@@ -12149,7 +12149,7 @@ int main(int argc, char **argv) {
         }
         current_token = output_token;
     }
-    ColiExpertStoreStats stats;
+    LmaExpertStoreStats stats;
     experts->ops->stats(experts, &stats);
     printf("summary tokens=%d expert_reads=%llu bytes=%llu\n",
            text_mode ? generated_count : token_count,
@@ -12174,12 +12174,12 @@ int main(int argc, char **argv) {
         free(text);
     }
     for (int layer = 0; layer < config.num_hidden_layers; layer++)
-        coli_v4_window_attention_destroy(attention[layer]);
+        lma_v4_window_attention_destroy(attention[layer]);
     free(attention);
     free(generated_ids); free(prompt_ids);
     free(hidden); free(next); free(state);
     experts->ops->destroy(experts);
-    coli_st_index_close(index);
+    lma_st_index_close(index);
     return 0;
 }
 /* ---- end include tools/deepseek_v4_first_token.c ---- */
@@ -12217,9 +12217,9 @@ static float *g_mainh_ring;
 static int64_t g_mainh_abs[V4_MAINH_RING];
 static int g_mainh_dim;
 
-static void v4_mainh_tap(const ColiDeepSeekV4Config *config, int layer_id,
+static void v4_mainh_tap(const LmaDeepSeekV4Config *config, int layer_id,
                          const float *row, int64_t position) {
-    if (!coli_v4_full_dspark_wanted || !config || !row || position < 0) return;
+    if (!lma_v4_full_dspark_wanted || !config || !row || position < 0) return;
     int first = config->num_hidden_layers - V4_MAINH_TARGETS;
     int target = layer_id - first;
     if (target < 0 || target >= V4_MAINH_TARGETS) return;
@@ -12242,7 +12242,7 @@ static void v4_mainh_tap(const ColiDeepSeekV4Config *config, int layer_id,
         float sum = 0.0f;
         for (int copy = 0; copy < copies; copy++)
             sum += row[(size_t)copy * dimension + column];
-        slot[column] = coli_bf16_round(sum / copies);
+        slot[column] = lma_bf16_round(sum / copies);
     }
     if (target == V4_MAINH_TARGETS - 1) g_mainh_abs[ring] = position;
 }
@@ -12260,27 +12260,27 @@ static const float *v4_mainh_get(int64_t position) {
 static int v4_prefill_pool_enabled(void) {
     static int enabled = -1;
     if (enabled < 0) {
-        const char *setting = getenv("COLI_V4_PREFILL_POOL");
+        const char *setting = getenv("LMA_V4_PREFILL_POOL");
         enabled = !setting || atoi(setting) != 0;
     }
     return enabled;
 }
 
-static int target_batch_impl(ColiV4Engine *engine, float **state_ptr, float **next_ptr,
-                        ColiDeepSeekV4WindowAttentionState **attention,
-                        const ColiSafetensorsIndex *index,
-                        const ColiDeepSeekV4Config *config,
-                        ColiExpertStore *experts, const int *tokens,
+static int target_batch_impl(LmaV4Engine *engine, float **state_ptr, float **next_ptr,
+                        LmaDeepSeekV4WindowAttentionState **attention,
+                        const LmaSafetensorsIndex *index,
+                        const LmaDeepSeekV4Config *config,
+                        LmaExpertStore *experts, const int *tokens,
                         int start, int batch, int use_prefill_pool,
-                        ColiV4SessionAbortFn should_abort, void *abort_ctx,
+                        LmaV4SessionAbortFn should_abort, void *abort_ctx,
                         char *error, size_t error_size);
-static int target_batch(ColiV4Engine *engine, float **state_ptr, float **next_ptr,
-                        ColiDeepSeekV4WindowAttentionState **attention,
-                        const ColiSafetensorsIndex *index,
-                        const ColiDeepSeekV4Config *config,
-                        ColiExpertStore *experts, const int *tokens,
+static int target_batch(LmaV4Engine *engine, float **state_ptr, float **next_ptr,
+                        LmaDeepSeekV4WindowAttentionState **attention,
+                        const LmaSafetensorsIndex *index,
+                        const LmaDeepSeekV4Config *config,
+                        LmaExpertStore *experts, const int *tokens,
                         int start, int batch, int use_prefill_pool,
-                        ColiV4SessionAbortFn should_abort, void *abort_ctx,
+                        LmaV4SessionAbortFn should_abort, void *abort_ctx,
                         char *error, size_t error_size) {
     double t0 = spec_now();
     int result = target_batch_impl(engine, state_ptr, next_ptr, attention, index, config,
@@ -12290,13 +12290,13 @@ static int target_batch(ColiV4Engine *engine, float **state_ptr, float **next_pt
     if (batch > 0) g_v4_prof_forwards += batch;
     return result;
 }
-static int target_batch_impl(ColiV4Engine *engine, float **state_ptr, float **next_ptr,
-                        ColiDeepSeekV4WindowAttentionState **attention,
-                        const ColiSafetensorsIndex *index,
-                        const ColiDeepSeekV4Config *config,
-                        ColiExpertStore *experts, const int *tokens,
+static int target_batch_impl(LmaV4Engine *engine, float **state_ptr, float **next_ptr,
+                        LmaDeepSeekV4WindowAttentionState **attention,
+                        const LmaSafetensorsIndex *index,
+                        const LmaDeepSeekV4Config *config,
+                        LmaExpertStore *experts, const int *tokens,
                         int start, int batch, int use_prefill_pool,
-                        ColiV4SessionAbortFn should_abort, void *abort_ctx,
+                        LmaV4SessionAbortFn should_abort, void *abort_ctx,
                         char *error, size_t error_size) {
     if (!state_ptr || !next_ptr || !*state_ptr || !*next_ptr || !attention ||
         !index || !config || !experts || !tokens || start < 0 || batch < 1) {
@@ -12311,11 +12311,11 @@ static int target_batch_impl(ColiV4Engine *engine, float **state_ptr, float **ne
      * always passes use_prefill_pool=0. */
     int pool_experts = use_prefill_pool && v4_prefill_pool_enabled();
     for (int layer_id = 0; layer_id < config->num_hidden_layers; layer_id++) {
-        ColiDeepSeekV4LayerWeights layer;
-        if (coli_v4_layer_load(engine, &layer, config, index, layer_id,
+        LmaDeepSeekV4LayerWeights layer;
+        if (lma_v4_layer_load(engine, &layer, config, index, layer_id,
                                error, error_size)) {
             if (pool_experts)
-                coli_v4_expert_store_prefill_pool(experts, -1);
+                lma_v4_expert_store_prefill_pool(experts, -1);
             return -1;
         }
         /* A true prefill is layer-major: every prompt position crosses this
@@ -12324,7 +12324,7 @@ static int target_batch_impl(ColiV4Engine *engine, float **state_ptr, float **ne
          * Speculative decode also calls target_batch, but passes 0 and keeps
          * ordinary per-layer allocation, as does target_token. */
         if (pool_experts)
-            coli_v4_expert_store_prefill_pool(experts, layer_id);
+            lma_v4_expert_store_prefill_pool(experts, layer_id);
         int result = 0;
         /* Chunk width caps every batch-scaled buffer in the block AND bounds
          * the expert union. The batch kernels' contract is 128 (the CPU
@@ -12354,7 +12354,7 @@ static int target_batch_impl(ColiV4Engine *engine, float **state_ptr, float **ne
             }
             int chunk = batch - offset;
             if (chunk > chunk_width) chunk = chunk_width;
-            result = coli_v4_block_window_batch_ref(
+            result = lma_v4_block_window_batch_ref(
                 next + (size_t)offset * hd, attention[layer_id],
                 &layer, config, experts, state + (size_t)offset * hd,
                 tokens + offset, start + offset, chunk, error, error_size);
@@ -12363,10 +12363,10 @@ static int target_batch_impl(ColiV4Engine *engine, float **state_ptr, float **ne
                          "target prefill failed layer=%d offset=%d batch=%d",
                          layer_id, offset, chunk);
         }
-        coli_v4_layer_free(engine, &layer);
+        lma_v4_layer_free(engine, &layer);
         if (result) {
             if (pool_experts)
-                coli_v4_expert_store_prefill_pool(experts, -1);
+                lma_v4_expert_store_prefill_pool(experts, -1);
             return -1;
         }
         float *swap = state; state = next; next = swap;
@@ -12374,23 +12374,23 @@ static int target_batch_impl(ColiV4Engine *engine, float **state_ptr, float **ne
             v4_mainh_tap(config, layer_id, state + (size_t)item * hd,
                          (int64_t)start + item);
     }
-    if (pool_experts) coli_v4_expert_store_prefill_pool(experts, -1);
+    if (pool_experts) lma_v4_expert_store_prefill_pool(experts, -1);
     *state_ptr = state;
     *next_ptr = next;
     return 0;
 }
 
-static int target_token_impl(ColiV4Engine *engine, float **state_ptr, float **next_ptr,
-                        ColiDeepSeekV4WindowAttentionState **attention,
-                        const ColiSafetensorsIndex *index,
-                        const ColiDeepSeekV4Config *config,
-                        ColiExpertStore *experts, int token, int position,
+static int target_token_impl(LmaV4Engine *engine, float **state_ptr, float **next_ptr,
+                        LmaDeepSeekV4WindowAttentionState **attention,
+                        const LmaSafetensorsIndex *index,
+                        const LmaDeepSeekV4Config *config,
+                        LmaExpertStore *experts, int token, int position,
                         char *error, size_t error_size);
-static int target_token(ColiV4Engine *engine, float **state_ptr, float **next_ptr,
-                        ColiDeepSeekV4WindowAttentionState **attention,
-                        const ColiSafetensorsIndex *index,
-                        const ColiDeepSeekV4Config *config,
-                        ColiExpertStore *experts, int token, int position,
+static int target_token(LmaV4Engine *engine, float **state_ptr, float **next_ptr,
+                        LmaDeepSeekV4WindowAttentionState **attention,
+                        const LmaSafetensorsIndex *index,
+                        const LmaDeepSeekV4Config *config,
+                        LmaExpertStore *experts, int token, int position,
                         char *error, size_t error_size) {
     double t0 = spec_now();
     int result = target_token_impl(engine, state_ptr, next_ptr, attention, index, config,
@@ -12399,22 +12399,22 @@ static int target_token(ColiV4Engine *engine, float **state_ptr, float **next_pt
     g_v4_prof_forwards += 1;
     return result;
 }
-static int target_token_impl(ColiV4Engine *engine, float **state_ptr, float **next_ptr,
-                        ColiDeepSeekV4WindowAttentionState **attention,
-                        const ColiSafetensorsIndex *index,
-                        const ColiDeepSeekV4Config *config,
-                        ColiExpertStore *experts, int token, int position,
+static int target_token_impl(LmaV4Engine *engine, float **state_ptr, float **next_ptr,
+                        LmaDeepSeekV4WindowAttentionState **attention,
+                        const LmaSafetensorsIndex *index,
+                        const LmaDeepSeekV4Config *config,
+                        LmaExpertStore *experts, int token, int position,
                         char *error, size_t error_size) {
     float *state = *state_ptr, *next = *next_ptr;
     if (load_embedding(state, index, config, token)) return -1;
     for (int layer_id = 0; layer_id < config->num_hidden_layers; layer_id++) {
-        ColiDeepSeekV4LayerWeights layer;
-        if (coli_v4_layer_load(engine, &layer, config, index, layer_id,
+        LmaDeepSeekV4LayerWeights layer;
+        if (lma_v4_layer_load(engine, &layer, config, index, layer_id,
                                error, error_size)) return -1;
-        int result = coli_v4_block_window_token_ref(
+        int result = lma_v4_block_window_token_ref(
             next, attention[layer_id], &layer, config, experts,
             state, token, position, error, error_size);
-        coli_v4_layer_free(engine, &layer);
+        lma_v4_layer_free(engine, &layer);
         if (result) return -1;
         float *swap = state; state = next; next = swap;
         v4_mainh_tap(config, layer_id, state, position);
@@ -12424,17 +12424,17 @@ static int target_token_impl(ColiV4Engine *engine, float **state_ptr, float **ne
     return 0;
 }
 
-static ColiV4AttentionSnapshot **spec_attention_save(
-    ColiDeepSeekV4WindowAttentionState **attention, int layers) {
+static LmaV4AttentionSnapshot **spec_attention_save(
+    LmaDeepSeekV4WindowAttentionState **attention, int layers) {
     if (!attention || layers < 1) return NULL;
-    ColiV4AttentionSnapshot **snapshots = calloc(
+    LmaV4AttentionSnapshot **snapshots = calloc(
         (size_t)layers, sizeof(*snapshots));
     if (!snapshots) return NULL;
     for (int layer = 0; layer < layers; layer++)
-        if (coli_v4_attention_snapshot_create(attention[layer],
+        if (lma_v4_attention_snapshot_create(attention[layer],
                                                &snapshots[layer])) {
             for (int item = 0; item < layers; item++)
-                coli_v4_attention_snapshot_destroy(snapshots[item]);
+                lma_v4_attention_snapshot_destroy(snapshots[item]);
             free(snapshots);
             return NULL;
         }
@@ -12442,36 +12442,36 @@ static ColiV4AttentionSnapshot **spec_attention_save(
 }
 
 static int spec_attention_restore(
-    ColiDeepSeekV4WindowAttentionState **attention,
-    ColiV4AttentionSnapshot **snapshots, int layers) {
+    LmaDeepSeekV4WindowAttentionState **attention,
+    LmaV4AttentionSnapshot **snapshots, int layers) {
     if (!attention || !snapshots) return -1;
-#ifdef COLI_V4_GPU_TIER
-    coli_v4_gpu_kv_cache_invalidate_all();
+#ifdef LMA_V4_GPU_TIER
+    lma_v4_gpu_kv_cache_invalidate_all();
 #endif
     for (int layer = 0; layer < layers; layer++)
-        if (coli_v4_attention_snapshot_restore(attention[layer],
+        if (lma_v4_attention_snapshot_restore(attention[layer],
                                                snapshots[layer])) return -1;
     return 0;
 }
 
-static void spec_attention_free(ColiV4AttentionSnapshot **snapshots,
+static void spec_attention_free(LmaV4AttentionSnapshot **snapshots,
                                 int layers) {
     if (!snapshots) return;
     for (int layer = 0; layer < layers; layer++)
-        coli_v4_attention_snapshot_destroy(snapshots[layer]);
+        lma_v4_attention_snapshot_destroy(snapshots[layer]);
     free(snapshots);
 }
 
 #undef spec_print
-#undef COLI_V4_GENERATE_HELPERS_ONLY
-#undef COLI_V4_GENERATE_MAIN
+#undef LMA_V4_GENERATE_HELPERS_ONLY
+#undef LMA_V4_GENERATE_MAIN
 
 #include "deepseek_v4_internal.h"
 #include "deepseek_v4_internal.h"
 
-static ColiExpertStoreStats stats_subtract(ColiExpertStoreStats end,
-                                           ColiExpertStoreStats begin) {
-    ColiExpertStoreStats delta = end;
+static LmaExpertStoreStats stats_subtract(LmaExpertStoreStats end,
+                                           LmaExpertStoreStats begin) {
+    LmaExpertStoreStats delta = end;
     delta.requests -= begin.requests; delta.hits -= begin.hits;
     delta.misses -= begin.misses; delta.prefetched -= begin.prefetched;
     delta.prefetch_hits -= begin.prefetch_hits;
@@ -12479,11 +12479,11 @@ static ColiExpertStoreStats stats_subtract(ColiExpertStoreStats end,
     return delta;
 }
 
-static double stats_hit_rate(ColiExpertStoreStats stats) {
+static double stats_hit_rate(LmaExpertStoreStats stats) {
     return stats.requests ? 100.0 * stats.hits / stats.requests : 0.0;
 }
 
-#ifdef COLI_V4_EXPERIMENTAL_STATE_HASH
+#ifdef LMA_V4_EXPERIMENTAL_STATE_HASH
 static uint64_t state_hash_v70(const float *values, size_t count) {
     const unsigned char *bytes = (const unsigned char *)values;
     uint64_t hash = UINT64_C(1469598103934665603);
@@ -12508,7 +12508,7 @@ typedef struct {
     int stop_sentence;
     int no_dspark;
     double memory_gib;
-    ColiDeepSeekV4PromptMode prompt_mode;
+    LmaDeepSeekV4PromptMode prompt_mode;
 } V4CliOptions;
 
 static void v4_cli_usage(FILE *stream, const char *program) {
@@ -12591,7 +12591,7 @@ static int v4_cli_parse(int argc, char **argv, V4CliOptions *options) {
     memset(options, 0, sizeof(*options));
     options->model_dir = argv[1];
     options->max_new_tokens = 128;
-    options->prompt_mode = COLI_V4_PROMPT_CHAT;
+    options->prompt_mode = LMA_V4_PROMPT_CHAT;
     int argi = 2;
     if (argv[2][0] != '-') {
         options->prompt = argv[2];
@@ -12613,11 +12613,11 @@ static int v4_cli_parse(int argc, char **argv, V4CliOptions *options) {
             if (++i == argc) return -1;
             options->system_prompt = argv[i];
         } else if (!strcmp(option, "--thinking")) {
-            if (options->prompt_mode == COLI_V4_PROMPT_RAW) return -1;
-            options->prompt_mode = COLI_V4_PROMPT_THINKING;
+            if (options->prompt_mode == LMA_V4_PROMPT_RAW) return -1;
+            options->prompt_mode = LMA_V4_PROMPT_THINKING;
         } else if (!strcmp(option, "--raw-prompt")) {
-            if (options->prompt_mode == COLI_V4_PROMPT_THINKING) return -1;
-            options->prompt_mode = COLI_V4_PROMPT_RAW;
+            if (options->prompt_mode == LMA_V4_PROMPT_THINKING) return -1;
+            options->prompt_mode = LMA_V4_PROMPT_RAW;
         } else if (!strcmp(option, "--stop-sentence")) {
             options->stop_sentence = 1;
         } else if (!strcmp(option, "--no-dspark")) {
@@ -12691,7 +12691,7 @@ static int v4_oracle_write_json(const char *path, const char *source,
     }
     fputs("\",\n  \"comparison\": {\n"
           "    \"top1_token\": \"exact\",\n"
-          "    \"logits\": \"not required for coli-self fixtures\"\n"
+          "    \"logits\": \"not required for lmatomic-self fixtures\"\n"
           "  },\n  \"prompt_ids\": [", out);
     for (int i = 0; i < prompt_count; i++)
         fprintf(out, "%s%d", i ? ", " : "", prompt_ids[i]);
@@ -12706,17 +12706,17 @@ static int v4_oracle_write_json(const char *path, const char *source,
     return 0;
 }
 
-static void v4_attention_free(ColiDeepSeekV4WindowAttentionState **attention,
+static void v4_attention_free(LmaDeepSeekV4WindowAttentionState **attention,
                               int layers) {
     if (!attention) return;
     for (int layer = 0; layer < layers; layer++)
-        coli_v4_window_attention_destroy(attention[layer]);
+        lma_v4_window_attention_destroy(attention[layer]);
     free(attention);
 }
 
 #include <assert.h>
 
-static void session_free_buffers(ColiV4Session *session) {
+static void session_free_buffers(LmaV4Session *session) {
     if (!session) return;
     free(session->text); session->text = NULL; session->text_length = 0;
     free(session->hidden); session->hidden = NULL;
@@ -12726,13 +12726,13 @@ static void session_free_buffers(ColiV4Session *session) {
     free(session->prompt_ids); session->prompt_ids = NULL;
 }
 
-static void session_free_attention(ColiV4Session *session) {
+static void session_free_attention(LmaV4Session *session) {
     if (!session || !session->attention) return;
     v4_attention_free(session->attention, session->config.num_hidden_layers);
     session->attention = NULL;
 }
 
-void coli_v4_session_destroy(ColiV4Session *session) {
+void lma_v4_session_destroy(LmaV4Session *session) {
     if (!session) return;
     kv_prefix_free(&session->fed);
     free(session->pin_ids); free(session->pin_scores);
@@ -12744,14 +12744,14 @@ void coli_v4_session_destroy(ColiV4Session *session) {
         session->tokenizer_ready = 0;
     }
     if (session->engine) {
-        coli_v4_engine_detach_session(session->engine);
+        lma_v4_engine_detach_session(session->engine);
         session->engine = NULL;
     }
     free(session);
 }
 
-int coli_v4_session_create(ColiV4Session **output, ColiV4Engine *engine,
-                           const ColiV4SessionCreateOptions *options,
+int lma_v4_session_create(LmaV4Session **output, LmaV4Engine *engine,
+                           const LmaV4SessionCreateOptions *options,
                            char *error, size_t error_size) {
     if (!output || !engine) {
         if (error && error_size)
@@ -12759,15 +12759,15 @@ int coli_v4_session_create(ColiV4Session **output, ColiV4Engine *engine,
         return -1;
     }
     *output = NULL;
-    ColiV4Session *session = calloc(1, sizeof(*session));
+    LmaV4Session *session = calloc(1, sizeof(*session));
     if (!session) {
         if (error && error_size)
             snprintf(error, error_size, "out of memory creating V4 session");
         return -1;
     }
     session->engine = engine;
-    coli_v4_engine_attach_session(engine);
-    session->config = *coli_v4_engine_config(engine);
+    lma_v4_engine_attach_session(engine);
+    session->config = *lma_v4_engine_config(engine);
     session->max_prompt_tokens =
         options && options->max_prompt_tokens > 0 ? options->max_prompt_tokens
                                                   : 512;
@@ -12775,10 +12775,10 @@ int coli_v4_session_create(ColiV4Session **output, ColiV4Engine *engine,
         options && options->max_new_tokens_cap > 0 ? options->max_new_tokens_cap
                                                    : 512;
 
-    const char *model_dir = coli_v4_engine_target_model_dir(engine);
+    const char *model_dir = lma_v4_engine_target_model_dir(engine);
     char tokenizer_path[4096];
     if (!model_dir) {
-        coli_v4_session_destroy(session);
+        lma_v4_session_destroy(session);
         if (error && error_size)
             snprintf(error, error_size, "engine has no target model directory");
         return -1;
@@ -12791,15 +12791,15 @@ int coli_v4_session_create(ColiV4Session **output, ColiV4Engine *engine,
     session->attention = calloc((size_t)session->config.num_hidden_layers,
                                 sizeof(*session->attention));
     if (!session->attention) {
-        coli_v4_session_destroy(session);
+        lma_v4_session_destroy(session);
         if (error && error_size)
             snprintf(error, error_size, "out of memory allocating attention");
         return -1;
     }
     for (int layer = 0; layer < session->config.num_hidden_layers; layer++) {
-        if (coli_v4_window_attention_create(&session->attention[layer],
+        if (lma_v4_window_attention_create(&session->attention[layer],
                                             &session->config)) {
-            coli_v4_session_destroy(session);
+            lma_v4_session_destroy(session);
             if (error && error_size)
                 snprintf(error, error_size, "cannot create attention layer %d",
                          layer);
@@ -12818,7 +12818,7 @@ int coli_v4_session_create(ColiV4Session **output, ColiV4Engine *engine,
         malloc((size_t)(session->max_new_tokens_cap + 64) * sizeof(int));
     if (!session->state || !session->next || !session->hidden ||
         !session->prompt_ids || !session->generated) {
-        coli_v4_session_destroy(session);
+        lma_v4_session_destroy(session);
         if (error && error_size)
             snprintf(error, error_size, "out of memory allocating session buffers");
         return -1;
@@ -12835,7 +12835,7 @@ int coli_v4_session_create(ColiV4Session **output, ColiV4Engine *engine,
     return 0;
 }
 
-int coli_v4_session_generated_text(const ColiV4Session *session,
+int lma_v4_session_generated_text(const LmaV4Session *session,
                                    char *buffer, size_t buffer_size,
                                    size_t *out_length) {
     if (!session || !buffer || buffer_size == 0) return -1;
@@ -12848,8 +12848,8 @@ int coli_v4_session_generated_text(const ColiV4Session *session,
     return 0;
 }
 
-static int session_emit_token(ColiV4Session *session,
-                              ColiV4SessionTokenFn on_token, void *user_data,
+static int session_emit_token(LmaV4Session *session,
+                              LmaV4SessionTokenFn on_token, void *user_data,
                               int token, float logit, int position, int ordinal,
                               int stop_at_sentence) {
     if (on_token) {
@@ -12930,7 +12930,7 @@ typedef struct {
     int *ids;
     int len;
     int layers;
-    ColiV4AttentionSnapshot **snapshots;
+    LmaV4AttentionSnapshot **snapshots;
     uint64_t used;
     int kind;   /* 0 = plan (system prefix), 1 = prompt end */
 } V4PrefixCkpt;
@@ -12949,7 +12949,7 @@ static int v4_ckpt_slot_count(void) {
     return count;
 }
 
-/* ---- On-disk checkpoint slots: <model>/.coli_ckpt/ckpt_<fingerprint>_<n>.bin
+/* ---- On-disk checkpoint slots: <model>/.lma_ckpt/ckpt_<fingerprint>_<n>.bin
  * The in-memory slots die with the process; the shared system prefix would
  * then cost a full ~minutes prefill again on the first turn after every serve
  * restart. Prefix (plan/hint) captures are persisted by default; prompt-end
@@ -12977,12 +12977,12 @@ static int v4_ckpt_disk_wanted(void) {
     return v4_ckpt_disk_mode;
 }
 
-static void v4_ckpt_disk_init(ColiV4Session *session) {
+static void v4_ckpt_disk_init(LmaV4Session *session) {
     if (v4_ckpt_dir[0] || !session || !session->engine) return;
-    const char *model = coli_v4_engine_target_model_dir(session->engine);
+    const char *model = lma_v4_engine_target_model_dir(session->engine);
     if (!model || !*model) { v4_ckpt_dir[0] = '-'; return; }
-    snprintf(v4_ckpt_dir, sizeof(v4_ckpt_dir), "%s/.coli_ckpt", model);
-    const ColiDeepSeekV4Config *c = &session->config;
+    snprintf(v4_ckpt_dir, sizeof(v4_ckpt_dir), "%s/.lma_ckpt", model);
+    const LmaDeepSeekV4Config *c = &session->config;
     uint32_t h = 2166136261u;
     int fields[] = {c->num_hidden_layers, c->hidden_size, c->head_dim,
                     c->index_head_dim, c->index_topk, c->index_n_heads,
@@ -13019,7 +13019,7 @@ static void v4_ckpt_disk_write(int i) {
              fwrite(head, sizeof(head), 1, f) == 1 &&
              fwrite(slot->ids, sizeof(int), (size_t)slot->len, f) == (size_t)slot->len;
     for (int layer = 0; ok && layer < slot->layers; layer++)
-        ok = coli_v4_attention_snapshot_write(slot->snapshots[layer], f) == 0;
+        ok = lma_v4_attention_snapshot_write(slot->snapshots[layer], f) == 0;
     ok = ok && fclose(f) == 0;
     if (!ok) { fclose(f); remove(tmp); return; }
     remove(path);
@@ -13050,7 +13050,7 @@ static void v4_ckpt_disk_load(void) {
             ok = slot->ids && slot->snapshots &&
                  fread(slot->ids, sizeof(int), (size_t)slot->len, f) == (size_t)slot->len;
             for (int layer = 0; ok && layer < slot->layers; layer++)
-                ok = coli_v4_attention_snapshot_read(f, &slot->snapshots[layer]) == 0;
+                ok = lma_v4_attention_snapshot_read(f, &slot->snapshots[layer]) == 0;
         }
         fclose(f);
         if (!ok) { v4_ckpt_slot_free(slot); remove(path); continue; }
@@ -13084,7 +13084,7 @@ static int v4_ckpt_min_tokens(void) {
 static void v4_ckpt_slot_free(V4PrefixCkpt *slot) {
     if (slot->snapshots) {
         for (int layer = 0; layer < slot->layers; layer++)
-            coli_v4_attention_snapshot_destroy(slot->snapshots[layer]);
+            lma_v4_attention_snapshot_destroy(slot->snapshots[layer]);
         free(slot->snapshots);
     }
     free(slot->ids);
@@ -13092,7 +13092,7 @@ static void v4_ckpt_slot_free(V4PrefixCkpt *slot) {
 }
 
 /* Longest stored prefix of these ids restored into the session; 0 = none. */
-static int v4_ckpt_restore(ColiV4Session *session, int prompt_count) {
+static int v4_ckpt_restore(LmaV4Session *session, int prompt_count) {
     if (!v4_ckpt_min_tokens()) return 0;
     if (v4_ckpt_disk_wanted()) { v4_ckpt_disk_init(session); v4_ckpt_disk_load(); }
     int layers = session->config.num_hidden_layers;
@@ -13106,28 +13106,28 @@ static int v4_ckpt_restore(ColiV4Session *session, int prompt_count) {
         best = i; best_len = slot->len;
     }
     if (best < 0) return 0;
-#ifdef COLI_V4_GPU_TIER
-    coli_v4_gpu_kv_cache_invalidate_all();
+#ifdef LMA_V4_GPU_TIER
+    lma_v4_gpu_kv_cache_invalidate_all();
 #endif
     /* A fresh process (disk-loaded checkpoint) has never attended: the
      * per-layer compressor/indexer objects do not exist yet. Load each
      * layer's weights once and prepare the state before restoring. */
     {
-        ColiV4Engine *engine = session->engine;
-        const ColiSafetensorsIndex *index = coli_v4_engine_target_index(engine);
+        LmaV4Engine *engine = session->engine;
+        const LmaSafetensorsIndex *index = lma_v4_engine_target_index(engine);
         char perr[256];
         for (int layer = 0; layer < layers; layer++) {
-            ColiDeepSeekV4LayerWeights lw;
-            if (coli_v4_layer_load(engine, &lw, &session->config, index, layer,
+            LmaDeepSeekV4LayerWeights lw;
+            if (lma_v4_layer_load(engine, &lw, &session->config, index, layer,
                                    perr, sizeof(perr))) return 0;
-            int rc = coli_v4_window_attention_prepare(
+            int rc = lma_v4_window_attention_prepare(
                 session->attention[layer], &lw, &session->config, perr, sizeof(perr));
-            coli_v4_layer_free(engine, &lw);
+            lma_v4_layer_free(engine, &lw);
             if (rc) return 0;
         }
     }
     for (int layer = 0; layer < layers; layer++)
-        if (coli_v4_attention_snapshot_restore(
+        if (lma_v4_attention_snapshot_restore(
                 session->attention[layer], v4_ckpt_slots[best].snapshots[layer])) {
             fprintf(stderr, "v4_ckpt restore failed layer=%d\n", layer);
             return 0;   /* partial restore is harmless: caller full-resets */
@@ -13167,7 +13167,7 @@ static int v4_ckpt_plan(const int *ids, int count) {
     return plan;
 }
 
-static void v4_ckpt_store(ColiV4Session *session, int len, int kind) {
+static void v4_ckpt_store(LmaV4Session *session, int len, int kind) {
     int layers = session->config.num_hidden_layers;
     int slots = v4_ckpt_slot_count();
     /* Victim: an empty slot, else the LRU prompt-end slot, else the LRU
@@ -13187,7 +13187,7 @@ static void v4_ckpt_store(ColiV4Session *session, int len, int kind) {
     slot->snapshots = calloc((size_t)layers, sizeof(*slot->snapshots));
     if (!slot->ids || !slot->snapshots) { v4_ckpt_slot_free(slot); return; }
     for (int layer = 0; layer < layers; layer++)
-        if (coli_v4_attention_snapshot_create(session->attention[layer],
+        if (lma_v4_attention_snapshot_create(session->attention[layer],
                                               &slot->snapshots[layer])) {
             v4_ckpt_slot_free(slot);
             return;
@@ -13214,11 +13214,11 @@ static void v4_ckpt_store(ColiV4Session *session, int len, int kind) {
     }
 }
 
-int coli_v4_session_generate(ColiV4Session *session,
+int lma_v4_session_generate(LmaV4Session *session,
                              const char *prompt, size_t prompt_length,
-                             const ColiV4SessionGenerateOptions *options,
-                             ColiV4SessionTokenFn on_token, void *user_data,
-                             ColiV4SessionGenerateStats *stats_out,
+                             const LmaV4SessionGenerateOptions *options,
+                             LmaV4SessionTokenFn on_token, void *user_data,
+                             LmaV4SessionGenerateStats *stats_out,
                              char *error, size_t error_size) {
     if (!session || !session->engine || !prompt || !options ||
         (options->max_new_tokens < 1 &&
@@ -13254,14 +13254,14 @@ int coli_v4_session_generate(ColiV4Session *session,
     }
     session->prompt_count = prompt_count;
 
-    ColiV4Engine *engine = session->engine;
-    const ColiDeepSeekV4Config *config = &session->config;
-    ColiSafetensorsIndex *index = coli_v4_engine_target_index(engine);
-    ColiExpertStore *experts = coli_v4_engine_expert_store(engine);
+    LmaV4Engine *engine = session->engine;
+    const LmaDeepSeekV4Config *config = &session->config;
+    LmaSafetensorsIndex *index = lma_v4_engine_target_index(engine);
+    LmaExpertStore *experts = lma_v4_engine_expert_store(engine);
     float *state = session->state;
     float *next = session->next;
     float *hidden = session->hidden;
-    ColiDeepSeekV4WindowAttentionState **attention = session->attention;
+    LmaDeepSeekV4WindowAttentionState **attention = session->attention;
     int *generated = session->generated;
     size_t hd = (size_t)config->hc_mult * config->hidden_size;
 
@@ -13294,16 +13294,16 @@ int coli_v4_session_generate(ColiV4Session *session,
         reuse = v4_ckpt_restore(session, prompt_count);
         if (reuse) {
             session->fed.len = reuse;
-            if (coli_v4_full_dspark_wanted) v4_ds_reset_history();
+            if (lma_v4_full_dspark_wanted) v4_ds_reset_history();
         }
     }
     if (!reuse) {
-#ifdef COLI_V4_GPU_TIER
-        coli_v4_gpu_kv_cache_invalidate_all();
+#ifdef LMA_V4_GPU_TIER
+        lma_v4_gpu_kv_cache_invalidate_all();
 #endif
         for (int layer = 0; layer < config->num_hidden_layers; layer++)
-            coli_v4_window_attention_reset(session->attention[layer]);
-        if (coli_v4_full_dspark_wanted) v4_ds_reset_history();
+            lma_v4_window_attention_reset(session->attention[layer]);
+        if (lma_v4_full_dspark_wanted) v4_ds_reset_history();
         /* Plan a capture: the longest common prefix of two successive fresh
          * prompts IS the stable system prefix. Snapshot there mid-prefill. */
         ckpt_at = v4_ckpt_plan(session->prompt_ids, prompt_count);
@@ -13366,10 +13366,10 @@ int coli_v4_session_generate(ColiV4Session *session,
     /* Embeddings load per segment inside the prefill loop below. */
 
     double setup_done = spec_now();
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     /* Tell the batched GPU MoE how big this prefill is: the per-layer expert
      * bank refill only amortizes on long prompts. */
-    coli_v4_gpu_moe_batch_hint(fresh);
+    lma_v4_gpu_moe_batch_hint(fresh);
 #endif
     /* RESUMABLE PREFILL: one segment loop replaces the single monolithic
      * target_batch call. Segments are atomic (no abort callback inside, so
@@ -13466,11 +13466,11 @@ int coli_v4_session_generate(ColiV4Session *session,
         prompt_count >= v4_ckpt_min_tokens() &&
         !v4_ckpt_have(session->prompt_ids, prompt_count))
         v4_ckpt_store(session, prompt_count, 1);
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     /* Decode never touches the expert bank; free its ~2.2 GiB so the decode
      * expert mirrors get the VRAM instead (bank re-creates on the next large
      * prefill). */
-    coli_v4_gpu_moe_batch_release();
+    lma_v4_gpu_moe_batch_release();
 #endif
     session->state = state;
     session->next = next;
@@ -13564,7 +13564,7 @@ int coli_v4_session_generate(ColiV4Session *session,
             int using_ngram = proposals > 1;
             inputs[0] = current;
             int draft_ready = proposals > 1;
-            if (!draft_ready && coli_v4_full_dspark_wanted && full_mtp_ready &&
+            if (!draft_ready && lma_v4_full_dspark_wanted && full_mtp_ready &&
                 !mtp_disabled) {
                 int mtp_min = getenv("V4_MTP_MIN")
                     ? atoi(getenv("V4_MTP_MIN")) : 3;
@@ -13603,7 +13603,7 @@ int coli_v4_session_generate(ColiV4Session *session,
                 int batch = proposals + 1;
                 for (int item = 1; item < batch; item++)
                     inputs[item] = drafts[item - 1];
-                ColiV4AttentionSnapshot **snapshots = spec_attention_save(
+                LmaV4AttentionSnapshot **snapshots = spec_attention_save(
                     attention, config->num_hidden_layers);
                 if (!snapshots) {
                     session->spec_disabled = 1;
@@ -13710,7 +13710,7 @@ int coli_v4_session_generate(ColiV4Session *session,
                                          "cannot restore speculative KV state");
                             return -1;
                         }
-                        if (coli_v4_full_dspark_wanted)
+                        if (lma_v4_full_dspark_wanted)
                             v4_ds_invalidate_from(old_last + 1);
                         for (int item = 0; item < retained; item++)
                             if (load_embedding(state + (size_t)item * hd,
@@ -13743,7 +13743,7 @@ int coli_v4_session_generate(ColiV4Session *session,
                     }
                     session->state = state;
                     session->next = next;
-                    const char *keep = getenv("COLI_V4_MARKOV_KEEP");
+                    const char *keep = getenv("LMA_V4_MARKOV_KEEP");
                     if (using_markov && accepted == 0 &&
                         (!keep || atoi(keep) == 0)) markov_disabled = 1;
                     continue;
@@ -13783,7 +13783,7 @@ int coli_v4_session_generate(ColiV4Session *session,
                                   options->stop_at_sentence);
         full_mtp_ready = 1;
     }
-    if (coli_v4_full_dspark_wanted) v4_dspark_report();
+    if (lma_v4_full_dspark_wanted) v4_dspark_report();
     double ended = spec_now();
     session->state = state;
     session->next = next;
@@ -13828,9 +13828,9 @@ int coli_v4_session_generate(ColiV4Session *session,
 
 static int v4_oracle_teacher_forcing(
         const int *full_ids, int full_count, const int *expected, int expect_count,
-        ColiDeepSeekV4WindowAttentionState **attention,
-        const ColiSafetensorsIndex *index, const ColiDeepSeekV4Config *config,
-        ColiExpertStore *experts, char *error, size_t error_size,
+        LmaDeepSeekV4WindowAttentionState **attention,
+        const LmaSafetensorsIndex *index, const LmaDeepSeekV4Config *config,
+        LmaExpertStore *experts, char *error, size_t error_size,
         int *matched_out) {
     size_t hd = (size_t)config->hc_mult * config->hidden_size;
     float *state = malloc((size_t)full_count * hd * sizeof(float));
@@ -13876,9 +13876,9 @@ static int v4_oracle_teacher_forcing(
 
 static int v4_oracle_greedy_from_prompt(
         const int *prompt_ids, int prompt_count, int *generated, int max_new,
-        ColiDeepSeekV4WindowAttentionState **attention,
-        const ColiSafetensorsIndex *index, const ColiDeepSeekV4Config *config,
-        ColiExpertStore *experts, char *error, size_t error_size) {
+        LmaDeepSeekV4WindowAttentionState **attention,
+        const LmaSafetensorsIndex *index, const LmaDeepSeekV4Config *config,
+        LmaExpertStore *experts, char *error, size_t error_size) {
     size_t hd = (size_t)config->hc_mult * config->hidden_size;
     float *state = malloc((size_t)prompt_count * hd * sizeof(float));
     float *next = malloc((size_t)prompt_count * hd * sizeof(float));
@@ -13937,10 +13937,10 @@ static int spec_print(Tok *tokenizer, int token, float logit,
 }
 
 static void v4_generate_cleanup(
-    ColiV4Session *session,
+    LmaV4Session *session,
     char *prompt_storage,
-    ColiV4Engine *engine,
-    ColiDeepSeekV4WindowAttentionState **attention,
+    LmaV4Engine *engine,
+    LmaDeepSeekV4WindowAttentionState **attention,
     int layers,
     int *prompt_ids,
     int *generated,
@@ -13964,7 +13964,7 @@ static void v4_generate_cleanup(
         next = NULL;
         hidden = NULL;
         text = NULL;
-        coli_v4_session_destroy(session);
+        lma_v4_session_destroy(session);
     }
     free(tf_hidden);
     free(tf_next);
@@ -13978,7 +13978,7 @@ static void v4_generate_cleanup(
     free(generated);
     free(prompt_ids);
     v4_attention_free(attention, layers);
-    coli_v4_engine_destroy(engine);
+    lma_v4_engine_destroy(engine);
     free(prompt_storage);
 }
 
@@ -13996,7 +13996,7 @@ typedef struct {
 } V4ServeRequest;
 
 typedef struct {
-    ColiV4Session *session;
+    LmaV4Session *session;
     const char *request_id;
     int cancelled;
     int fatal;
@@ -14004,7 +14004,7 @@ typedef struct {
     char tail[1024];   /* the next DATA frame's logprob tail, from on_scores */
 } V4ServeStream;
 
-static const ColiServeWireProfile v4_wire = {
+static const LmaServeWireProfile v4_wire = {
     .max_header_bytes = 511,
     .max_payload_bytes = 1u << 24,
     .max_extension_bytes = 1u << 24,
@@ -14030,18 +14030,18 @@ static double v4_serve_rss_gb(void) {
 }
 
 /* Dashboard telemetry: the per-expert state lives in the expert-store unit
- * (COLI_V4_UNIT_EXPERT_STORE_HOT_ROWS16), so the emitters are exported from
+ * (LMA_V4_UNIT_EXPERT_STORE_HOT_ROWS16), so the emitters are exported from
  * there and called at turn boundaries from this unit. */
-extern void coli_v4_expert_store_emit_tiers(ColiExpertStore *store);
-extern void coli_v4_expert_store_emit_emap(ColiExpertStore *store);
-extern void coli_v4_expert_store_emit_hits(ColiExpertStore *store);
-extern double coli_v4_expert_store_disk_sec(ColiExpertStore *store);
-extern double coli_v4_expert_store_matmul_sec(ColiExpertStore *store);   /* #890 */
+extern void lma_v4_expert_store_emit_tiers(LmaExpertStore *store);
+extern void lma_v4_expert_store_emit_emap(LmaExpertStore *store);
+extern void lma_v4_expert_store_emit_hits(LmaExpertStore *store);
+extern double lma_v4_expert_store_disk_sec(LmaExpertStore *store);
+extern double lma_v4_expert_store_matmul_sec(LmaExpertStore *store);   /* #890 */
 
 #ifdef __APPLE__
 /* #macos-port: needed by the Darwin branch inside v4_hwinfo_emit below. It sits HERE, next to
  * its only caller, rather than with the platform includes near the top: this file is an
- * amalgamation compiled once per -DCOLI_V4_UNIT_*, and that upper include region is not part
+ * amalgamation compiled once per -DLMA_V4_UNIT_*, and that upper include region is not part
  * of the unit that compiles this function, so an include placed there yields
  * "call to undeclared function 'sysctlbyname'". */
 #include <sys/sysctl.h>
@@ -14050,7 +14050,7 @@ extern double coli_v4_expert_store_matmul_sec(ColiExpertStore *store);   /* #890
 #ifdef __APPLE__
 /* #macos-port: needed by the Darwin branch inside v4_hwinfo_emit below. It sits HERE, next to
  * its only caller, rather than with the platform includes near the top: this file is an
- * amalgamation compiled once per -DCOLI_V4_UNIT_*, and that upper include region is not part
+ * amalgamation compiled once per -DLMA_V4_UNIT_*, and that upper include region is not part
  * of the unit that compiles this function, so an include placed there yields
  * "call to undeclared function 'sysctlbyname'". */
 #include <sys/sysctl.h>
@@ -14099,9 +14099,9 @@ static void v4_hwinfo_emit(void) {
      * Units follow the Linux branch exactly: it reports kB/1e6, i.e. DECIMAL GB, which is the
      * contract the web UI was built against. Hence bytes/1e9, not bytes/2^30.
      *
-     * Availability reuses coli_v4_os_available_memory() rather than repeating the detection:
+     * Availability reuses lma_v4_os_available_memory() rather than repeating the detection:
      * it already carries a Darwin branch. Declared extern because the amalgamation compiles
-     * this file once per -DCOLI_V4_UNIT_*, so the definition need not be in this unit.
+     * this file once per -DLMA_V4_UNIT_*, so the definition need not be in this unit.
      *
      * That branch returns free + inactive, NOT free + inactive + purgeable: this engine is
      * deliberately one term more conservative than inkling.c, kimi_k3.c, compat.h and
@@ -14109,7 +14109,7 @@ static void v4_hwinfo_emit(void) {
      * should know the other exists, or the same machine will report two different "free RAM"
      * figures depending on which engine is asked. */
     {
-        extern uint64_t coli_v4_os_available_memory(void);
+        extern uint64_t lma_v4_os_available_memory(void);
         if (!cpu[0]) {
             size_t len = sizeof(cpu);
             if (sysctlbyname("machdep.cpu.brand_string", cpu, &len, NULL, 0) != 0)
@@ -14122,7 +14122,7 @@ static void v4_hwinfo_emit(void) {
                 ram_total = (double)memsize / 1e9;
         }
         if (ram_avail <= 0.0) {
-            uint64_t avail = coli_v4_os_available_memory();
+            uint64_t avail = lma_v4_os_available_memory();
             if (avail) ram_avail = (double)avail / 1e9;
         }
     }
@@ -14136,9 +14136,9 @@ static void v4_hwinfo_emit(void) {
      * Units follow the Linux branch exactly: it reports kB/1e6, i.e. DECIMAL GB, which is the
      * contract the web UI was built against. Hence bytes/1e9, not bytes/2^30.
      *
-     * Availability reuses coli_v4_os_available_memory() rather than repeating the detection:
+     * Availability reuses lma_v4_os_available_memory() rather than repeating the detection:
      * it already carries a Darwin branch. Declared extern because the amalgamation compiles
-     * this file once per -DCOLI_V4_UNIT_*, so the definition need not be in this unit.
+     * this file once per -DLMA_V4_UNIT_*, so the definition need not be in this unit.
      *
      * That branch returns free + inactive, NOT free + inactive + purgeable: this engine is
      * deliberately one term more conservative than inkling.c, kimi_k3.c, compat.h and
@@ -14146,7 +14146,7 @@ static void v4_hwinfo_emit(void) {
      * should know the other exists, or the same machine will report two different "free RAM"
      * figures depending on which engine is asked. */
     {
-        extern uint64_t coli_v4_os_available_memory(void);
+        extern uint64_t lma_v4_os_available_memory(void);
         if (!cpu[0]) {
             size_t len = sizeof(cpu);
             if (sysctlbyname("machdep.cpu.brand_string", cpu, &len, NULL, 0) != 0)
@@ -14159,7 +14159,7 @@ static void v4_hwinfo_emit(void) {
                 ram_total = (double)memsize / 1e9;
         }
         if (ram_avail <= 0.0) {
-            uint64_t avail = coli_v4_os_available_memory();
+            uint64_t avail = lma_v4_os_available_memory();
             if (avail) ram_avail = (double)avail / 1e9;
         }
     }
@@ -14193,33 +14193,33 @@ static void v4_prof_emit(double wall_s, int prompt_tokens, int completion,
 static int v4_serve_read_request(FILE *input, FILE *output,
                                  V4ServeRequest *request,
                                  const char *active_id) {
-    ColiServeCommand command;
-    ColiServeReadResult result = coli_serve_read_command(input, &v4_wire, &command);
-    if (result == COLI_SERVE_READ_EOF) return -1;
-    if (result == COLI_SERVE_READ_BAD_FRAME) return -2;
-    if (result == COLI_SERVE_READ_NOMEM) {
-        coli_serve_write_error(output, command.id, "out of memory");
+    LmaServeCommand command;
+    LmaServeReadResult result = lma_serve_read_command(input, &v4_wire, &command);
+    if (result == LMA_SERVE_READ_EOF) return -1;
+    if (result == LMA_SERVE_READ_BAD_FRAME) return -2;
+    if (result == LMA_SERVE_READ_NOMEM) {
+        lma_serve_write_error(output, command.id, "out of memory");
         return -2;
     }
-    if (result == COLI_SERVE_READ_BAD_REQUEST &&
-        command.kind == COLI_SERVE_COMMAND_SUBMIT) {
-        coli_serve_write_error(output, command.id, "bad submit header");
+    if (result == LMA_SERVE_READ_BAD_REQUEST &&
+        command.kind == LMA_SERVE_COMMAND_SUBMIT) {
+        lma_serve_write_error(output, command.id, "bad submit header");
         return -2;
     }
-    if (result != COLI_SERVE_READ_OK) return 0;
-    if (command.kind == COLI_SERVE_COMMAND_STOP ||
-        command.kind == COLI_SERVE_COMMAND_CANCEL) {
+    if (result != LMA_SERVE_READ_OK) return 0;
+    if (command.kind == LMA_SERVE_COMMAND_STOP ||
+        command.kind == LMA_SERVE_COMMAND_CANCEL) {
         int matched = active_id && !strcmp(active_id, command.id);
-        coli_serve_command_dispose(&command);
+        lma_serve_command_dispose(&command);
         return matched;
     }
-    if (command.kind != COLI_SERVE_COMMAND_SUBMIT) {
-        coli_serve_command_dispose(&command);
+    if (command.kind != LMA_SERVE_COMMAND_SUBMIT) {
+        lma_serve_command_dispose(&command);
         return 0;
     }
     if (command.slot != 0) {
-        coli_serve_write_error(output, command.id, "bad submit header");
-        coli_serve_command_dispose(&command);
+        lma_serve_write_error(output, command.id, "bad submit header");
+        lma_serve_command_dispose(&command);
         return -2;
     }
     int prefix_bytes = command.prefix_bytes;
@@ -14227,7 +14227,7 @@ static int v4_serve_read_request(FILE *input, FILE *output,
         prefix_bytes = 0;
     memset(request, 0, sizeof(*request));
     snprintf(request->id, sizeof(request->id), "%s", command.id);
-    request->prompt = (char *)coli_serve_command_take_payload(&command);
+    request->prompt = (char *)lma_serve_command_take_payload(&command);
     request->prompt_bytes = (int)command.payload_bytes;
     request->max_tokens = command.max_tokens;
     request->temperature = command.temperature;
@@ -14236,14 +14236,14 @@ static int v4_serve_read_request(FILE *input, FILE *output,
     request->prefix_bytes = prefix_bytes;
     request->logprobs = command.logprobs;
     request->pin = command.pin;
-    coli_serve_command_dispose(&command);
+    lma_serve_command_dispose(&command);
     return 2;
 }
 
 static void v4_serve_data(FILE *output, const char *id,
                           const char *data, int bytes) {
     if (bytes <= 0) return;
-    coli_serve_write_data(output, id, data, (size_t)bytes);
+    lma_serve_write_data(output, id, data, (size_t)bytes);
 }
 
 /* Drain gateway commands queued behind an active request: CANCEL/STOP for the
@@ -14251,7 +14251,7 @@ static void v4_serve_data(FILE *output, const char *id,
  * while the engine is busy is answered with an engine-busy ERROR so its
  * gateway thread fails fast instead of waiting on a pipe nobody is reading. */
 static int v4_serve_drain_commands(V4ServeStream *stream) {
-    while (coli_stdin_readable()) {
+    while (lma_stdin_readable()) {
         V4ServeRequest queued = {0};
         int result = v4_serve_read_request(stdin, stdout, &queued,
                                            stream->request_id);
@@ -14262,7 +14262,7 @@ static int v4_serve_drain_commands(V4ServeStream *stream) {
         }
         if (result == 1) { free(queued.prompt); return 1; }
         if (result == 2) {
-            coli_serve_write_error(stdout, queued.id, "engine busy");
+            lma_serve_write_error(stdout, queued.id, "engine busy");
             free(queued.prompt);
         }
     }
@@ -14282,7 +14282,7 @@ static int v4_serve_token(void *user_data, int token, float logit,
         /* With the channel open the frame carries the tail on_scores left
          * here: "DATA <id> <n> <lp> <k> [tid tlp]*k", one frame per token. */
         if (stream->logprobs > 0 && bytes > 0)
-            coli_serve_write_data_lp(stdout, stream->request_id, piece,
+            lma_serve_write_data_lp(stdout, stream->request_id, piece,
                                      (size_t)bytes, stream->tail);
         else
             v4_serve_data(stdout, stream->request_id, piece, bytes);
@@ -14295,7 +14295,7 @@ static int v4_serve_token(void *user_data, int token, float logit,
     return 0;
 }
 
-/* Prefill-phase abort poll (ColiV4SessionAbortFn). The token callback above
+/* Prefill-phase abort poll (LmaV4SessionAbortFn). The token callback above
  * covers decode; this covers the minutes-long prefill window where no token
  * callback fires and a gateway CANCEL would otherwise sit unread while every
  * later SUBMIT queued behind a request nobody wants anymore. */
@@ -14310,7 +14310,7 @@ static int v4_serve_abort(void *user_data) {
 }
 
 static void v4_serve_error(FILE *output, const char *id, const char *message) {
-    coli_serve_write_error(output, id,
+    lma_serve_write_error(output, id,
                            message && *message ? message : "engine request failed");
 }
 
@@ -14318,20 +14318,20 @@ static void v4_serve_done(FILE *output, const char *id, int completion,
                           double tokens_per_second, double hit_rate,
                           double rss, int prompt_tokens, int length_limited,
                           int prefix_reused) {
-    ColiServeDone done = {completion, tokens_per_second, hit_rate, rss,
+    LmaServeDone done = {completion, tokens_per_second, hit_rate, rss,
                           prompt_tokens, length_limited};
-    coli_serve_write_done_i32_suffix(output, id, &done, &prefix_reused, 1);
+    lma_serve_write_done_i32_suffix(output, id, &done, &prefix_reused, 1);
 }
 
 /* ECHO frame of the numeric channel, the same bytes the other engines'
  * serve_echo writes: "ECHO <id> <n> <pos> <lp> <k> [tid tlp]*k" and the
  * token's bytes DATA-framed after it. `scores` are raw head logits;
- * coli_logprob_tail does the normalisation and the top-k. */
+ * lma_logprob_tail does the normalisation and the top-k. */
 static void v4_serve_echo(void *user_data, int position, int token,
                           const float *scores, int vocab) {
     V4ServeStream *stream = user_data;
     char tail[1024], piece[1024];
-    coli_logprob_tail(tail, sizeof tail, scores, vocab, token, stream->logprobs);
+    lma_logprob_tail(tail, sizeof tail, scores, vocab, token, stream->logprobs);
     int bytes = tok_decode(&stream->session->tokenizer, &token, 1, piece,
                            (int)sizeof(piece) - 1);
     if (bytes < 0) bytes = 0;
@@ -14347,11 +14347,11 @@ static void v4_serve_scores(void *user_data, int position, int token,
                             const float *scores, int vocab) {
     (void)position;
     V4ServeStream *stream = user_data;
-    coli_logprob_tail(stream->tail, sizeof stream->tail, scores, vocab, token,
+    lma_logprob_tail(stream->tail, sizeof stream->tail, scores, vocab, token,
                       stream->logprobs);
 }
 
-static int v4_serve_one(ColiV4Engine *engine, ColiV4Session *session,
+static int v4_serve_one(LmaV4Engine *engine, LmaV4Session *session,
                         V4ServeRequest *request) {
     if (request->extension_bytes) {
         v4_serve_error(stdout, request->id, "unsupported request extension");
@@ -14391,7 +14391,7 @@ static int v4_serve_one(ColiV4Engine *engine, ColiV4Session *session,
     /* max_tokens is a CEILING, not a target (#260/#382): generation ends at
      * EOS either way, so an oversized budget is clamped to what the context
      * can hold -- the same semantics the GLM serve path has had since #260.
-     * Rejecting instead made `coli chat`'s interactive default (16384) a
+     * Rejecting instead made `lmatomic chat`'s interactive default (16384) a
      * guaranteed 400 on every first message of a fresh V4 chat (#975). */
     if (request->max_tokens > context - prompt_count) {
         fprintf(stderr,
@@ -14401,24 +14401,24 @@ static int v4_serve_one(ColiV4Engine *engine, ColiV4Session *session,
                 prompt_count);
         request->max_tokens = context - prompt_count;
     }
-    coli_serve_write_accept(stdout, request->id, prompt_count);
+    lma_serve_write_accept(stdout, request->id, prompt_count);
 
-    ColiExpertStoreStats before = {0}, after = {0};
+    LmaExpertStoreStats before = {0}, after = {0};
     if (engine->experts && engine->experts->ops && engine->experts->ops->stats)
         engine->experts->ops->stats(engine->experts, &before);
     double disk_before =
-        engine->experts ? coli_v4_expert_store_disk_sec(engine->experts) : 0.0;
+        engine->experts ? lma_v4_expert_store_disk_sec(engine->experts) : 0.0;
     double matmul_before =
-        engine->experts ? coli_v4_expert_store_matmul_sec(engine->experts) : 0.0;
+        engine->experts ? lma_v4_expert_store_matmul_sec(engine->experts) : 0.0;
     double block_before = g_v4_prof_block_s, head_before = g_v4_prof_head_s;
     long long forwards_before = g_v4_prof_forwards;
     V4ServeStream stream = {session, request->id, 0, 0, request->logprobs, {0}};
-    ColiV4SessionGenerateStats stats = {0};
+    LmaV4SessionGenerateStats stats = {0};
     char error[512] = {0};
     double started = spec_now();
-    int result = coli_v4_session_generate(
+    int result = lma_v4_session_generate(
         session, request->prompt, (size_t)request->prompt_bytes,
-        &(ColiV4SessionGenerateOptions){
+        &(LmaV4SessionGenerateOptions){
             .max_new_tokens = request->max_tokens,
             .stop_at_sentence = 0,
             .no_dspark = 0,
@@ -14458,10 +14458,10 @@ static int v4_serve_one(ColiV4Engine *engine, ColiV4Session *session,
                   hit_rate, v4_serve_rss_gb(), stats.prompt_tokens,
                   length_limited, session->prefix_reused);
     double expert_disk_s = engine->experts
-        ? coli_v4_expert_store_disk_sec(engine->experts) - disk_before
+        ? lma_v4_expert_store_disk_sec(engine->experts) - disk_before
         : 0.0;
     double expert_matmul_s = engine->experts
-        ? coli_v4_expert_store_matmul_sec(engine->experts) - matmul_before
+        ? lma_v4_expert_store_matmul_sec(engine->experts) - matmul_before
         : 0.0;
     /* Block time minus the expert compute measured inside it. The store's disk
      * seconds are NOT subtracted: summed across loader lanes, they exceeded the
@@ -14471,8 +14471,8 @@ static int v4_serve_one(ColiV4Engine *engine, ColiV4Session *session,
     v4_prof_emit(elapsed, stats.prompt_tokens, completion,
                  expert_disk_s, expert_matmul_s, attention_s,
                  g_v4_prof_head_s - head_before, g_v4_prof_forwards - forwards_before);
-#ifdef COLI_V4_GPU_TIER
-    if (coli_v4_hybrid_enabled() && (g_v4_hyb_gpu_n + g_v4_hyb_cpu_n +
+#ifdef LMA_V4_GPU_TIER
+    if (lma_v4_hybrid_enabled() && (g_v4_hyb_gpu_n + g_v4_hyb_cpu_n +
                            g_v4_hyb_upload_n + g_v4_hyb_skip_n))
         fprintf(stderr, "v4_hybrid gpu=%llu cpu=%llu uploads=%llu "
                         "skipped=%llu fill_bw=%.1f/s host_bw=%.1f/s "
@@ -14480,19 +14480,19 @@ static int v4_serve_one(ColiV4Engine *engine, ColiV4Session *session,
                 g_v4_hyb_gpu_n, g_v4_hyb_cpu_n, g_v4_hyb_upload_n,
                 g_v4_hyb_skip_n, g_v4_hyb_fill_bw, g_v4_hyb_host_bw);
 #endif
-    coli_v4_expert_store_emit_hits(engine->experts);
-    coli_v4_expert_store_emit_emap(engine->experts);
-    coli_v4_expert_store_emit_tiers(engine->experts);
+    lma_v4_expert_store_emit_hits(engine->experts);
+    lma_v4_expert_store_emit_emap(engine->experts);
+    lma_v4_expert_store_emit_tiers(engine->experts);
     /* DUAL-SSD: cumulative per-drive read split, once per turn. The CLI path
      * prints this at exit; serve is long-lived, so surface it on stderr where
      * the gateway tees it — it is the only way to see whether expert I/O
      * actually aggregates both drives' bandwidth in production. */
-    if (coli_st_mirror_active()) {
+    if (lma_st_mirror_active()) {
         /* One write: the gateway tees this stderr alongside its own lines,
          * and piecewise fprintf interleaves mid-line under load. */
         char line[256];
         int at = snprintf(line, sizeof(line), "v4_mirror");
-        for (int r = 0; r < coli_st_mirror_nrep() && at < (int)sizeof(line); r++)
+        for (int r = 0; r < lma_st_mirror_nrep() && at < (int)sizeof(line); r++)
             at += snprintf(line + at, sizeof(line) - at, " %s=%.2fGiB/%llu",
                            r ? "mirror" : "primary",
                            __atomic_load_n(&g_v4_mir_bytes[r], __ATOMIC_RELAXED)
@@ -14515,9 +14515,9 @@ static int v4_serve_main(void) {
     if (context < 2) context = 4096;
     if (max_tokens < 1) max_tokens = 1024;
     char error[512] = {0};
-    ColiV4Engine *engine = NULL;
-    ColiV4Session *session = NULL;
-    ColiV4EngineOpenOptions open_options = {
+    LmaV4Engine *engine = NULL;
+    LmaV4Session *session = NULL;
+    LmaV4EngineOpenOptions open_options = {
         .target_model_dir = model_dir,
         .context_tokens = context,
         .pin_slots_per_layer = -1,
@@ -14527,20 +14527,20 @@ static int v4_serve_main(void) {
     if (ram && atof(ram) > 0.0)
         open_options.memory_limit_bytes =
             (uint64_t)(atof(ram) * 1073741824.0);
-    if (coli_v4_engine_open(&engine, &open_options, error, sizeof(error))) {
+    if (lma_v4_engine_open(&engine, &open_options, error, sizeof(error))) {
         fprintf(stderr, "%s\n", error);
         return 1;
     }
     context = engine->runtime.context_tokens;
-    if (coli_v4_session_create(
+    if (lma_v4_session_create(
             &session, engine,
-            &(ColiV4SessionCreateOptions){
+            &(LmaV4SessionCreateOptions){
                 .max_prompt_tokens = context,
                 .max_new_tokens_cap = max_tokens,
             },
             error, sizeof(error))) {
         fprintf(stderr, "%s\n", error);
-        coli_v4_engine_destroy(engine);
+        lma_v4_engine_destroy(engine);
         return 1;
     }
 
@@ -14548,21 +14548,21 @@ static int v4_serve_main(void) {
      * This avoids the 25s wall-clock gap between layers during the first
      * request's prefill (attention + expert disk I/O per layer). */
     if (engine->runtime.dense_resident) {
-        ColiSafetensorsIndex *idx = coli_v4_engine_target_index(engine);
+        LmaSafetensorsIndex *idx = lma_v4_engine_target_index(engine);
         for (int l = 0; l < session->config.num_hidden_layers; l++) {
-            ColiDeepSeekV4LayerWeights lw;
-            if (coli_v4_layer_load(engine, &lw, &session->config, idx, l,
+            LmaDeepSeekV4LayerWeights lw;
+            if (lma_v4_layer_load(engine, &lw, &session->config, idx, l,
                                    error, sizeof(error))) {
                 fprintf(stderr, "%s\n", error);
                 break;
             }
         }
     }
-    coli_serve_stdio_init();
-    coli_serve_write_ready(stdout, v4_serve_rss_gb());
+    lma_serve_stdio_init();
+    lma_serve_write_ready(stdout, v4_serve_rss_gb());
     v4_hwinfo_emit();
-    coli_v4_expert_store_emit_tiers(engine->experts);
-    coli_v4_expert_store_emit_emap(engine->experts);
+    lma_v4_expert_store_emit_tiers(engine->experts);
+    lma_v4_expert_store_emit_emap(engine->experts);
     for (;;) {
         V4ServeRequest request = {0};
         int result;
@@ -14575,13 +14575,13 @@ static int v4_serve_main(void) {
             if (fatal < 0) break;
         }
     }
-    coli_v4_session_destroy(session);
-    coli_v4_engine_destroy(engine);
+    lma_v4_session_destroy(session);
+    lma_v4_engine_destroy(engine);
     return 0;
 }
 
 
-#ifndef COLI_V4_SKIP_GENERATE_MAIN
+#ifndef LMA_V4_SKIP_GENERATE_MAIN
 #ifdef _OPENMP
 /* Size the OpenMP team so the block pipeline's persistent expert-loader
  * workers keep whole CPUs. The OpenMP default team spans every logical CPU,
@@ -14589,18 +14589,18 @@ static int v4_serve_main(void) {
  * disk-bound decode the loaders are doing the rate-limiting work (the same
  * rationale omp_tune.h records for the spin-wait half of the GLM tuning: a
  * busy team steals cores from the I/O pool). An explicit OMP_NUM_THREADS or
- * COLI_NO_OMP_TUNE=1 wins, exactly like the other engines' tuning. */
+ * LMA_NO_OMP_TUNE=1 wins, exactly like the other engines' tuning. */
 static int v4_omp_reserve_loader_cpus(void) {
-    if (getenv("COLI_NO_OMP_TUNE")) return 0; /* family-wide kill-switch */
+    if (getenv("LMA_NO_OMP_TUNE")) return 0; /* family-wide kill-switch */
     if (getenv("OMP_NUM_THREADS")) return 0;  /* the user already chose */
     int logical = omp_get_max_threads();
-    int team = logical - COLI_V4_EXPERT_LOADER_COUNT;
+    int team = logical - LMA_V4_EXPERT_LOADER_COUNT;
     if (team < 2) return 0; /* tiny machine: leave the OpenMP default alone */
     omp_set_num_threads(team);
     fprintf(stderr, "[OMP] deepseek-v4: %d compute threads (%d logical CPUs "
                     "minus %d expert-loader workers); OMP_NUM_THREADS=<n> "
-                    "overrides, COLI_NO_OMP_TUNE=1 disables\n",
-            team, logical, COLI_V4_EXPERT_LOADER_COUNT);
+                    "overrides, LMA_NO_OMP_TUNE=1 disables\n",
+            team, logical, LMA_V4_EXPERT_LOADER_COUNT);
     return 1;
 }
 #endif
@@ -14616,7 +14616,7 @@ int main(int argc, char **argv) {
     double process_started = spec_now();
     int result = 1;
     V4CliOptions cli;
-    if (argc < 2) { coli_print_launcher_help("DeepSeek V4"); return 1; }
+    if (argc < 2) { lma_print_launcher_help("DeepSeek V4"); return 1; }
     if (v4_cli_parse(argc, argv, &cli)) {
         v4_cli_usage(stderr, argc ? argv[0] : "deepseek-v4");
         return 2;
@@ -14626,15 +14626,15 @@ int main(int argc, char **argv) {
 
     char error[512] = {0}, tokenizer_path[4096];
     char *prompt_storage = NULL;
-    ColiV4Engine *engine = NULL;
-    ColiV4Session *session = NULL;
+    LmaV4Engine *engine = NULL;
+    LmaV4Session *session = NULL;
     Tok tokenizer;
     memset(&tokenizer, 0, sizeof(tokenizer));
-    ColiDeepSeekV4Config config;
+    LmaDeepSeekV4Config config;
     memset(&config, 0, sizeof(config));
-    ColiSafetensorsIndex *index = NULL;
-    ColiExpertStore *experts = NULL;
-    ColiDeepSeekV4WindowAttentionState **attention = NULL;
+    LmaSafetensorsIndex *index = NULL;
+    LmaExpertStore *experts = NULL;
+    LmaDeepSeekV4WindowAttentionState **attention = NULL;
     int *prompt_ids = NULL;
     int *generated = NULL;
     float *state = NULL, *next = NULL, *hidden = NULL;
@@ -14651,7 +14651,7 @@ int main(int argc, char **argv) {
         cli.prompt = prompt_storage;
     }
     {
-        ColiV4EngineOpenOptions open_opts = {
+        LmaV4EngineOpenOptions open_opts = {
             .target_model_dir = cli.model_dir,
             .no_dspark = cli.no_dspark,
             .pin_slots_per_layer = -1,
@@ -14662,14 +14662,14 @@ int main(int argc, char **argv) {
         if (cli.memory_gib > 0.0)
             open_opts.memory_limit_bytes =
                 (uint64_t)(cli.memory_gib * 1073741824.0);
-        if (coli_v4_engine_open(&engine, &open_opts, error, sizeof(error))) {
+        if (lma_v4_engine_open(&engine, &open_opts, error, sizeof(error))) {
             fprintf(stderr, "%s\n", error);
             goto cleanup;
         }
     }
-    config = *coli_v4_engine_config(engine);
-    index = coli_v4_engine_target_index(engine);
-    experts = coli_v4_engine_expert_store(engine);
+    config = *lma_v4_engine_config(engine);
+    index = lma_v4_engine_target_index(engine);
+    experts = lma_v4_engine_expert_store(engine);
     layers = config.num_hidden_layers;
     snprintf(tokenizer_path, sizeof(tokenizer_path), "%s/tokenizer.json",
              cli.model_dir);
@@ -14709,7 +14709,7 @@ int main(int argc, char **argv) {
         attention = calloc((size_t)config.num_hidden_layers, sizeof(*attention));
         if (!attention) goto cleanup;
         for (int layer = 0; layer < config.num_hidden_layers; layer++)
-            if (coli_v4_window_attention_create(&attention[layer], &config))
+            if (lma_v4_window_attention_create(&attention[layer], &config))
                 goto cleanup;
 
         int tf_limit = cli.teacher_forcing;
@@ -14726,7 +14726,7 @@ int main(int argc, char **argv) {
                tf_matched, tf_limit);
 
         for (int layer = 0; layer < config.num_hidden_layers; layer++)
-            coli_v4_window_attention_reset(attention[layer]);
+            lma_v4_window_attention_reset(attention[layer]);
         int greedy_limit = cli.greedy;
         generated = malloc((size_t)(greedy_limit + 8) * sizeof(int));
         int got = v4_oracle_greedy_from_prompt(
@@ -14767,7 +14767,7 @@ int main(int argc, char **argv) {
 
     char *prompt = NULL;
     size_t prompt_length = 0;
-    if (coli_v4_prompt_build(&prompt, &prompt_length, cli.prompt,
+    if (lma_v4_prompt_build(&prompt, &prompt_length, cli.prompt,
                              cli.system_prompt, cli.prompt_mode) ||
         prompt_length > INT_MAX - 16) {
         free(prompt);
@@ -14778,33 +14778,33 @@ int main(int argc, char **argv) {
     if (cli.no_dspark && engine->dspark.enabled)
         fprintf(stderr, "note: speculative drafting disabled by CLI\n");
     fprintf(stderr, "v4_cli mode=%s memory=%s target_only=%d\n",
-            cli.prompt_mode == COLI_V4_PROMPT_RAW ? "raw" :
-            cli.prompt_mode == COLI_V4_PROMPT_THINKING ? "thinking" : "chat",
+            cli.prompt_mode == LMA_V4_PROMPT_RAW ? "raw" :
+            cli.prompt_mode == LMA_V4_PROMPT_THINKING ? "thinking" : "chat",
             cli.memory_gib > 0.0 ? "limited" : "auto", target_only);
 
     int session_context = engine->runtime.context_tokens;
-    ColiV4SessionCreateOptions session_opts = {
+    LmaV4SessionCreateOptions session_opts = {
         .max_prompt_tokens = session_context,
         .max_new_tokens_cap = session_context,
     };
-    if (coli_v4_session_create(&session, engine, &session_opts, error,
+    if (lma_v4_session_create(&session, engine, &session_opts, error,
                                sizeof(error))) {
         free(prompt);
         fprintf(stderr, "%s\n", error);
         goto cleanup;
     }
-    ColiV4SessionGenerateOptions gen_opts = {
+    LmaV4SessionGenerateOptions gen_opts = {
         .max_new_tokens = max_new,
         .stop_at_sentence = stop_sentence,
         .no_dspark = cli.no_dspark,
     };
-    ColiV4SessionGenerateStats gen_stats;
+    LmaV4SessionGenerateStats gen_stats;
     memset(&gen_stats, 0, sizeof(gen_stats));
     /* clock_gettime inline rather than a helper: the amalgamated build compiles
-     * this file once per COLI_V4_UNIT_*, and hot_now() is static to another one. */
+     * this file once per LMA_V4_UNIT_*, and hot_now() is static to another one. */
     struct timespec tune_a, tune_b;
     clock_gettime(CLOCK_MONOTONIC, &tune_a);
-    if (coli_v4_session_generate(session, prompt, prompt_length, &gen_opts,
+    if (lma_v4_session_generate(session, prompt, prompt_length, &gen_opts,
                                  NULL, NULL, &gen_stats, error,
                                  sizeof(error))) {
         free(prompt);
@@ -14816,9 +14816,9 @@ int main(int argc, char **argv) {
 
     char out_text[65536];
     size_t out_len = 0;
-    coli_v4_session_generated_text(session, out_text, sizeof(out_text),
+    lma_v4_session_generated_text(session, out_text, sizeof(out_text),
                                    &out_len);
-    ColiExpertStoreStats stats_end = {0};
+    LmaExpertStoreStats stats_end = {0};
     experts->ops->stats(experts, &stats_end);
     fprintf(stderr, "v4_tokens prompt=%d generated=%d total=%d "
            "expert_requests=%llu hits=%llu misses=%llu hit_rate=%.3f "
@@ -14829,8 +14829,8 @@ int main(int argc, char **argv) {
            (unsigned long long)stats_end.hits,
            (unsigned long long)stats_end.misses, stats_hit_rate(stats_end),
            (unsigned long long)stats_end.bytes_read, target_only);
-    /* One line, every engine, one format: `coli tune` sweeps scheduling knobs and
-     * needs tokens-and-elapsed to compare candidates. Before this only colibri
+    /* One line, every engine, one format: `lmatomic tune` sweeps scheduling knobs and
+     * needs tokens-and-elapsed to compare candidates. Before this only lmatomic
      * emitted a parseable throughput line (REPLAY decode), so the tuner was
      * GLM-only and bannered the right model while launching the wrong engine
      * (#898). stdout, which is what autotune captures -- the v4_* diagnostics
@@ -14841,9 +14841,9 @@ int main(int argc, char **argv) {
            (double)(tune_b.tv_sec - tune_a.tv_sec) +
            (tune_b.tv_nsec - tune_a.tv_nsec) * 1e-9);
     fflush(stdout);
-    if (coli_st_mirror_active()) {
-        fprintf(stderr, "v4_mirror drives=%d", coli_st_mirror_nrep());
-        for (int r = 0; r < coli_st_mirror_nrep(); r++)
+    if (lma_st_mirror_active()) {
+        fprintf(stderr, "v4_mirror drives=%d", lma_st_mirror_nrep());
+        for (int r = 0; r < lma_st_mirror_nrep(); r++)
             fprintf(stderr, " %s=%.2fGiB/%llu",
                     r ? "mirror" : "primary",
                     __atomic_load_n(&g_v4_mir_bytes[r], __ATOMIC_RELAXED)
@@ -14875,7 +14875,7 @@ int main(int argc, char **argv) {
         memcpy(full_ids + prompt_count, generated,
                (size_t)generated_count * sizeof(int));
         for (int layer = 0; layer < config.num_hidden_layers; layer++)
-            coli_v4_window_attention_reset(attention[layer]);
+            lma_v4_window_attention_reset(attention[layer]);
         /* Rebuild tf_pred for the fixture (argmax at each position). */
         size_t hd_tf = (size_t)config.hc_mult * config.hidden_size;
         tf_state = malloc((size_t)full_count * hd_tf * sizeof(float));
@@ -14909,7 +14909,7 @@ int main(int argc, char **argv) {
                 tf_pred[pos] == full_ids[pos + 1])
                 tf_matched++;
         }
-        if (v4_oracle_write_json(cli.record_oracle_path, "coli-self",
+        if (v4_oracle_write_json(cli.record_oracle_path, "lmatomic-self",
                                  cli.model_dir, cli.prompt,
                                  prompt_ids, prompt_count,
                                  full_ids, full_count,
@@ -14918,7 +14918,7 @@ int main(int argc, char **argv) {
             goto cleanup;
         }
         fprintf(stderr,
-                "wrote oracle %s (source=coli-self, "
+                "wrote oracle %s (source=lmatomic-self, "
                 "continuation_self_check=%d/%d)\n",
                 cli.record_oracle_path, tf_matched, tf_total);
         free(full_ids); free(tf_pred);
@@ -14932,18 +14932,18 @@ cleanup:
                         tf_next, tf_hidden);
     return result;
 }
-#endif /* !COLI_V4_SKIP_GENERATE_MAIN */
+#endif /* !LMA_V4_SKIP_GENERATE_MAIN */
 
-#endif /* COLI_V4_UNIT_GENERATE_STATS */
+#endif /* LMA_V4_UNIT_GENERATE_STATS */
 
-#ifdef COLI_V4_UNIT_KV_CACHE
+#ifdef LMA_V4_UNIT_KV_CACHE
 /* ######## deepseek_v4_kv_cache.c ######## */
 #include "deepseek_v4_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-struct ColiDeepSeekV4KVCache {
+struct LmaDeepSeekV4KVCache {
     int window_size;
     int compression_ratio;
     int head_dimension;
@@ -14951,14 +14951,14 @@ struct ColiDeepSeekV4KVCache {
     float *values;
 };
 
-int coli_v4_kv_cache_create(ColiDeepSeekV4KVCache **output,
+int lma_v4_kv_cache_create(LmaDeepSeekV4KVCache **output,
                             int window_size, int compression_ratio,
                             int head_dimension, int max_context) {
     if (!output || window_size < 1 || compression_ratio < 1 ||
         head_dimension < 1 || max_context < 1)
         return -1;
     *output = NULL;
-    ColiDeepSeekV4KVCache *cache = calloc(1, sizeof(*cache));
+    LmaDeepSeekV4KVCache *cache = calloc(1, sizeof(*cache));
     if (!cache) return -1;
     cache->window_size = window_size;
     cache->compression_ratio = compression_ratio;
@@ -14975,20 +14975,20 @@ int coli_v4_kv_cache_create(ColiDeepSeekV4KVCache **output,
     return 0;
 }
 
-void coli_v4_kv_cache_reset(ColiDeepSeekV4KVCache *cache) {
+void lma_v4_kv_cache_reset(LmaDeepSeekV4KVCache *cache) {
     if (!cache) return;
     size_t count = (size_t)(cache->window_size + cache->compressed_capacity) *
                    cache->head_dimension;
     memset(cache->values, 0, count * sizeof(*cache->values));
 }
 
-void coli_v4_kv_cache_destroy(ColiDeepSeekV4KVCache *cache) {
+void lma_v4_kv_cache_destroy(LmaDeepSeekV4KVCache *cache) {
     if (!cache) return;
     free(cache->values);
     free(cache);
 }
 
-int coli_v4_kv_cache_put_window(ColiDeepSeekV4KVCache *cache,
+int lma_v4_kv_cache_put_window(LmaDeepSeekV4KVCache *cache,
                                 int position, const float *kv) {
     if (!cache || !kv || position < 0) return -1;
     int slot = position % cache->window_size;
@@ -14997,7 +14997,7 @@ int coli_v4_kv_cache_put_window(ColiDeepSeekV4KVCache *cache,
     return slot;
 }
 
-int coli_v4_kv_cache_put_compressed(ColiDeepSeekV4KVCache *cache,
+int lma_v4_kv_cache_put_compressed(LmaDeepSeekV4KVCache *cache,
                                     int position, const float *kv) {
     if (!cache || !kv || position < 0 ||
         (position + 1) % cache->compression_ratio != 0)
@@ -15010,7 +15010,7 @@ int coli_v4_kv_cache_put_compressed(ColiDeepSeekV4KVCache *cache,
     return combined;
 }
 
-int coli_v4_kv_cache_indices(const ColiDeepSeekV4KVCache *cache,
+int lma_v4_kv_cache_indices(const LmaDeepSeekV4KVCache *cache,
                              int position, int *indices, size_t capacity) {
     if (!cache || !indices || position < 0) return -1;
     int compressed = (position + 1) / cache->compression_ratio;
@@ -15030,16 +15030,16 @@ int coli_v4_kv_cache_indices(const ColiDeepSeekV4KVCache *cache,
     return (int)required;
 }
 
-const float *coli_v4_kv_cache_values(const ColiDeepSeekV4KVCache *cache) {
+const float *lma_v4_kv_cache_values(const LmaDeepSeekV4KVCache *cache) {
     return cache ? cache->values : NULL;
 }
 
-int coli_v4_kv_cache_value_count(const ColiDeepSeekV4KVCache *cache) {
+int lma_v4_kv_cache_value_count(const LmaDeepSeekV4KVCache *cache) {
     return cache ? cache->window_size + cache->compressed_capacity : 0;
 }
-#endif /* COLI_V4_UNIT_KV_CACHE */
+#endif /* LMA_V4_UNIT_KV_CACHE */
 
-#ifdef COLI_V4_UNIT_ATTENTION_CACHE
+#ifdef LMA_V4_UNIT_ATTENTION_CACHE
 /* ######## deepseek_v4_attention_cache.c ######## */
 #include "deepseek_v4_internal.h"
 
@@ -15048,27 +15048,27 @@ int coli_v4_kv_cache_value_count(const ColiDeepSeekV4KVCache *cache) {
 #include "deepseek_v4_internal.h"
 #include "deepseek_v4_internal.h"
 
-struct ColiDeepSeekV4AttentionCache {
-    ColiDeepSeekV4KVCache *kv;
+struct LmaDeepSeekV4AttentionCache {
+    LmaDeepSeekV4KVCache *kv;
     int window_size;
     int compression_ratio;
     int head_dimension;
     int compressed_capacity;
 };
 
-int coli_v4_attention_cache_create(ColiDeepSeekV4AttentionCache **output,
+int lma_v4_attention_cache_create(LmaDeepSeekV4AttentionCache **output,
                                    int window_size, int compression_ratio,
                                    int head_dimension, int max_context) {
     if (!output) return -1;
     *output = NULL;
-    ColiDeepSeekV4AttentionCache *cache = calloc(1, sizeof(*cache));
+    LmaDeepSeekV4AttentionCache *cache = calloc(1, sizeof(*cache));
     if (!cache) return -1;
     cache->window_size = window_size;
     cache->compression_ratio = compression_ratio;
     cache->head_dimension = head_dimension;
     cache->compressed_capacity = max_context / compression_ratio;
     if (cache->compressed_capacity < 1) cache->compressed_capacity = 1;
-    if (coli_v4_kv_cache_create(&cache->kv, window_size, compression_ratio,
+    if (lma_v4_kv_cache_create(&cache->kv, window_size, compression_ratio,
                                 head_dimension, max_context) != 0) {
         free(cache);
         return -1;
@@ -15077,17 +15077,17 @@ int coli_v4_attention_cache_create(ColiDeepSeekV4AttentionCache **output,
     return 0;
 }
 
-void coli_v4_attention_cache_reset(ColiDeepSeekV4AttentionCache *cache) {
-    if (cache) coli_v4_kv_cache_reset(cache->kv);
+void lma_v4_attention_cache_reset(LmaDeepSeekV4AttentionCache *cache) {
+    if (cache) lma_v4_kv_cache_reset(cache->kv);
 }
 
-void coli_v4_attention_cache_destroy(ColiDeepSeekV4AttentionCache *cache) {
+void lma_v4_attention_cache_destroy(LmaDeepSeekV4AttentionCache *cache) {
     if (!cache) return;
-    coli_v4_kv_cache_destroy(cache->kv);
+    lma_v4_kv_cache_destroy(cache->kv);
     free(cache);
 }
 
-int coli_v4_attention_cache_step(ColiDeepSeekV4AttentionCache *cache,
+int lma_v4_attention_cache_step(LmaDeepSeekV4AttentionCache *cache,
                                  float *output, const float *query,
                                  const float *window_kv,
                                  const float *compressed_kv,
@@ -15098,25 +15098,25 @@ int coli_v4_attention_cache_step(ColiDeepSeekV4AttentionCache *cache,
         return -1;
     int boundary = (position + 1) % cache->compression_ratio == 0;
     if (boundary != (compressed_kv != NULL)) return -1;
-    if (coli_v4_kv_cache_put_window(cache->kv, position, window_kv) < 0)
+    if (lma_v4_kv_cache_put_window(cache->kv, position, window_kv) < 0)
         return -1;
     if (compressed_kv &&
-        coli_v4_kv_cache_put_compressed(cache->kv, position, compressed_kv) < 0)
+        lma_v4_kv_cache_put_compressed(cache->kv, position, compressed_kv) < 0)
         return -1;
     size_t capacity = (size_t)cache->window_size + cache->compressed_capacity;
     int *indices = malloc(capacity * sizeof(*indices));
     if (!indices) return -1;
-    int topk = coli_v4_kv_cache_indices(cache->kv, position, indices, capacity);
-    int result = topk < 0 ? -1 : coli_v4_sparse_attention_ref(
-        output, query, coli_v4_kv_cache_values(cache->kv), sinks, indices,
-        heads, cache->head_dimension, coli_v4_kv_cache_value_count(cache->kv),
+    int topk = lma_v4_kv_cache_indices(cache->kv, position, indices, capacity);
+    int result = topk < 0 ? -1 : lma_v4_sparse_attention_ref(
+        output, query, lma_v4_kv_cache_values(cache->kv), sinks, indices,
+        heads, cache->head_dimension, lma_v4_kv_cache_value_count(cache->kv),
         topk, softmax_scale);
     free(indices);
     return result;
 }
-#endif /* COLI_V4_UNIT_ATTENTION_CACHE */
+#endif /* LMA_V4_UNIT_ATTENTION_CACHE */
 
-#ifdef COLI_V4_UNIT_EXPERT
+#ifdef LMA_V4_UNIT_EXPERT
 /* ######## deepseek_v4_expert.c ######## */
 #include "deepseek_v4_internal.h"
 
@@ -15125,7 +15125,7 @@ int coli_v4_attention_cache_step(ColiDeepSeekV4AttentionCache *cache,
 #include "deepseek_v4_internal.h"
 #include "native_quant.h"
 
-int coli_v4_expert_forward_ref(float *output, const ColiExpertView *expert,
+int lma_v4_expert_forward_ref(float *output, const LmaExpertView *expert,
                                const float *input, float route_weight,
                                float swiglu_limit) {
     if (!output || !expert || !input || swiglu_limit < 0.0f ||
@@ -15145,37 +15145,37 @@ int coli_v4_expert_forward_ref(float *output, const ColiExpertView *expert,
         free(activated);
         return -1;
     }
-    int result = coli_fp4_matvec_ref(gate, &expert->gate, input) ||
-                 coli_fp4_matvec_ref(up, &expert->up, input);
+    int result = lma_fp4_matvec_ref(gate, &expert->gate, input) ||
+                 lma_fp4_matvec_ref(up, &expert->up, input);
     if (!result) {
-        coli_bf16_round_array(gate, intermediate);
-        coli_bf16_round_array(up, intermediate);
-        result = coli_v4_swiglu(activated, gate, up,
+        lma_bf16_round_array(gate, intermediate);
+        lma_bf16_round_array(up, intermediate);
+        result = lma_v4_swiglu(activated, gate, up,
                                 (int)intermediate, swiglu_limit);
     }
     if (!result) {
         for (size_t index = 0; index < intermediate; index++)
-            activated[index] = coli_bf16_round(
+            activated[index] = lma_bf16_round(
                 activated[index] * route_weight);
-        result = coli_fp4_matvec_ref(output, &expert->down, activated);
+        result = lma_fp4_matvec_ref(output, &expert->down, activated);
     }
-    if (!result) coli_bf16_round_array(output, output_size);
+    if (!result) lma_bf16_round_array(output, output_size);
     free(activated);
     free(up);
     free(gate);
     return result ? -1 : 0;
 }
 
-int coli_v4_shared_expert_forward_ref(float *output,
-                                      const ColiTensorView *gate_weight,
-                                      const ColiTensorView *down_weight,
-                                      const ColiTensorView *up_weight,
+int lma_v4_shared_expert_forward_ref(float *output,
+                                      const LmaTensorView *gate_weight,
+                                      const LmaTensorView *down_weight,
+                                      const LmaTensorView *up_weight,
                                       const float *input,
                                       float swiglu_limit) {
     if (!output || !gate_weight || !down_weight || !up_weight || !input ||
-        gate_weight->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
-        down_weight->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
-        up_weight->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
+        gate_weight->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
+        down_weight->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
+        up_weight->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
         gate_weight->rows != up_weight->rows ||
         gate_weight->columns != up_weight->columns ||
         down_weight->columns != gate_weight->rows ||
@@ -15190,28 +15190,28 @@ int coli_v4_shared_expert_forward_ref(float *output,
         free(activated); free(up); free(gate);
         return -1;
     }
-    int result = coli_fp8_matvec_ref(gate, gate_weight, input) ||
-                 coli_fp8_matvec_ref(up, up_weight, input);
+    int result = lma_fp8_matvec_ref(gate, gate_weight, input) ||
+                 lma_fp8_matvec_ref(up, up_weight, input);
     if (!result) {
-        coli_bf16_round_array(gate, intermediate);
-        coli_bf16_round_array(up, intermediate);
-        result = coli_v4_swiglu(activated, gate, up,
+        lma_bf16_round_array(gate, intermediate);
+        lma_bf16_round_array(up, intermediate);
+        result = lma_v4_swiglu(activated, gate, up,
                                 (int)intermediate, swiglu_limit);
     }
     if (!result) {
-        coli_bf16_round_array(activated, intermediate);
-        result = coli_fp8_matvec_ref(output, down_weight, activated);
+        lma_bf16_round_array(activated, intermediate);
+        result = lma_fp8_matvec_ref(output, down_weight, activated);
     }
-    if (!result) coli_bf16_round_array(output, output_size);
+    if (!result) lma_bf16_round_array(output, output_size);
     free(activated); free(up); free(gate);
     return result ? -1 : 0;
 }
-#endif /* COLI_V4_UNIT_EXPERT */
+#endif /* LMA_V4_UNIT_EXPERT */
 
-#ifdef COLI_V4_UNIT_EXPERT_STORE
+#ifdef LMA_V4_UNIT_EXPERT_STORE
 /* ######## deepseek_v4_expert_store.c ######## */
 /* Legacy standalone unit with its own private V4ExpertStoreState.  The target
- * binary and DeepSeek-V4 tests use COLI_V4_UNIT_EXPERT_STORE_HOT_ROWS16,
+ * binary and DeepSeek-V4 tests use LMA_V4_UNIT_EXPERT_STORE_HOT_ROWS16,
  * which embeds the indexed base StoreOps above; never register these ops on
  * that unit's state, whose slot index, allocation cursor, and intrusive LRU
  * have stricter mutation invariants. */
@@ -15228,17 +15228,17 @@ int coli_v4_shared_expert_forward_ref(float *output,
 #include <string.h>
 
 
-#ifdef COLI_V4_EXPERIMENTAL_PREFETCH_BATCH
-int coli_st_prefetch_many(
-    const ColiSafetensorsIndex *index, const int *shards,
+#ifdef LMA_V4_EXPERIMENTAL_PREFETCH_BATCH
+int lma_st_prefetch_many(
+    const LmaSafetensorsIndex *index, const int *shards,
     const uint64_t *offsets, const size_t *lengths, size_t count);
 #endif
 
 enum { V4_W1 = 0, V4_W2 = 1, V4_W3 = 2, V4_MATRIX_COUNT = 3 };
 
 typedef struct {
-    const ColiSafetensorsTensor *weight[V4_MATRIX_COUNT];
-    const ColiSafetensorsTensor *scale[V4_MATRIX_COUNT];
+    const LmaSafetensorsTensor *weight[V4_MATRIX_COUNT];
+    const LmaSafetensorsTensor *scale[V4_MATRIX_COUNT];
     int scale_shard;
     int weight_shard;
     uint64_t scale_offset;
@@ -15266,7 +15266,7 @@ typedef struct {
 } V4ExpertSlot;
 
 typedef struct {
-    ColiSafetensorsIndex *index;
+    LmaSafetensorsIndex *index;
     int layers;
     int experts_per_layer;
     int slots_per_layer;
@@ -15275,7 +15275,7 @@ typedef struct {
     V4ExpertSlot *slots;
     uint64_t clock;
     unsigned active_leases;
-    ColiExpertStoreStats stats;
+    LmaExpertStoreStats stats;
     pthread_mutex_t mutex;
     double disk_sec;   /* cumulative wall time spent reading expert bytes from disk */
     double matmul_sec; /* cumulative expert-forward compute time (#890): the phase the
@@ -15296,30 +15296,30 @@ static int set_error(char *error, size_t size, const char *format, ...) {
 }
 
 static int compare_tensors(const void *left, const void *right) {
-    const ColiSafetensorsTensor *const *a = left;
-    const ColiSafetensorsTensor *const *b = right;
+    const LmaSafetensorsTensor *const *a = left;
+    const LmaSafetensorsTensor *const *b = right;
     return ((*a)->off > (*b)->off) - ((*a)->off < (*b)->off);
 }
 
-static int contiguous_group(const ColiSafetensorsTensor *const input[3],
-                            const ColiSafetensorsIndex *index,
+static int contiguous_group(const LmaSafetensorsTensor *const input[3],
+                            const LmaSafetensorsIndex *index,
                             int *shard, uint64_t *offset, uint64_t *bytes) {
-    const ColiSafetensorsTensor *parts[3] = {input[0], input[1], input[2]};
+    const LmaSafetensorsTensor *parts[3] = {input[0], input[1], input[2]};
     qsort(parts, 3, sizeof(parts[0]), compare_tensors);
     if (parts[0]->fd != parts[1]->fd || parts[1]->fd != parts[2]->fd ||
         parts[0]->off + parts[0]->nbytes != parts[1]->off ||
         parts[1]->off + parts[1]->nbytes != parts[2]->off)
         return -1;
-    *shard = coli_st_tensor_shard(index, parts[0]);
+    *shard = lma_st_tensor_shard(index, parts[0]);
     *offset = (uint64_t)parts[0]->off;
     *bytes = (uint64_t)(parts[2]->off + parts[2]->nbytes - parts[0]->off);
     return *shard < 0 ? -1 : 0;
 }
 
-static int validate_matrix(const ColiSafetensorsTensor *weight,
-                           const ColiSafetensorsTensor *scale) {
-    if (!weight || !scale || weight->dtype != COLI_ST_I8 ||
-        scale->dtype != COLI_ST_F8_E8M0 || weight->rank != 2 || scale->rank != 2 ||
+static int validate_matrix(const LmaSafetensorsTensor *weight,
+                           const LmaSafetensorsTensor *scale) {
+    if (!weight || !scale || weight->dtype != LMA_ST_I8 ||
+        scale->dtype != LMA_ST_F8_E8M0 || weight->rank != 2 || scale->rank != 2 ||
         weight->shape[0] != scale->shape[0] || weight->shape[1] <= 0 ||
         scale->shape[1] <= 0)
         return -1;
@@ -15335,10 +15335,10 @@ static int build_record(V4ExpertStoreState *state, int layer, int expert,
     for (int matrix = 0; matrix < V4_MATRIX_COUNT; matrix++) {
         snprintf(name, sizeof(name), "layers.%d.ffn.experts.%d.%s.weight",
                  layer, expert, matrix_names[matrix]);
-        record->weight[matrix] = coli_st_find(state->index, name);
+        record->weight[matrix] = lma_st_find(state->index, name);
         snprintf(name, sizeof(name), "layers.%d.ffn.experts.%d.%s.scale",
                  layer, expert, matrix_names[matrix]);
-        record->scale[matrix] = coli_st_find(state->index, name);
+        record->scale[matrix] = lma_st_find(state->index, name);
         if (validate_matrix(record->weight[matrix], record->scale[matrix]) != 0)
             return set_error(error, error_size,
                              "invalid native FP4 expert matrix: layer=%d expert=%d %s",
@@ -15356,8 +15356,8 @@ static int build_record(V4ExpertStoreState *state, int layer, int expert,
         record->per_matrix = 1;
         uint64_t per_matrix_bytes = 0;
         for (int matrix = 0; matrix < V4_MATRIX_COUNT; matrix++) {
-            int matrix_scale_shard = coli_st_tensor_shard(state->index, record->scale[matrix]);
-            int matrix_weight_shard = coli_st_tensor_shard(state->index, record->weight[matrix]);
+            int matrix_scale_shard = lma_st_tensor_shard(state->index, record->scale[matrix]);
+            int matrix_weight_shard = lma_st_tensor_shard(state->index, record->weight[matrix]);
             if (matrix_scale_shard < 0 || matrix_weight_shard < 0)
                 return set_error(error, error_size,
                                  "expert shard lookup failed: layer=%d expert=%d",
@@ -15382,7 +15382,7 @@ static int build_record(V4ExpertStoreState *state, int layer, int expert,
     return 0;
 }
 
-static V4ExpertRecord *get_record(V4ExpertStoreState *state, ColiExpertKey key) {
+static V4ExpertRecord *get_record(V4ExpertStoreState *state, LmaExpertKey key) {
     if (key.layer < 0 || key.layer >= state->layers || key.expert < 0 ||
         key.expert >= state->experts_per_layer)
         return NULL;
@@ -15393,11 +15393,11 @@ static V4ExpertSlot *layer_slots(V4ExpertStoreState *state, int layer) {
     return state->slots + (size_t)layer * state->slots_per_layer;
 }
 
-static void fill_tensor_view(ColiTensorView *view,
+static void fill_tensor_view(LmaTensorView *view,
                              const V4ExpertRecord *record,
                              const V4ExpertSlot *slot, int matrix) {
-    const ColiSafetensorsTensor *weight = record->weight[matrix];
-    const ColiSafetensorsTensor *scale = record->scale[matrix];
+    const LmaSafetensorsTensor *weight = record->weight[matrix];
+    const LmaSafetensorsTensor *scale = record->scale[matrix];
     uint64_t scale_base = 0, weight_base = 0;
     if (record->per_matrix) {
         /* REAP fallback: slab packs per-matrix scales first, then weights. */
@@ -15413,8 +15413,8 @@ static void fill_tensor_view(ColiTensorView *view,
                       ((uint64_t)weight->off - record->weight_offset);
     }
     memset(view, 0, sizeof(*view));
-    view->format = COLI_TENSOR_FP4_NATIVE_BLOCK;
-    view->scale_format = COLI_SCALE_UE8M0;
+    view->format = LMA_TENSOR_FP4_NATIVE_BLOCK;
+    view->scale_format = LMA_SCALE_UE8M0;
     view->data = slot->slab + weight_base;
     view->scales = slot->slab + scale_base;
     view->data_bytes = (size_t)weight->nbytes;
@@ -15425,8 +15425,8 @@ static void fill_tensor_view(ColiTensorView *view,
     view->block_columns = 32;
 }
 
-static int lookup(ColiExpertStore *store, ColiExpertKey key,
-                  ColiExpertView *view) {
+static int lookup(LmaExpertStore *store, LmaExpertKey key,
+                  LmaExpertView *view) {
     if (!store || !store->state || !view) {
         if (view) memset(view, 0, sizeof(*view));
         return -1;
@@ -15471,14 +15471,14 @@ static int lookup(ColiExpertStore *store, ColiExpertKey key,
         /* A short read must never expose a partially overwritten old slot. */
         slot->expert = -1;
         /* DUAL-SSD: this expert's replica (deterministic per layer,eid). */
-        int rep = coli_st_expert_route(key.layer, key.expert);
+        int rep = lma_st_expert_route(key.layer, key.expert);
         struct timespec disk_t0;
         clock_gettime(CLOCK_MONOTONIC, &disk_t0);
         int read_failed = 0;
         if (record->per_matrix) {
             uint64_t scale_cursor = 0;
             for (int matrix = 0; matrix < V4_MATRIX_COUNT; matrix++) {
-                if (coli_st_read_at_streaming_rep(
+                if (lma_st_read_at_streaming_rep(
                         state->index, record->m_scale_shard[matrix], rep,
                         record->m_scale_offset[matrix],
                         (size_t)record->m_scale_bytes[matrix],
@@ -15492,7 +15492,7 @@ static int lookup(ColiExpertStore *store, ColiExpertKey key,
                 for (int matrix = 0; matrix < V4_MATRIX_COUNT; matrix++)
                     weight_cursor += record->m_scale_bytes[matrix];
                 for (int matrix = 0; matrix < V4_MATRIX_COUNT && !read_failed; matrix++) {
-                    if (coli_st_read_at_streaming_rep(
+                    if (lma_st_read_at_streaming_rep(
                             state->index, record->m_weight_shard[matrix], rep,
                             record->m_weight_offset[matrix],
                             (size_t)record->m_weight_bytes[matrix],
@@ -15502,10 +15502,10 @@ static int lookup(ColiExpertStore *store, ColiExpertKey key,
                 }
             }
         } else {
-            if (coli_st_read_at_streaming_rep(
+            if (lma_st_read_at_streaming_rep(
                     state->index, record->scale_shard, rep, record->scale_offset,
                     (size_t)record->scale_bytes, slot->slab) != 0 ||
-                coli_st_read_at_streaming_rep(
+                lma_st_read_at_streaming_rep(
                     state->index, record->weight_shard, rep, record->weight_offset,
                     (size_t)record->weight_bytes,
                     slot->slab + record->scale_bytes) != 0)
@@ -15552,7 +15552,7 @@ static int lookup(ColiExpertStore *store, ColiExpertKey key,
     return 0;
 }
 
-static void release(ColiExpertStore *store, ColiExpertView *view) {
+static void release(LmaExpertStore *store, LmaExpertView *view) {
     if (!store || !store->state || !view || !view->lease) {
         if (view) memset(view, 0, sizeof(*view));
         return;
@@ -15566,12 +15566,12 @@ static void release(ColiExpertStore *store, ColiExpertView *view) {
     memset(view, 0, sizeof(*view));
 }
 
-static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
+static int prefetch(LmaExpertStore *store, const LmaExpertKey *keys,
                     size_t count) {
     if (!store || !store->state || (!keys && count)) return 0;
     V4ExpertStoreState *state = store->state;
     int accepted = 0;
-#ifdef COLI_V4_EXPERIMENTAL_PREFETCH_BATCH
+#ifdef LMA_V4_EXPERIMENTAL_PREFETCH_BATCH
     size_t capacity = count * 6, ranges = 0;
     int *shards = malloc(capacity * sizeof(*shards));
     uint64_t *offsets = malloc(capacity * sizeof(*offsets));
@@ -15613,7 +15613,7 @@ static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
         candidates++;
     }
     pthread_mutex_unlock(&state->mutex);
-    if (candidates && !coli_st_prefetch_many(
+    if (candidates && !lma_st_prefetch_many(
             state->index, shards, offsets, lengths, ranges))
         accepted = candidates;
     free(lengths); free(offsets); free(shards);
@@ -15621,7 +15621,7 @@ static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
     for (size_t i = 0; i < count; i++) {
         V4ExpertRecord *record = get_record(state, keys[i]);
         if (!record) continue;
-        int rep = coli_st_expert_route(keys[i].layer, keys[i].expert);
+        int rep = lma_st_expert_route(keys[i].layer, keys[i].expert);
         int all_weights_prefetched = 1;
         int matrix_count = record->per_matrix ? V4_MATRIX_COUNT : 1;
         for (int segment = 0; segment < matrix_count && all_weights_prefetched; segment++) {
@@ -15637,7 +15637,7 @@ static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
                 offset = record->weight_offset;
                 length = (size_t)record->weight_bytes;
             }
-            if (coli_st_prefetch_at_rep(state->index, shard, rep,
+            if (lma_st_prefetch_at_rep(state->index, shard, rep,
                                         offset, length) != 0)
                 all_weights_prefetched = 0;
         }
@@ -15656,7 +15656,7 @@ static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
                 offset = record->scale_offset;
                 length = (size_t)record->scale_bytes;
             }
-            all_scales_prefetched &= coli_st_prefetch_at_rep(state->index, shard, rep,
+            all_scales_prefetched &= lma_st_prefetch_at_rep(state->index, shard, rep,
                                                               offset, length) == 0;
         }
         if (all_weights_prefetched && all_scales_prefetched) accepted++;
@@ -15668,7 +15668,7 @@ static int prefetch(ColiExpertStore *store, const ColiExpertKey *keys,
     return accepted;
 }
 
-static void stats(const ColiExpertStore *store, ColiExpertStoreStats *output) {
+static void stats(const LmaExpertStore *store, LmaExpertStoreStats *output) {
     if (!store || !store->state || !output) return;
     V4ExpertStoreState *state = store->state;
     pthread_mutex_lock(&state->mutex);
@@ -15676,7 +15676,7 @@ static void stats(const ColiExpertStore *store, ColiExpertStoreStats *output) {
     pthread_mutex_unlock(&state->mutex);
 }
 
-static void destroy(ColiExpertStore *store) {
+static void destroy(LmaExpertStore *store) {
     if (!store) return;
     V4ExpertStoreState *state = store->state;
     if (state) {
@@ -15687,7 +15687,7 @@ static void destroy(ColiExpertStore *store) {
                                            * its compat_aligned_free live in the
                                            * hot rows16 store above. */
         pthread_mutex_destroy(&state->mutex);
-        coli_st_index_close(state->index);
+        lma_st_index_close(state->index);
         free(state->records);
         free(state->slots);
         free(state->ehit);
@@ -15697,17 +15697,17 @@ static void destroy(ColiExpertStore *store) {
     free(store);
 }
 
-int coli_deepseek_v4_expert_store_open(
-    const ColiDeepSeekV4ExpertStoreOptions *options, ColiExpertStore **output,
+int lma_deepseek_v4_expert_store_open(
+    const LmaDeepSeekV4ExpertStoreOptions *options, LmaExpertStore **output,
     char *error, size_t error_size) {
-    static const ColiExpertStoreOps operations = {
+    static const LmaExpertStoreOps operations = {
         lookup, release, prefetch, stats, destroy
     };
     if (!options || !output || !options->model_dir || options->layers < 1 ||
         options->experts_per_layer < 1 || !options->cache_bytes)
         return set_error(error, error_size, "invalid DeepSeek-V4 ExpertStore options");
     *output = NULL;
-    ColiExpertStore *store = calloc(1, sizeof(*store));
+    LmaExpertStore *store = calloc(1, sizeof(*store));
     V4ExpertStoreState *state = calloc(1, sizeof(*state));
     if (!store || !state) {
         free(store);
@@ -15717,7 +15717,7 @@ int coli_deepseek_v4_expert_store_open(
     pthread_mutex_init(&state->mutex, NULL);
     state->layers = options->layers;
     state->experts_per_layer = options->experts_per_layer;
-    if (coli_st_index_open(&state->index, options->model_dir, error, error_size) != 0)
+    if (lma_st_index_open(&state->index, options->model_dir, error, error_size) != 0)
         goto fail;
     size_t record_count = (size_t)state->layers * state->experts_per_layer;
     state->records = malloc(record_count * sizeof(*state->records)); /* build_record zeroes each */
@@ -15781,15 +15781,15 @@ fail:
     free(state->records);
     free(state->ehit);
     free(state->eheat);
-    coli_st_index_close(state->index);
+    lma_st_index_close(state->index);
     pthread_mutex_destroy(&state->mutex);
     free(state);
     free(store);
     return -1;
 }
-#endif /* COLI_V4_UNIT_EXPERT_STORE */
+#endif /* LMA_V4_UNIT_EXPERT_STORE */
 
-#ifdef COLI_V4_UNIT_LAYER
+#ifdef LMA_V4_UNIT_LAYER
 /* ######## deepseek_v4_layer.c ######## */
 #include "deepseek_v4_internal.h"
 
@@ -15808,12 +15808,12 @@ static int set_error(char *error, size_t size, const char *format, ...) {
     return -1;
 }
 
-static int add_spec(ColiDeepSeekV4LayerPlan *plan, ColiSafetensorsDType dtype,
+static int add_spec(LmaDeepSeekV4LayerPlan *plan, LmaSafetensorsDType dtype,
                     int rank, const int64_t *shape, const char *suffix,
                     char *error, size_t error_size) {
-    if (plan->tensor_count >= COLI_V4_MAX_LAYER_TENSORS)
+    if (plan->tensor_count >= LMA_V4_MAX_LAYER_TENSORS)
         return set_error(error, error_size, "too many tensors in layer %d", plan->layer);
-    ColiDeepSeekV4TensorSpec *spec = &plan->tensors[plan->tensor_count++];
+    LmaDeepSeekV4TensorSpec *spec = &plan->tensors[plan->tensor_count++];
     int written = snprintf(spec->name, sizeof(spec->name), "layers.%d.%s",
                            plan->layer, suffix);
     if (written < 0 || (size_t)written >= sizeof(spec->name))
@@ -15824,33 +15824,33 @@ static int add_spec(ColiDeepSeekV4LayerPlan *plan, ColiSafetensorsDType dtype,
     return 0;
 }
 
-static int add_1d(ColiDeepSeekV4LayerPlan *plan, ColiSafetensorsDType dtype,
+static int add_1d(LmaDeepSeekV4LayerPlan *plan, LmaSafetensorsDType dtype,
                   int64_t d0, const char *name, char *error, size_t size) {
     int64_t shape[] = {d0};
     return add_spec(plan, dtype, 1, shape, name, error, size);
 }
 
-static int add_2d(ColiDeepSeekV4LayerPlan *plan, ColiSafetensorsDType dtype,
+static int add_2d(LmaDeepSeekV4LayerPlan *plan, LmaSafetensorsDType dtype,
                   int64_t d0, int64_t d1, const char *name,
                   char *error, size_t size) {
     int64_t shape[] = {d0, d1};
     return add_spec(plan, dtype, 2, shape, name, error, size);
 }
 
-static int add_fp8(ColiDeepSeekV4LayerPlan *plan, int64_t rows, int64_t columns,
+static int add_fp8(LmaDeepSeekV4LayerPlan *plan, int64_t rows, int64_t columns,
                    const char *prefix, char *error, size_t size) {
     char name[128];
     snprintf(name, sizeof(name), "%s.weight", prefix);
-    if (add_2d(plan, COLI_ST_F8_E4M3, rows, columns, name, error, size) != 0) return -1;
+    if (add_2d(plan, LMA_ST_F8_E4M3, rows, columns, name, error, size) != 0) return -1;
     snprintf(name, sizeof(name), "%s.scale", prefix);
-    return add_2d(plan, COLI_ST_F8_E8M0, (rows + 127) / 128,
+    return add_2d(plan, LMA_ST_F8_E8M0, (rows + 127) / 128,
                   (columns + 127) / 128, name, error, size);
 }
 
 #define ADD(call) do { if ((call) != 0) return -1; } while (0)
 
-int coli_v4_layer_plan(ColiDeepSeekV4LayerPlan *plan,
-                       const ColiDeepSeekV4Config *config, int layer,
+int lma_v4_layer_plan(LmaDeepSeekV4LayerPlan *plan,
+                       const LmaDeepSeekV4Config *config, int layer,
                        char *error, size_t error_size) {
     if (!plan || !config || layer < 0 || layer >= config->num_hidden_layers ||
         layer >= config->compress_ratio_count)
@@ -15876,77 +15876,77 @@ int coli_v4_layer_plan(ColiDeepSeekV4LayerPlan *plan,
     const int64_t hc = config->hc_mult;
     const int64_t hc_params = (2 + hc) * hc;
 
-    ADD(add_1d(plan, COLI_ST_F32, heads, "attn.attn_sink", error, error_size));
-    ADD(add_1d(plan, COLI_ST_BF16, head_dim, "attn.kv_norm.weight", error, error_size));
-    ADD(add_1d(plan, COLI_ST_BF16, q_rank, "attn.q_norm.weight", error, error_size));
+    ADD(add_1d(plan, LMA_ST_F32, heads, "attn.attn_sink", error, error_size));
+    ADD(add_1d(plan, LMA_ST_BF16, head_dim, "attn.kv_norm.weight", error, error_size));
+    ADD(add_1d(plan, LMA_ST_BF16, q_rank, "attn.q_norm.weight", error, error_size));
     ADD(add_fp8(plan, head_dim, hidden, "attn.wkv", error, error_size));
     ADD(add_fp8(plan, o_width, o_group_width, "attn.wo_a", error, error_size));
     ADD(add_fp8(plan, hidden, o_width, "attn.wo_b", error, error_size));
     ADD(add_fp8(plan, q_rank, hidden, "attn.wq_a", error, error_size));
     ADD(add_fp8(plan, heads * head_dim, q_rank, "attn.wq_b", error, error_size));
-    ADD(add_1d(plan, COLI_ST_BF16, hidden, "attn_norm.weight", error, error_size));
+    ADD(add_1d(plan, LMA_ST_BF16, hidden, "attn_norm.weight", error, error_size));
 
     if (plan->has_compressor) {
         int64_t ratio = plan->compression_ratio;
         int64_t coff = ratio == 4 ? 2 : 1;
-        ADD(add_2d(plan, COLI_ST_F32, ratio, coff * head_dim,
+        ADD(add_2d(plan, LMA_ST_F32, ratio, coff * head_dim,
                    "attn.compressor.ape", error, error_size));
-        ADD(add_1d(plan, COLI_ST_BF16, head_dim,
+        ADD(add_1d(plan, LMA_ST_BF16, head_dim,
                    "attn.compressor.norm.weight", error, error_size));
-        ADD(add_2d(plan, COLI_ST_BF16, coff * head_dim, hidden,
+        ADD(add_2d(plan, LMA_ST_BF16, coff * head_dim, hidden,
                    "attn.compressor.wgate.weight", error, error_size));
-        ADD(add_2d(plan, COLI_ST_BF16, coff * head_dim, hidden,
+        ADD(add_2d(plan, LMA_ST_BF16, coff * head_dim, hidden,
                    "attn.compressor.wkv.weight", error, error_size));
     }
     if (plan->has_indexer) {
         int64_t ih = config->index_head_dim;
         int64_t in = config->index_n_heads;
-        ADD(add_2d(plan, COLI_ST_F32, 4, 2 * ih,
+        ADD(add_2d(plan, LMA_ST_F32, 4, 2 * ih,
                    "attn.indexer.compressor.ape", error, error_size));
-        ADD(add_1d(plan, COLI_ST_BF16, ih,
+        ADD(add_1d(plan, LMA_ST_BF16, ih,
                    "attn.indexer.compressor.norm.weight", error, error_size));
-        ADD(add_2d(plan, COLI_ST_BF16, 2 * ih, hidden,
+        ADD(add_2d(plan, LMA_ST_BF16, 2 * ih, hidden,
                    "attn.indexer.compressor.wgate.weight", error, error_size));
-        ADD(add_2d(plan, COLI_ST_BF16, 2 * ih, hidden,
+        ADD(add_2d(plan, LMA_ST_BF16, 2 * ih, hidden,
                    "attn.indexer.compressor.wkv.weight", error, error_size));
-        ADD(add_2d(plan, COLI_ST_BF16, in, hidden,
+        ADD(add_2d(plan, LMA_ST_BF16, in, hidden,
                    "attn.indexer.weights_proj.weight", error, error_size));
         ADD(add_fp8(plan, in * ih, q_rank, "attn.indexer.wq_b", error, error_size));
     }
 
-    ADD(add_2d(plan, COLI_ST_BF16, experts, hidden,
+    ADD(add_2d(plan, LMA_ST_BF16, experts, hidden,
                "ffn.gate.weight", error, error_size));
     if (plan->uses_hash_router)
-        ADD(add_2d(plan, COLI_ST_I64, config->vocab_size,
+        ADD(add_2d(plan, LMA_ST_I64, config->vocab_size,
                    config->num_experts_per_tok, "ffn.gate.tid2eid", error, error_size));
     else
-        ADD(add_1d(plan, COLI_ST_F32, experts, "ffn.gate.bias", error, error_size));
+        ADD(add_1d(plan, LMA_ST_F32, experts, "ffn.gate.bias", error, error_size));
     ADD(add_fp8(plan, moe, hidden, "ffn.shared_experts.w1", error, error_size));
     ADD(add_fp8(plan, hidden, moe, "ffn.shared_experts.w2", error, error_size));
     ADD(add_fp8(plan, moe, hidden, "ffn.shared_experts.w3", error, error_size));
-    ADD(add_1d(plan, COLI_ST_BF16, hidden, "ffn_norm.weight", error, error_size));
+    ADD(add_1d(plan, LMA_ST_BF16, hidden, "ffn_norm.weight", error, error_size));
 
-    ADD(add_1d(plan, COLI_ST_F32, hc_params, "hc_attn_base", error, error_size));
-    ADD(add_2d(plan, COLI_ST_F32, hc_params, hc * hidden,
+    ADD(add_1d(plan, LMA_ST_F32, hc_params, "hc_attn_base", error, error_size));
+    ADD(add_2d(plan, LMA_ST_F32, hc_params, hc * hidden,
                "hc_attn_fn", error, error_size));
-    ADD(add_1d(plan, COLI_ST_F32, 3, "hc_attn_scale", error, error_size));
-    ADD(add_1d(plan, COLI_ST_F32, hc_params, "hc_ffn_base", error, error_size));
-    ADD(add_2d(plan, COLI_ST_F32, hc_params, hc * hidden,
+    ADD(add_1d(plan, LMA_ST_F32, 3, "hc_attn_scale", error, error_size));
+    ADD(add_1d(plan, LMA_ST_F32, hc_params, "hc_ffn_base", error, error_size));
+    ADD(add_2d(plan, LMA_ST_F32, hc_params, hc * hidden,
                "hc_ffn_fn", error, error_size));
-    ADD(add_1d(plan, COLI_ST_F32, 3, "hc_ffn_scale", error, error_size));
+    ADD(add_1d(plan, LMA_ST_F32, 3, "hc_ffn_scale", error, error_size));
     return 0;
 }
 
-int coli_v4_layer_validate(const ColiDeepSeekV4LayerPlan *plan,
-                           const ColiSafetensorsIndex *index,
-                           ColiDeepSeekV4LayerStats *stats,
+int lma_v4_layer_validate(const LmaDeepSeekV4LayerPlan *plan,
+                           const LmaSafetensorsIndex *index,
+                           LmaDeepSeekV4LayerStats *stats,
                            char *error, size_t error_size) {
     if (!plan || !index)
         return set_error(error, error_size, "invalid DeepSeek-V4 layer validation arguments");
-    ColiDeepSeekV4LayerStats local = {0};
+    LmaDeepSeekV4LayerStats local = {0};
     for (size_t i = 0; i < plan->tensor_count; i++) {
-        const ColiDeepSeekV4TensorSpec *spec = &plan->tensors[i];
-        const ColiSafetensorsTensor *tensor = coli_st_find(index, spec->name);
+        const LmaDeepSeekV4TensorSpec *spec = &plan->tensors[i];
+        const LmaSafetensorsTensor *tensor = lma_st_find(index, spec->name);
         if (!tensor)
             return set_error(error, error_size, "missing tensor: %s", spec->name);
         if (tensor->dtype != spec->dtype || tensor->rank != spec->rank)
@@ -15955,15 +15955,15 @@ int coli_v4_layer_validate(const ColiDeepSeekV4LayerPlan *plan,
             if (tensor->shape[dimension] != spec->shape[dimension])
                 return set_error(error, error_size, "shape mismatch: %s", spec->name);
         local.tensor_count++;
-        uint64_t resident_bytes = tensor->dtype == COLI_ST_F8_E8M0
+        uint64_t resident_bytes = tensor->dtype == LMA_ST_F8_E8M0
             ? (uint64_t)tensor->numel * sizeof(float) : (uint64_t)tensor->nbytes;
         local.total_bytes += resident_bytes;
         switch (tensor->dtype) {
-            case COLI_ST_BF16: local.bf16_bytes += tensor->nbytes; break;
-            case COLI_ST_F32: local.f32_bytes += tensor->nbytes; break;
-            case COLI_ST_F8_E4M3: local.fp8_weight_bytes += tensor->nbytes; break;
-            case COLI_ST_F8_E8M0: local.fp8_scale_bytes += resident_bytes; break;
-            case COLI_ST_I64: local.i64_bytes += tensor->nbytes; break;
+            case LMA_ST_BF16: local.bf16_bytes += tensor->nbytes; break;
+            case LMA_ST_F32: local.f32_bytes += tensor->nbytes; break;
+            case LMA_ST_F8_E4M3: local.fp8_weight_bytes += tensor->nbytes; break;
+            case LMA_ST_F8_E8M0: local.fp8_scale_bytes += resident_bytes; break;
+            case LMA_ST_I64: local.i64_bytes += tensor->nbytes; break;
             default: break;
         }
     }
@@ -15971,51 +15971,51 @@ int coli_v4_layer_validate(const ColiDeepSeekV4LayerPlan *plan,
     return 0;
 }
 
-void coli_v4_layer_free(ColiV4Engine *engine,
-                        ColiDeepSeekV4LayerWeights *weights) {
+void lma_v4_layer_free(LmaV4Engine *engine,
+                        LmaDeepSeekV4LayerWeights *weights) {
     (void)engine;
     if (!weights) return;
     for (size_t i = 0; i < weights->plan.tensor_count; i++) free(weights->data[i]);
     memset(weights, 0, sizeof(*weights));
 }
 
-int coli_v4_layer_load(ColiV4Engine *engine,
-                       ColiDeepSeekV4LayerWeights *weights,
-                       const ColiDeepSeekV4Config *config,
-                       const ColiSafetensorsIndex *index, int layer,
+int lma_v4_layer_load(LmaV4Engine *engine,
+                       LmaDeepSeekV4LayerWeights *weights,
+                       const LmaDeepSeekV4Config *config,
+                       const LmaSafetensorsIndex *index, int layer,
                        char *error, size_t error_size) {
     (void)engine;
     if (!weights) return set_error(error, error_size, "missing layer weights output");
     memset(weights, 0, sizeof(*weights));
-    if (coli_v4_layer_plan(&weights->plan, config, layer, error, error_size) != 0 ||
-        coli_v4_layer_validate(&weights->plan, index, &weights->stats,
+    if (lma_v4_layer_plan(&weights->plan, config, layer, error, error_size) != 0 ||
+        lma_v4_layer_validate(&weights->plan, index, &weights->stats,
                                error, error_size) != 0)
         return -1;
     for (size_t i = 0; i < weights->plan.tensor_count; i++) {
-        const ColiDeepSeekV4TensorSpec *spec = &weights->plan.tensors[i];
-        const ColiSafetensorsTensor *tensor = coli_st_find(index, spec->name);
-        size_t resident_bytes = tensor->dtype == COLI_ST_F8_E8M0
+        const LmaDeepSeekV4TensorSpec *spec = &weights->plan.tensors[i];
+        const LmaSafetensorsTensor *tensor = lma_st_find(index, spec->name);
+        size_t resident_bytes = tensor->dtype == LMA_ST_F8_E8M0
             ? (size_t)tensor->numel * sizeof(float) : (size_t)tensor->nbytes;
         weights->data[i] = malloc(resident_bytes);
         if (!weights->data[i]) {
-            coli_v4_layer_free(NULL, weights);
+            lma_v4_layer_free(NULL, weights);
             return set_error(error, error_size, "out of memory loading: %s", spec->name);
         }
-        int read_failed = tensor->dtype == COLI_ST_F8_E8M0
-            ? st_read_scale_f32((ColiSafetensorsIndex *)index, spec->name,
+        int read_failed = tensor->dtype == LMA_ST_F8_E8M0
+            ? st_read_scale_f32((LmaSafetensorsIndex *)index, spec->name,
                                 weights->data[i], tensor->numel, 0) != tensor->numel
-            : coli_st_read_tensor(index, tensor, weights->data[i]) != 0;
+            : lma_st_read_tensor(index, tensor, weights->data[i]) != 0;
         if (read_failed) {
-            coli_v4_layer_free(NULL, weights);
+            lma_v4_layer_free(NULL, weights);
             return set_error(error, error_size, "cannot read tensor: %s", spec->name);
         }
     }
     return 0;
 }
 
-const void *coli_v4_layer_data(const ColiDeepSeekV4LayerWeights *weights,
+const void *lma_v4_layer_data(const LmaDeepSeekV4LayerWeights *weights,
                                const char *name,
-                               const ColiDeepSeekV4TensorSpec **spec) {
+                               const LmaDeepSeekV4TensorSpec **spec) {
     if (spec) *spec = NULL;
     if (!weights || !name) return NULL;
     for (size_t i = 0; i < weights->plan.tensor_count; i++) {
@@ -16026,9 +16026,9 @@ const void *coli_v4_layer_data(const ColiDeepSeekV4LayerWeights *weights,
     }
     return NULL;
 }
-#endif /* COLI_V4_UNIT_LAYER */
+#endif /* LMA_V4_UNIT_LAYER */
 
-#ifdef COLI_V4_UNIT_CONFIG
+#ifdef LMA_V4_UNIT_CONFIG
 /* ######## deepseek_v4_config.c ######## */
 #include "deepseek_v4_internal.h"
 
@@ -16097,7 +16097,7 @@ static int require_string(jval *root, const char *name, const char *expected,
     return 0;
 }
 
-int coli_v4_config_parse(ColiDeepSeekV4Config *config, const char *json,
+int lma_v4_config_parse(LmaDeepSeekV4Config *config, const char *json,
                          char *error, size_t error_size) {
     if (!config || !json)
         return set_error(error, error_size, "invalid DeepSeek-V4 config arguments");
@@ -16170,7 +16170,7 @@ int coli_v4_config_parse(ColiDeepSeekV4Config *config, const char *json,
     }
     jval *ratios = json_get(root, "compress_ratios");
     if (!ratios || ratios->t != J_ARR || ratios->len < 1 ||
-        ratios->len > COLI_V4_MAX_LAYERS) {
+        ratios->len > LMA_V4_MAX_LAYERS) {
         json_free(root);
         free(arena);
         return set_error(error, error_size, "invalid compress_ratios");
@@ -16222,7 +16222,7 @@ int coli_v4_config_parse(ColiDeepSeekV4Config *config, const char *json,
     return 0;
 }
 
-int coli_v4_config_load(ColiDeepSeekV4Config *config, const char *model_dir,
+int lma_v4_config_load(LmaDeepSeekV4Config *config, const char *model_dir,
                         char *error, size_t error_size) {
     if (!config || !model_dir)
         return set_error(error, error_size, "invalid DeepSeek-V4 config path");
@@ -16253,15 +16253,15 @@ int coli_v4_config_load(ColiDeepSeekV4Config *config, const char *model_dir,
     }
     text[length] = 0;
     fclose(stream);
-    int result = coli_v4_config_parse(config, text, error, error_size);
+    int result = lma_v4_config_parse(config, text, error, error_size);
     free(text);
     free(path);
     return result;
 }
-#endif /* COLI_V4_UNIT_CONFIG */
+#endif /* LMA_V4_UNIT_CONFIG */
 
 
-#ifdef COLI_V4_UNIT_NATIVE_QUANT
+#ifdef LMA_V4_UNIT_NATIVE_QUANT
 /*
  * The former native_quant.c, native_quant_dual.c, native_quant_batch.c,
  * and native_quant_fp4_rows16.c implementations are folded into this engine.
@@ -16291,7 +16291,7 @@ int coli_v4_config_load(ColiDeepSeekV4Config *config, const char *model_dir,
 #include <arm_neon.h>
 #endif
 
-float coli_e8m0_decode(uint8_t value) {
+float lma_e8m0_decode(uint8_t value) {
     if (value == 0xff) return NAN;
     return ldexpf(1.0f, (int)value - 127);
 }
@@ -16301,20 +16301,20 @@ float coli_e8m0_decode(uint8_t value) {
  * decode paid that setup hundreds of thousands of times per response.  A
  * process-wide immutable table keeps the exact decoder as its single source
  * of truth while making both scalar and batched kernels reuse the result. */
-static float coli_e8m0_lut[256];
-static pthread_once_t coli_e8m0_lut_once = PTHREAD_ONCE_INIT;
+static float lma_e8m0_lut[256];
+static pthread_once_t lma_e8m0_lut_once = PTHREAD_ONCE_INIT;
 
-static void coli_e8m0_lut_initialize(void) {
+static void lma_e8m0_lut_initialize(void) {
     for (int value = 0; value < 256; value++)
-        coli_e8m0_lut[value] = coli_e8m0_decode((uint8_t)value);
+        lma_e8m0_lut[value] = lma_e8m0_decode((uint8_t)value);
 }
 
-const float *coli_e8m0_table(void) {
-    pthread_once(&coli_e8m0_lut_once, coli_e8m0_lut_initialize);
-    return coli_e8m0_lut;
+const float *lma_e8m0_table(void) {
+    pthread_once(&lma_e8m0_lut_once, lma_e8m0_lut_initialize);
+    return lma_e8m0_lut;
 }
 
-float coli_e2m1_decode(uint8_t nibble) {
+float lma_e2m1_decode(uint8_t nibble) {
     static const float values[16] = {
         0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f,
         0.0f, -0.5f, -1.0f, -1.5f, -2.0f, -3.0f, -4.0f, -6.0f,
@@ -16322,7 +16322,7 @@ float coli_e2m1_decode(uint8_t nibble) {
     return values[nibble & 15];
 }
 
-float coli_e4m3fn_decode(uint8_t value) {
+float lma_e4m3fn_decode(uint8_t value) {
     int sign = value >> 7;
     int exponent = (value >> 3) & 15;
     int mantissa = value & 7;
@@ -16335,7 +16335,7 @@ float coli_e4m3fn_decode(uint8_t value) {
     return sign ? -number : number;
 }
 
-uint8_t coli_e4m3fn_encode(float value) {
+uint8_t lma_e4m3fn_encode(float value) {
     if (isnan(value)) return 0x7f;
     int negative = signbit(value) != 0;
     float magnitude = fabsf(value);
@@ -16371,7 +16371,7 @@ uint8_t coli_e4m3fn_encode(float value) {
 #else
     float best_distance = FLT_MAX;
     for (uint8_t code = 0; code <= 0x7e; code++) {
-        float candidate = coli_e4m3fn_decode(code);
+        float candidate = lma_e4m3fn_decode(code);
         float distance = fabsf(candidate - magnitude);
         if (distance < best_distance ||
             (distance == best_distance && !(code & 1) && (best & 1))) {
@@ -16383,7 +16383,7 @@ uint8_t coli_e4m3fn_encode(float value) {
     return (uint8_t)(best | (negative ? 0x80 : 0));
 }
 
-float coli_bf16_round(float value) {
+float lma_bf16_round(float value) {
     uint32_t bits;
     memcpy(&bits, &value, sizeof(bits));
     if ((bits & 0x7f800000u) != 0x7f800000u) {
@@ -16395,17 +16395,17 @@ float coli_bf16_round(float value) {
     return value;
 }
 
-float coli_bf16_decode(uint16_t value) {
+float lma_bf16_decode(uint16_t value) {
     uint32_t bits = (uint32_t)value << 16;
     float output;
     memcpy(&output, &bits, sizeof(output));
     return output;
 }
 
-void coli_bf16_round_array(float *values, size_t count) {
+void lma_bf16_round_array(float *values, size_t count) {
     if (!values) return;
     for (size_t index = 0; index < count; index++)
-        values[index] = coli_bf16_round(values[index]);
+        values[index] = lma_bf16_round(values[index]);
 }
 
 static int ceil_log2_positive(float value) {
@@ -16414,7 +16414,7 @@ static int ceil_log2_positive(float value) {
     return fraction == 0.5f ? exponent - 1 : exponent;
 }
 
-int coli_fp8_activation_qdq_ref(float *output, uint8_t *scales,
+int lma_fp8_activation_qdq_ref(float *output, uint8_t *scales,
                                 const float *input, size_t length,
                                 size_t block_size) {
     if (!output || !scales || !input || !length || !block_size)
@@ -16429,19 +16429,19 @@ int coli_fp8_activation_qdq_ref(float *output, uint8_t *scales,
         if (scale_exponent < -127) scale_exponent = -127;
         if (scale_exponent > 127) scale_exponent = 127;
         uint8_t encoded_scale = (uint8_t)(scale_exponent + 127);
-        float scale = coli_e8m0_decode(encoded_scale);
+        float scale = lma_e8m0_decode(encoded_scale);
         scales[base / block_size] = encoded_scale;
         for (size_t i = 0; i < count; i++) {
             float normalized = fmaxf(-448.0f,
                                      fminf(448.0f, input[base + i] / scale));
-            output[base + i] = coli_e4m3fn_decode(
-                coli_e4m3fn_encode(normalized)) * scale;
+            output[base + i] = lma_e4m3fn_decode(
+                lma_e4m3fn_encode(normalized)) * scale;
         }
     }
     return 0;
 }
 
-int coli_fp4_activation_qdq_ref(float *output, uint8_t *scales,
+int lma_fp4_activation_qdq_ref(float *output, uint8_t *scales,
                                 const float *input, size_t length,
                                 size_t block_size) {
     if (!output || !scales || !input || !length || !block_size)
@@ -16456,25 +16456,25 @@ int coli_fp4_activation_qdq_ref(float *output, uint8_t *scales,
         if (exponent < -127) exponent = -127;
         if (exponent > 127) exponent = 127;
         scales[base / block_size] = (uint8_t)(exponent + 127);
-        float scale = coli_e8m0_decode(scales[base / block_size]);
+        float scale = lma_e8m0_decode(scales[base / block_size]);
         for (size_t i = 0; i < count; i++) {
             float value = fmaxf(-6.0f, fminf(6.0f, input[base + i] / scale));
             int best = 0;
-            float distance = fabsf(value - coli_e2m1_decode(0));
+            float distance = fabsf(value - lma_e2m1_decode(0));
             for (int code = 1; code < 16; code++) {
-                float candidate = fabsf(value - coli_e2m1_decode((uint8_t)code));
+                float candidate = fabsf(value - lma_e2m1_decode((uint8_t)code));
                 if (candidate < distance) {
                     distance = candidate;
                     best = code;
                 }
             }
-            output[base + i] = coli_e2m1_decode((uint8_t)best) * scale;
+            output[base + i] = lma_e2m1_decode((uint8_t)best) * scale;
         }
     }
     return 0;
 }
 
-int coli_hadamard_bf16_ref(float *values, size_t length) {
+int lma_hadamard_bf16_ref(float *values, size_t length) {
     if (!values || !length || (length & (length - 1))) return -1;
     for (size_t width = 1; width < length; width *= 2)
         for (size_t base = 0; base < length; base += 2 * width)
@@ -16486,7 +16486,7 @@ int coli_hadamard_bf16_ref(float *values, size_t length) {
             }
     float scale = 1.0f / sqrtf((float)length);
     for (size_t i = 0; i < length; i++)
-        values[i] = coli_bf16_round(values[i] * scale);
+        values[i] = lma_bf16_round(values[i] * scale);
     return 0;
 }
 
@@ -16503,10 +16503,10 @@ typedef struct {
     float *activation; size_t activation_capacity;
     uint8_t *scales; size_t scales_capacity;
 } V4QdqScratch;
-_Thread_local V4QdqScratch coli_v4_qdq_scratch_state;
-int coli_v4_qdq_scratch(size_t activation_count, size_t scales_count,
+_Thread_local V4QdqScratch lma_v4_qdq_scratch_state;
+int lma_v4_qdq_scratch(size_t activation_count, size_t scales_count,
                           float **activation, uint8_t **scales) {
-    V4QdqScratch *s = &coli_v4_qdq_scratch_state;
+    V4QdqScratch *s = &lma_v4_qdq_scratch_state;
     if (activation_count > s->activation_capacity) {
         free(s->activation);
         s->activation = malloc(activation_count * sizeof(*s->activation));
@@ -16544,7 +16544,7 @@ int coli_v4_qdq_scratch(size_t activation_count, size_t scales_count,
  * every rows16 ISA rounds the product before the add.  The batch form keeps
  * one accumulator per activation while decoding each weight tile once, so it
  * preserves that order without streaming the matrix once per activation. */
-void coli_fp4_matmul_batch_rows16_order(float *y, const uint8_t *q4,
+void lma_fp4_matmul_batch_rows16_order(float *y, const uint8_t *q4,
                                         const uint8_t *e8s, const float *x,
                                         int S, int I, int O) {
     /* Decode is always batch-one.  Keep it on the register-resident kernel;
@@ -16552,18 +16552,18 @@ void coli_fp4_matmul_batch_rows16_order(float *y, const uint8_t *q4,
      * Prefill still shares decoded weights whenever two or more positions
      * route to the same expert. */
     if (S == 1) {
-        coli_fp4_matvec_rows16_order(y, q4, e8s, x, I, O);
+        lma_fp4_matvec_rows16_order(y, q4, e8s, x, I, O);
         return;
     }
     int rb = I / 2, ng = I / 32;
     float e8lut[256];
-    memcpy(e8lut, coli_e8m0_table(), sizeof(e8lut));
+    memcpy(e8lut, lma_e8m0_table(), sizeof(e8lut));
 #ifdef __AVX2__
     /* Nibble decode borrows matmul_mxfp4's trick — doubled e2m1 values are
      * exact int8, one pshufb decodes a 16-byte row into 32 codes — but the
      * 0.5 un-doubling multiplies the DECODED VALUE here (exact: d*0.5 is a
      * pure exponent shift), never the scale: the accumulation must see the
-     * same w as coli_e2m1_decode so (x*w)*scale rounds identically to the
+     * same w as lma_e2m1_decode so (x*w)*scale rounds identically to the
      * rows16 kernels. Rows decode row-major (streaming loads), then 8x8
      * transposes turn them column-major so 16 rows ride two 8-lane vectors
      * down the column loop in the rows16 per-row order: mul, mul, add. */
@@ -16744,7 +16744,7 @@ void coli_fp4_matmul_batch_rows16_order(float *y, const uint8_t *q4,
         float sums[128] = {0};
         for (int c = 0; c < I; c++) {
             uint8_t byte = w[c >> 1];
-            float wv = coli_e2m1_decode((c & 1) ? (uint8_t)(byte >> 4)
+            float wv = lma_e2m1_decode((c & 1) ? (uint8_t)(byte >> 4)
                                                 : (uint8_t)(byte & 0xF));
             float scale = e8lut[scl[c / 32]];
             for (int s = 0; s < S; s++) {
@@ -16758,12 +16758,12 @@ void coli_fp4_matmul_batch_rows16_order(float *y, const uint8_t *q4,
 #endif
 }
 
-void coli_fp4_matvec_rows16_order(float *y, const uint8_t *q4,
+void lma_fp4_matvec_rows16_order(float *y, const uint8_t *q4,
                                   const uint8_t *e8s, const float *x,
                                   int I, int O) {
     int rb = I / 2, ng = I / 32;
     float e8lut[256];
-    memcpy(e8lut, coli_e8m0_table(), sizeof(e8lut));
+    memcpy(e8lut, lma_e8m0_table(), sizeof(e8lut));
 #ifdef __AVX2__
     /* Batch-one has its own loop so sum0/sum1 remain YMM registers for the
      * whole row tile.  Do not fold this back into the runtime-S kernel: even
@@ -16945,13 +16945,13 @@ void coli_fp4_matvec_rows16_order(float *y, const uint8_t *q4,
             uint8_t byte1 = w1[c >> 1];
             uint8_t byte2 = w2[c >> 1];
             uint8_t byte3 = w3[c >> 1];
-            float wv0 = coli_e2m1_decode((c & 1)
+            float wv0 = lma_e2m1_decode((c & 1)
                 ? (uint8_t)(byte0 >> 4) : (uint8_t)(byte0 & 0xF));
-            float wv1 = coli_e2m1_decode((c & 1)
+            float wv1 = lma_e2m1_decode((c & 1)
                 ? (uint8_t)(byte1 >> 4) : (uint8_t)(byte1 & 0xF));
-            float wv2 = coli_e2m1_decode((c & 1)
+            float wv2 = lma_e2m1_decode((c & 1)
                 ? (uint8_t)(byte2 >> 4) : (uint8_t)(byte2 & 0xF));
-            float wv3 = coli_e2m1_decode((c & 1)
+            float wv3 = lma_e2m1_decode((c & 1)
                 ? (uint8_t)(byte3 >> 4) : (uint8_t)(byte3 & 0xF));
             float t0 = xc * wv0;
             float t1 = xc * wv1;
@@ -16974,11 +16974,11 @@ void coli_fp4_matvec_rows16_order(float *y, const uint8_t *q4,
 #endif
 }
 
-int coli_fp4_matvec_ref(float *output, const ColiTensorView *weight,
+int lma_fp4_matvec_ref(float *output, const LmaTensorView *weight,
                         const float *input) {
     if (!output || !weight || !input ||
-        weight->format != COLI_TENSOR_FP4_NATIVE_BLOCK ||
-        weight->scale_format != COLI_SCALE_UE8M0 ||
+        weight->format != LMA_TENSOR_FP4_NATIVE_BLOCK ||
+        weight->scale_format != LMA_SCALE_UE8M0 ||
         !weight->data || !weight->scales || weight->rows < 1 ||
         weight->columns < 1 || weight->columns % 128 ||
         weight->block_rows != 1 || weight->block_columns != 32)
@@ -16990,25 +16990,25 @@ int coli_fp4_matvec_ref(float *output, const ColiTensorView *weight,
     if (weight->data_bytes != rows * packed_stride ||
         weight->scale_bytes != rows * scale_stride)
         return -1;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     /* Mirrored expert weights carry a Dsv4CudaTensor* in weight->gpu. The
      * backend consumes the same packed-nibble + per-row UE8M0 layout the store
      * produces, so the handle alone drives the call; only the activation
      * vector crosses the boundary (raw fp32, like the fp8 tier). Any backend
      * failure falls through to the CPU reference below. */
     if (weight->gpu &&
-        coli_v4_gpu_matvec_grouped(weight, output, input, 1) == 0)
+        lma_v4_gpu_matvec_grouped(weight, output, input, 1) == 0)
         return 0;
 #endif
     float *activation; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
+    if (lma_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
         return -1;
-    if (coli_fp8_activation_qdq_ref(activation, activation_scales,
+    if (lma_fp8_activation_qdq_ref(activation, activation_scales,
                                     input, columns, 128) != 0) {
         return -1;
     }
     if (rows % 16 == 0)          /* rows16-packable shape: converge (#1136) */
-        coli_fp4_matvec_rows16_order(output, weight->data, weight->scales,
+        lma_fp4_matvec_rows16_order(output, weight->data, weight->scales,
                                 activation, (int)columns, (int)rows);
     else
         matmul_mxfp4(output, activation, weight->data, weight->scales,
@@ -17018,9 +17018,9 @@ int coli_fp4_matvec_ref(float *output, const ColiTensorView *weight,
 
 /* Validazione condivisa fra _ref e _pre (stessi controlli di sempre).
  * EN: shared shape/format validation between _ref and _pre. */
-static int fp8_matvec_validate(const ColiTensorView *weight) {
-    if (!weight || weight->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
-        weight->scale_format != COLI_SCALE_F32 ||
+static int fp8_matvec_validate(const LmaTensorView *weight) {
+    if (!weight || weight->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
+        weight->scale_format != LMA_SCALE_F32 ||
         !weight->data || !weight->scales || weight->rows < 1 ||
         weight->columns < 1 || weight->columns % 128 ||
         (weight->block_rows != 128 && weight->block_rows != 8) ||
@@ -17040,7 +17040,7 @@ static int fp8_matvec_validate(const ColiTensorView *weight) {
  * EN: CPU compute on an already-qdq'd activation, extracted verbatim. */
 #ifdef __AVX2__
 /* Branchless SIMD decode of 8 E4M3FN codes -> 8 f32, byte-identical to
- * coli_e4m3fn_decode for all 256 inputs (exhaustively verified). Replaces a
+ * lma_e4m3fn_decode for all 256 inputs (exhaustively verified). Replaces a
  * slow per-element _mm256_i32gather_ps from a 256-float LUT. E4M3FN values are
  * exact, so the f32 bit pattern is built directly: normals via integer field
  * assembly, subnormals as (float)mantissa*2^-9 (exact), NaN (code&0x7F==0x7F)
@@ -17065,7 +17065,7 @@ static inline __m256 v4_fp8_decode8(__m256i codes) {
 }
 #endif
 
-static int fp8_matvec_compute(float *output, const ColiTensorView *weight,
+static int fp8_matvec_compute(float *output, const LmaTensorView *weight,
                               const float *activation) {
     size_t rows = (size_t)weight->rows;
     size_t columns = (size_t)weight->columns;
@@ -17106,25 +17106,25 @@ static int fp8_matvec_compute(float *output, const ColiTensorView *weight,
     return 0;
 }
 
-int coli_fp8_matvec_ref(float *output, const ColiTensorView *weight,
+int lma_fp8_matvec_ref(float *output, const LmaTensorView *weight,
                         const float *input) {
     if (!output || !input || fp8_matvec_validate(weight))
         return -1;
     size_t columns = (size_t)weight->columns;
     size_t scale_columns = columns / 128;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     /* The resident layer mirror carries a Dsv4CudaTensor* in view->gpu. Its
      * weight bytes are the UNPACKED row-major matrix (the resident copy may be
      * rows8-packed for the AVX2 CPU path), so the handle alone drives the call;
      * only the activation vectors cross the boundary. Any backend failure falls
      * through to the CPU reference below. */
-    if (weight->gpu && coli_v4_gpu_fp8_matvec(weight, output, input) == 0)
+    if (weight->gpu && lma_v4_gpu_fp8_matvec(weight, output, input) == 0)
         return 0;
 #endif
     float *activation; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch(columns, scale_columns, &activation, &activation_scales))
+    if (lma_v4_qdq_scratch(columns, scale_columns, &activation, &activation_scales))
         return -1;
-    if (coli_fp8_activation_qdq_ref(activation, activation_scales,
+    if (lma_fp8_activation_qdq_ref(activation, activation_scales,
                                     input, columns, 128) != 0) {
         return -1;
     }
@@ -17132,26 +17132,26 @@ int coli_fp8_matvec_ref(float *output, const ColiTensorView *weight,
 }
 
 /* Variante a qdq sollevata: `activation` e' l'input gia' passato da
- * coli_fp8_activation_qdq_ref UNA volta dal chiamante (wq_a e wkv consumano lo
+ * lma_fp8_activation_qdq_ref UNA volta dal chiamante (wq_a e wkv consumano lo
  * stesso vettore: prima veniva riquantizzato due volte per token per layer).
  * `input` resta il vettore raw per l'eventuale path GPU, che quantizza per
  * conto suo — identico a _ref. Stessi controlli, stesso compute: bit-identico.
  * EN: hoisted-qdq variant. `activation` is the input already qdq'd ONCE by the
  * caller (wq_a and wkv consume the same vector); `input` stays raw for the GPU
  * path, which does its own thing exactly as in _ref. Bit-identical. */
-int coli_fp8_matvec_pre(float *output, const ColiTensorView *weight,
+int lma_fp8_matvec_pre(float *output, const LmaTensorView *weight,
                         const float *input, const float *activation) {
     if (!output || !input || !activation || fp8_matvec_validate(weight))
         return -1;
-#ifdef COLI_V4_GPU_TIER
-    if (weight->gpu && coli_v4_gpu_fp8_matvec(weight, output, input) == 0)
+#ifdef LMA_V4_GPU_TIER
+    if (weight->gpu && lma_v4_gpu_fp8_matvec(weight, output, input) == 0)
         return 0;
 #endif
     return fp8_matvec_compute(output, weight, activation);
 }
-#endif /* COLI_V4_UNIT_NATIVE_QUANT */
+#endif /* LMA_V4_UNIT_NATIVE_QUANT */
 
-#ifdef COLI_V4_UNIT_NATIVE_QUANT_DUAL
+#ifdef LMA_V4_UNIT_NATIVE_QUANT_DUAL
 /* Folded into the DeepSeek V4 engine translation units. */
 #include "native_quant_dual.h"
 
@@ -17171,21 +17171,21 @@ int coli_fp8_matvec_pre(float *output, const ColiTensorView *weight,
 #pragma GCC diagnostic pop
 #endif
 
-static int dual_same_shape(const ColiTensorView *a, const ColiTensorView *b) {
+static int dual_same_shape(const LmaTensorView *a, const LmaTensorView *b) {
     return a && b && a->rows == b->rows && a->columns == b->columns &&
            a->block_rows == b->block_rows &&
            a->block_columns == b->block_columns;
 }
 
-int coli_fp4_dual_matvec_ref(float *output_a, float *output_b,
-                             const ColiTensorView *a,
-                             const ColiTensorView *b,
+int lma_fp4_dual_matvec_ref(float *output_a, float *output_b,
+                             const LmaTensorView *a,
+                             const LmaTensorView *b,
                              const float *input) {
     if (!output_a || !output_b || !input || !dual_same_shape(a, b) ||
-        a->format != COLI_TENSOR_FP4_NATIVE_BLOCK ||
-        b->format != COLI_TENSOR_FP4_NATIVE_BLOCK ||
-        a->scale_format != COLI_SCALE_UE8M0 ||
-        b->scale_format != COLI_SCALE_UE8M0 || !a->data || !b->data ||
+        a->format != LMA_TENSOR_FP4_NATIVE_BLOCK ||
+        b->format != LMA_TENSOR_FP4_NATIVE_BLOCK ||
+        a->scale_format != LMA_SCALE_UE8M0 ||
+        b->scale_format != LMA_SCALE_UE8M0 || !a->data || !b->data ||
         !a->scales || !b->scales || a->rows < 1 || a->columns < 1 ||
         a->columns % 128 || a->block_rows != 1 || a->block_columns != 32)
         return -1;
@@ -17195,25 +17195,25 @@ int coli_fp4_dual_matvec_ref(float *output_a, float *output_b,
         b->data_bytes != rows * packed_stride ||
         a->scale_bytes != rows * scale_stride ||
         b->scale_bytes != rows * scale_stride) return -1;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     /* Expert gate/up mirrors (both fp4, same shape). Both handles must be
      * present and the backend must succeed on both, else CPU fallback. */
     if (a->gpu && b->gpu &&
-        coli_v4_gpu_matvec_grouped(a, output_a, input, 1) == 0 &&
-        coli_v4_gpu_matvec_grouped(b, output_b, input, 1) == 0)
+        lma_v4_gpu_matvec_grouped(a, output_a, input, 1) == 0 &&
+        lma_v4_gpu_matvec_grouped(b, output_b, input, 1) == 0)
         return 0;
 #endif
     float *activation; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
+    if (lma_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
         return -1;
-    if (coli_fp8_activation_qdq_ref(activation, activation_scales,
+    if (lma_fp8_activation_qdq_ref(activation, activation_scales,
                                     input, columns, 128) != 0) {
         return -1;
     }
     if (rows % 16 == 0) {        /* rows16-packable shape: converge (#1136) */
-        coli_fp4_matvec_rows16_order(output_a, a->data, a->scales,
+        lma_fp4_matvec_rows16_order(output_a, a->data, a->scales,
                                 activation, (int)columns, (int)rows);
-        coli_fp4_matvec_rows16_order(output_b, b->data, b->scales,
+        lma_fp4_matvec_rows16_order(output_b, b->data, b->scales,
                                 activation, (int)columns, (int)rows);
     } else {
         matmul_mxfp4(output_a, activation, a->data, a->scales,
@@ -17224,15 +17224,15 @@ int coli_fp4_dual_matvec_ref(float *output_a, float *output_b,
     return 0;
 }
 
-int coli_fp8_dual_matvec_ref(float *output_a, float *output_b,
-                             const ColiTensorView *a,
-                             const ColiTensorView *b,
+int lma_fp8_dual_matvec_ref(float *output_a, float *output_b,
+                             const LmaTensorView *a,
+                             const LmaTensorView *b,
                              const float *input) {
     if (!output_a || !output_b || !input || !dual_same_shape(a, b) ||
-        a->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
-        b->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
-        a->scale_format != COLI_SCALE_F32 ||
-        b->scale_format != COLI_SCALE_F32 || !a->data || !b->data ||
+        a->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
+        b->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
+        a->scale_format != LMA_SCALE_F32 ||
+        b->scale_format != LMA_SCALE_F32 || !a->data || !b->data ||
         !a->scales || !b->scales || a->rows < 1 || a->columns < 1 ||
         a->columns % 128 ||
         (a->block_rows != 128 && a->block_rows != 8) ||
@@ -17242,18 +17242,18 @@ int coli_fp8_dual_matvec_ref(float *output_a, float *output_b,
     if (a->data_bytes != rows * columns || b->data_bytes != rows * columns ||
         a->scale_bytes != scale_rows * scale_columns * sizeof(float) ||
         b->scale_bytes != scale_rows * scale_columns * sizeof(float)) return -1;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     /* Shared-expert gate/up mirrors (both fp8, same shape). Both handles must
      * be present and the backend must succeed on both, else CPU fallback. */
     if (a->gpu && b->gpu &&
-        coli_v4_gpu_fp8_matvec(a, output_a, input) == 0 &&
-        coli_v4_gpu_fp8_matvec(b, output_b, input) == 0)
+        lma_v4_gpu_fp8_matvec(a, output_a, input) == 0 &&
+        lma_v4_gpu_fp8_matvec(b, output_b, input) == 0)
         return 0;
 #endif
     float *activation; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch(columns, scale_columns, &activation, &activation_scales))
+    if (lma_v4_qdq_scratch(columns, scale_columns, &activation, &activation_scales))
         return -1;
-    if (coli_fp8_activation_qdq_ref(activation, activation_scales,
+    if (lma_fp8_activation_qdq_ref(activation, activation_scales,
                                     input, columns, 128) != 0) {
         return -1;
     }
@@ -17264,7 +17264,7 @@ int coli_fp8_dual_matvec_ref(float *output_a, float *output_b,
         }
         float fp8[256];
         for (int code = 0; code < 256; code++)
-            fp8[code] = coli_e4m3fn_decode((uint8_t)code);
+            fp8[code] = lma_e4m3fn_decode((uint8_t)code);
         const uint8_t *data_a = a->data, *data_b = b->data;
         const float *scales_a = a->scales, *scales_b = b->scales;
         #pragma omp parallel for schedule(static)
@@ -17304,9 +17304,9 @@ int coli_fp8_dual_matvec_ref(float *output_a, float *output_b,
                1, (int)columns, (int)rows);
     return 0;
 }
-#endif /* COLI_V4_UNIT_NATIVE_QUANT_DUAL */
+#endif /* LMA_V4_UNIT_NATIVE_QUANT_DUAL */
 
-#ifdef COLI_V4_UNIT_NATIVE_QUANT_BATCH
+#ifdef LMA_V4_UNIT_NATIVE_QUANT_BATCH
 /* Folded into the DeepSeek V4 engine translation units. */
 #include "native_quant_batch.h"
 
@@ -17326,16 +17326,16 @@ int coli_fp8_dual_matvec_ref(float *output_a, float *output_b,
 #pragma GCC diagnostic pop
 #endif
 
-#ifdef COLI_V4_TEST_HOOKS
-uint64_t coli_v4_test_fp4_batch_calls;
+#ifdef LMA_V4_TEST_HOOKS
+uint64_t lma_v4_test_fp4_batch_calls;
 #endif
 
 /* Validazione condivisa fra _ref e _pre (stessi controlli di sempre).
  * EN: shared shape/format validation between _ref and _pre. */
-static int fp8_batch_validate(const ColiTensorView *weight, int batch) {
+static int fp8_batch_validate(const LmaTensorView *weight, int batch) {
     if (!weight || batch < 1 || batch > 128 ||
-        weight->format != COLI_TENSOR_FP8_E4M3_BLOCK ||
-        weight->scale_format != COLI_SCALE_F32 ||
+        weight->format != LMA_TENSOR_FP8_E4M3_BLOCK ||
+        weight->scale_format != LMA_SCALE_F32 ||
         !weight->data || !weight->scales || weight->rows < 1 ||
         weight->columns < 1 || weight->columns % 128 ||
         (weight->block_rows != 128 && weight->block_rows != 8) ||
@@ -17348,30 +17348,30 @@ static int fp8_batch_validate(const ColiTensorView *weight, int batch) {
     return 0;
 }
 
-static int fp8_batch_compute(float *outputs, const ColiTensorView *weight,
+static int fp8_batch_compute(float *outputs, const LmaTensorView *weight,
                              const float *activations, int batch);
 
-int coli_fp8_matmul_batch_ref(float *outputs, const ColiTensorView *weight,
+int lma_fp8_matmul_batch_ref(float *outputs, const LmaTensorView *weight,
                               const float *inputs, int batch) {
     if (!outputs || !inputs || fp8_batch_validate(weight, batch)) return -1;
     size_t columns = (size_t)weight->columns;
     size_t scale_columns = columns / 128;
-#ifdef COLI_V4_GPU_TIER
-    /* Same mirror-driven dispatch as coli_fp8_matvec_ref: the resident
+#ifdef LMA_V4_GPU_TIER
+    /* Same mirror-driven dispatch as lma_fp8_matvec_ref: the resident
      * layer's Dsv4CudaTensor handle rides on view->gpu and only activations
      * cross the boundary. Any backend refusal (no handle, stub matmul_batch
      * in an older DLL, allocation failure) falls through to the CPU
      * reference below. */
     if (weight->gpu &&
-        coli_v4_gpu_fp8_matmul_batch(weight, outputs, inputs, batch) == 0)
+        lma_v4_gpu_fp8_matmul_batch(weight, outputs, inputs, batch) == 0)
         return 0;
 #endif
     float *activations; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch((size_t)batch * columns, (size_t)batch * scale_columns,
+    if (lma_v4_qdq_scratch((size_t)batch * columns, (size_t)batch * scale_columns,
                             &activations, &activation_scales))
         return -1;
     for (int item = 0; item < batch; item++)
-        if (coli_fp8_activation_qdq_ref(
+        if (lma_fp8_activation_qdq_ref(
                 activations + (size_t)item * columns,
                 activation_scales + (size_t)item * scale_columns,
                 inputs + (size_t)item * columns, columns, 128) != 0) {
@@ -17381,19 +17381,19 @@ int coli_fp8_matmul_batch_ref(float *outputs, const ColiTensorView *weight,
 }
 
 /* Variante a qdq sollevata: `activations` sono gli input gia' passati da
- * coli_fp8_activation_qdq_ref UNA volta dal chiamante (wq_a e wkv del prefill
+ * lma_fp8_activation_qdq_ref UNA volta dal chiamante (wq_a e wkv del prefill
  * consumano lo stesso batch); `inputs` resta il batch raw per il path GPU,
  * identico a _ref. Bit-identico.
  * EN: hoisted-qdq variant — `activations` were qdq'd once by the caller,
  * `inputs` stays raw for the GPU path exactly as in _ref. Bit-identical. */
-int coli_fp8_matmul_batch_pre(float *outputs, const ColiTensorView *weight,
+int lma_fp8_matmul_batch_pre(float *outputs, const LmaTensorView *weight,
                               const float *inputs, const float *activations,
                               int batch) {
     if (!outputs || !inputs || !activations || fp8_batch_validate(weight, batch))
         return -1;
-#ifdef COLI_V4_GPU_TIER
+#ifdef LMA_V4_GPU_TIER
     if (weight->gpu &&
-        coli_v4_gpu_fp8_matmul_batch(weight, outputs, inputs, batch) == 0)
+        lma_v4_gpu_fp8_matmul_batch(weight, outputs, inputs, batch) == 0)
         return 0;
 #endif
     return fp8_batch_compute(outputs, weight, activations, batch);
@@ -17401,7 +17401,7 @@ int coli_fp8_matmul_batch_pre(float *outputs, const ColiTensorView *weight,
 
 /* Compute CPU su attivazioni GIA' qdq (estratto invariato da batch_ref).
  * EN: CPU compute on already-qdq'd activations, extracted verbatim. */
-static int fp8_batch_compute(float *outputs, const ColiTensorView *weight,
+static int fp8_batch_compute(float *outputs, const LmaTensorView *weight,
                              const float *activations, int batch) {
     size_t rows = (size_t)weight->rows, columns = (size_t)weight->columns;
     size_t scale_columns = columns / 128;
@@ -17413,7 +17413,7 @@ static int fp8_batch_compute(float *outputs, const ColiTensorView *weight,
         }
         float fp8[256];
         for (int code = 0; code < 256; code++)
-            fp8[code] = coli_e4m3fn_decode((uint8_t)code);
+            fp8[code] = lma_e4m3fn_decode((uint8_t)code);
         const uint8_t *data = weight->data;
         const float *scales = weight->scales;
         #pragma omp parallel for schedule(static)
@@ -17452,34 +17452,34 @@ static int fp8_batch_compute(float *outputs, const ColiTensorView *weight,
     return 0;
 }
 
-int coli_fp4_matmul_batch_ref(float *outputs, const ColiTensorView *weight,
+int lma_fp4_matmul_batch_ref(float *outputs, const LmaTensorView *weight,
                               const float *inputs, int batch) {
     if (!outputs || !weight || !inputs || batch < 1 || batch > 128 ||
-        weight->format != COLI_TENSOR_FP4_NATIVE_BLOCK ||
-        weight->scale_format != COLI_SCALE_UE8M0 ||
+        weight->format != LMA_TENSOR_FP4_NATIVE_BLOCK ||
+        weight->scale_format != LMA_SCALE_UE8M0 ||
         !weight->data || !weight->scales || weight->rows < 1 ||
         weight->columns < 1 || weight->columns % 128 ||
         weight->block_rows != 1 || weight->block_columns != 32) return -1;
-#ifdef COLI_V4_TEST_HOOKS
-    coli_v4_test_fp4_batch_calls++;
+#ifdef LMA_V4_TEST_HOOKS
+    lma_v4_test_fp4_batch_calls++;
 #endif
     size_t rows = (size_t)weight->rows, columns = (size_t)weight->columns;
     size_t packed_stride = columns / 2, scale_stride = columns / 32;
     if (weight->data_bytes != rows * packed_stride ||
         weight->scale_bytes != rows * scale_stride) return -1;
     float *activations; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch((size_t)batch * columns, (size_t)batch * columns / 128,
+    if (lma_v4_qdq_scratch((size_t)batch * columns, (size_t)batch * columns / 128,
                             &activations, &activation_scales))
         return -1;
     for (int item = 0; item < batch; item++)
-        if (coli_fp8_activation_qdq_ref(
+        if (lma_fp8_activation_qdq_ref(
                 activations + (size_t)item * columns,
                 activation_scales + (size_t)item * columns / 128,
                 inputs + (size_t)item * columns, columns, 128) != 0) {
             return -1;
         }
     if (rows % 16 == 0)
-        coli_fp4_matmul_batch_rows16_order(
+        lma_fp4_matmul_batch_rows16_order(
             outputs, weight->data, weight->scales, activations,
             batch, (int)columns, (int)rows);
     else
@@ -17487,9 +17487,9 @@ int coli_fp4_matmul_batch_ref(float *outputs, const ColiTensorView *weight,
                      batch, (int)columns, (int)rows);
     return 0;
 }
-#endif /* COLI_V4_UNIT_NATIVE_QUANT_BATCH */
+#endif /* LMA_V4_UNIT_NATIVE_QUANT_BATCH */
 
-#ifdef COLI_V4_UNIT_NATIVE_QUANT_ROWS16
+#ifdef LMA_V4_UNIT_NATIVE_QUANT_ROWS16
 /* Folded into the DeepSeek V4 engine translation units. */
 #include "native_quant_fp4_rows16.h"
 
@@ -17507,9 +17507,9 @@ int coli_fp4_matmul_batch_ref(float *outputs, const ColiTensorView *weight,
 #include <stdlib.h>
 #include <string.h>
 
-static int source_valid(const ColiTensorView *weight) {
-    if (!weight || weight->format != COLI_TENSOR_FP4_NATIVE_BLOCK ||
-        weight->scale_format != COLI_SCALE_UE8M0 || !weight->data ||
+static int source_valid(const LmaTensorView *weight) {
+    if (!weight || weight->format != LMA_TENSOR_FP4_NATIVE_BLOCK ||
+        weight->scale_format != LMA_SCALE_UE8M0 || !weight->data ||
         !weight->scales || weight->rows < 1 || weight->rows % 16 ||
         weight->columns < 1 || weight->columns % 128 ||
         weight->block_rows != 1 || weight->block_columns != 32) return 0;
@@ -17518,9 +17518,9 @@ static int source_valid(const ColiTensorView *weight) {
            weight->scale_bytes == rows * columns / 32;
 }
 
-static int packed_valid(const ColiTensorView *weight) {
-    if (!weight || weight->format != COLI_TENSOR_FP4_NATIVE_BLOCK ||
-        weight->scale_format != COLI_SCALE_UE8M0 || !weight->data ||
+static int packed_valid(const LmaTensorView *weight) {
+    if (!weight || weight->format != LMA_TENSOR_FP4_NATIVE_BLOCK ||
+        weight->scale_format != LMA_SCALE_UE8M0 || !weight->data ||
         !weight->scales || weight->rows < 1 || weight->rows % 16 ||
         weight->columns < 1 || weight->columns % 128 ||
         weight->block_rows != 16 || weight->block_columns != 32) return 0;
@@ -17529,9 +17529,9 @@ static int packed_valid(const ColiTensorView *weight) {
            weight->scale_bytes == rows * columns / 32;
 }
 
-int coli_fp4_pack_rows16_v10(unsigned char *packed_data,
+int lma_fp4_pack_rows16_v10(unsigned char *packed_data,
                              unsigned char *packed_scales,
-                             const ColiTensorView *source) {
+                             const LmaTensorView *source) {
     if (!packed_data || !packed_scales || !source_valid(source)) return -1;
     const unsigned char *data = source->data;
     const unsigned char *scales = source->scales;
@@ -17552,7 +17552,7 @@ int coli_fp4_pack_rows16_v10(unsigned char *packed_data,
 #ifdef __AVX512F__
 static void decode_tables(__m512 *fp4_table, float e8[256]) {
     /* e8: memcpy from the shared table (#1171) rather than 256 decode calls. */
-    memcpy(e8, coli_e8m0_table(), 256 * sizeof(*e8));
+    memcpy(e8, lma_e8m0_table(), 256 * sizeof(*e8));
     /* Keep the E2M1 table out of an instrumented stack frame.  GCC 13 ASan
      * can fault while lowering a 64-byte AVX-512 load from a local array;
      * constructing the identical register directly also removes 16 scalar
@@ -17585,8 +17585,8 @@ typedef struct Avx2Rows16Tables {
 
 static void avx2_rows16_tables(Avx2Rows16Tables *tables) {
     for (int i = 0; i < 16; i++)
-        tables->fp4[i] = coli_e2m1_decode((uint8_t)i);
-    memcpy(tables->e8, coli_e8m0_table(), sizeof(tables->e8));
+        tables->fp4[i] = lma_e2m1_decode((uint8_t)i);
+    memcpy(tables->e8, lma_e8m0_table(), sizeof(tables->e8));
 }
 
 static inline void avx2_decode_rows16(__m256 values[2],
@@ -17634,8 +17634,8 @@ typedef struct NeonRows16Tables {
 
 static void neon_rows16_tables(NeonRows16Tables *tables) {
     float fp4[16];
-    for (int i = 0; i < 16; i++) fp4[i] = coli_e2m1_decode((uint8_t)i);
-    memcpy(tables->e8, coli_e8m0_table(), sizeof(tables->e8));
+    for (int i = 0; i < 16; i++) fp4[i] = lma_e2m1_decode((uint8_t)i);
+    memcpy(tables->e8, lma_e8m0_table(), sizeof(tables->e8));
     const unsigned char *bytes = (const unsigned char *)fp4;
     for (int group = 0; group < 4; group++)
         tables->fp4_bytes.val[group] = vld1q_u8(bytes + 16 * group);
@@ -17678,19 +17678,19 @@ static inline void neon_rows16_accumulate(float32x4_t sums[4],
 }
 #endif
 
-int coli_fp4_matvec_rows16_v10(float *output,
-                               const ColiTensorView *weight,
+int lma_fp4_matvec_rows16_v10(float *output,
+                               const LmaTensorView *weight,
                                const float *input) {
-#if !defined(COLI_FP4_ROWS16_KERNEL)
+#if !defined(LMA_FP4_ROWS16_KERNEL)
     (void)output; (void)weight; (void)input; return -1;
 #elif defined(__AVX512F__)
     if (!output || !input || !packed_valid(weight)) return -1;
     size_t columns = (size_t)weight->columns;
     size_t data_stride = columns / 2, scale_stride = columns / 32;
     float *activation; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
+    if (lma_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
         return -1;
-    if (coli_fp8_activation_qdq_ref(activation, activation_scales,
+    if (lma_fp8_activation_qdq_ref(activation, activation_scales,
                                     input, columns, 128)) {
         return -1;
     }
@@ -17721,9 +17721,9 @@ int coli_fp4_matvec_rows16_v10(float *output,
     size_t columns = (size_t)weight->columns;
     size_t data_stride = columns / 2, scale_stride = columns / 32;
     float *activation; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
+    if (lma_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
         return -1;
-    if (coli_fp8_activation_qdq_ref(activation, activation_scales,
+    if (lma_fp8_activation_qdq_ref(activation, activation_scales,
                                     input, columns, 128)) {
         return -1;
     }
@@ -17759,9 +17759,9 @@ int coli_fp4_matvec_rows16_v10(float *output,
     size_t columns = (size_t)weight->columns;
     size_t data_stride = columns / 2, scale_stride = columns / 32;
     float *activation; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
+    if (lma_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
         return -1;
-    if (coli_fp8_activation_qdq_ref(activation, activation_scales,
+    if (lma_fp8_activation_qdq_ref(activation, activation_scales,
                                     input, columns, 128)) {
         return -1;
     }
@@ -17797,11 +17797,11 @@ int coli_fp4_matvec_rows16_v10(float *output,
 #endif
 }
 
-int coli_fp4_dual_matvec_rows16_v10(float *output_a, float *output_b,
-                                    const ColiTensorView *a,
-                                    const ColiTensorView *b,
+int lma_fp4_dual_matvec_rows16_v10(float *output_a, float *output_b,
+                                    const LmaTensorView *a,
+                                    const LmaTensorView *b,
                                     const float *input) {
-#if !defined(COLI_FP4_ROWS16_KERNEL)
+#if !defined(LMA_FP4_ROWS16_KERNEL)
     (void)output_a; (void)output_b; (void)a; (void)b; (void)input; return -1;
 #elif defined(__AVX512F__)
     if (!output_a || !output_b || !input || !packed_valid(a) ||
@@ -17810,9 +17810,9 @@ int coli_fp4_dual_matvec_rows16_v10(float *output_a, float *output_b,
     size_t columns = (size_t)a->columns;
     size_t data_stride = columns / 2, scale_stride = columns / 32;
     float *activation; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
+    if (lma_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
         return -1;
-    if (coli_fp8_activation_qdq_ref(activation, activation_scales,
+    if (lma_fp8_activation_qdq_ref(activation, activation_scales,
                                     input, columns, 128)) {
         return -1;
     }
@@ -17855,9 +17855,9 @@ int coli_fp4_dual_matvec_rows16_v10(float *output_a, float *output_b,
     size_t columns = (size_t)a->columns;
     size_t data_stride = columns / 2, scale_stride = columns / 32;
     float *activation; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
+    if (lma_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
         return -1;
-    if (coli_fp8_activation_qdq_ref(activation, activation_scales,
+    if (lma_fp8_activation_qdq_ref(activation, activation_scales,
                                     input, columns, 128)) {
         return -1;
     }
@@ -17905,9 +17905,9 @@ int coli_fp4_dual_matvec_rows16_v10(float *output_a, float *output_b,
     size_t columns = (size_t)a->columns;
     size_t data_stride = columns / 2, scale_stride = columns / 32;
     float *activation; uint8_t *activation_scales;
-    if (coli_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
+    if (lma_v4_qdq_scratch(columns, columns / 128, &activation, &activation_scales))
         return -1;
-    if (coli_fp8_activation_qdq_ref(activation, activation_scales,
+    if (lma_fp8_activation_qdq_ref(activation, activation_scales,
                                     input, columns, 128)) {
         return -1;
     }
@@ -17958,14 +17958,14 @@ int coli_fp4_dual_matvec_rows16_v10(float *output_a, float *output_b,
     return 0;
 #endif
 }
-#endif /* COLI_V4_UNIT_NATIVE_QUANT_ROWS16 */
+#endif /* LMA_V4_UNIT_NATIVE_QUANT_ROWS16 */
 
-#if defined(COLI_V4_UNIT_SEGMENT_ADAPTER) && defined(COLI_SEGMENT_ADAPTER)
+#if defined(LMA_V4_UNIT_SEGMENT_ADAPTER) && defined(LMA_SEGMENT_ADAPTER)
 /* ######## DeepSeek V4 engine-owned Segment adapter #####################
  *
  * The ordinary DeepSeek engine and CLI never compile this unit.  A Segment
  * consumer links it explicitly beside the standard V4 object units and calls
- * coli_deepseek_v4_segment_adapter_register() during initialization.
+ * lma_deepseek_v4_segment_adapter_register() during initialization.
  */
 #include "deepseek_v4_internal.h"
 #include "segment_adapter_internal.h"
@@ -17987,7 +17987,7 @@ int coli_fp4_dual_matvec_rows16_v10(float *output_a, float *output_b,
 #endif
 
 typedef struct {
-    ColiV4Engine *model;
+    LmaV4Engine *model;
     uint32_t layer_begin, layer_end, context_tokens, state_width;
     uint64_t memory_limit_bytes;
     pthread_mutex_t run_lock;
@@ -17995,12 +17995,12 @@ typedef struct {
 
 typedef struct {
     DeepSeekV4SegmentEngine *engine;
-    ColiDeepSeekV4WindowAttentionState **attention;
+    LmaDeepSeekV4WindowAttentionState **attention;
     uint32_t context_tokens, position;
 } DeepSeekV4SegmentSession;
 
 static uint64_t deepseek_v4_segment_expert_record_bytes(
-    const ColiSafetensorsIndex *index) {
+    const LmaSafetensorsIndex *index) {
     static const char *parts[] = {
         "layers.0.ffn.experts.0.w1.weight",
         "layers.0.ffn.experts.0.w1.scale",
@@ -18011,7 +18011,7 @@ static uint64_t deepseek_v4_segment_expert_record_bytes(
     };
     uint64_t total = 0;
     for (size_t item = 0; item < sizeof(parts) / sizeof(parts[0]); item++) {
-        const ColiSafetensorsTensor *tensor = coli_st_find(index, parts[item]);
+        const LmaSafetensorsTensor *tensor = lma_st_find(index, parts[item]);
         if (!tensor || tensor->nbytes < 0 ||
             UINT64_MAX - total < (uint64_t)tensor->nbytes)
             return 0;
@@ -18023,28 +18023,28 @@ static uint64_t deepseek_v4_segment_expert_record_bytes(
 static void deepseek_v4_segment_engine_destroy(void *engine_impl) {
     DeepSeekV4SegmentEngine *engine = engine_impl;
     if (!engine) return;
-    coli_v4_engine_destroy(engine->model);
+    lma_v4_engine_destroy(engine->model);
     pthread_mutex_destroy(&engine->run_lock);
     free(engine);
 }
 
 static int deepseek_v4_segment_engine_open(
-    void **engine_impl, ColiSegmentCapabilities *capabilities,
-    const ColiSegmentEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaSegmentCapabilities *capabilities,
+    const LmaSegmentEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "invalid DeepSeek V4 Segment open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_SEGMENT_CAP_CPU))
-        return coli_segment_adapter_error(
+        (options->backend_mask & ~LMA_SEGMENT_CAP_CPU))
+        return lma_segment_adapter_error(
             error, error_size, "DeepSeek V4 Segment currently supports CPU only");
 
     DeepSeekV4SegmentEngine *engine = calloc(1, sizeof(*engine));
-    ColiV4Engine *model = calloc(1, sizeof(*model));
+    LmaV4Engine *model = calloc(1, sizeof(*model));
     if (!engine || !model) {
         free(model); free(engine);
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "out of memory opening DeepSeek V4 Segment");
     }
     engine->model = model;
@@ -18054,13 +18054,13 @@ static int deepseek_v4_segment_engine_open(
     engine->memory_limit_bytes = options->memory_limit_bytes;
     if (pthread_mutex_init(&engine->run_lock, NULL)) {
         free(model); free(engine);
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "cannot initialize DeepSeek V4 Segment lock");
     }
 
     model->owned_target_model_dir = strdup(options->model_dir);
     if (!model->owned_target_model_dir) {
-        coli_segment_adapter_error(error, error_size,
+        lma_segment_adapter_error(error, error_size,
                                    "out of memory copying model directory");
         goto fail;
     }
@@ -18069,7 +18069,7 @@ static int deepseek_v4_segment_engine_open(
     model->runtime.memory_limit_bytes = options->memory_limit_bytes;
     model->runtime.pin_slots_per_layer = 0;
     model->runtime.dense_resident = 1;
-    if (coli_v4_config_load(&model->config, options->model_dir,
+    if (lma_v4_config_load(&model->config, options->model_dir,
                             error, error_size) ||
         options->layer_end > (uint32_t)model->config.num_hidden_layers ||
         options->context_tokens >
@@ -18082,20 +18082,20 @@ static int deepseek_v4_segment_engine_open(
     uint64_t width = (uint64_t)model->config.hc_mult *
                      (uint64_t)model->config.hidden_size;
     if (!width || width > UINT32_MAX) {
-        coli_segment_adapter_error(error, error_size,
+        lma_segment_adapter_error(error, error_size,
                                    "DeepSeek V4 Segment state width overflows");
         goto fail;
     }
     engine->state_width = (uint32_t)width;
 
-    if (coli_st_index_open(&model->target_index, options->model_dir,
+    if (lma_st_index_open(&model->target_index, options->model_dir,
                            error, error_size))
         goto fail;
     model->owns_index = 1;
     uint64_t record_bytes =
         deepseek_v4_segment_expert_record_bytes(model->target_index);
     if (!record_bytes) {
-        coli_segment_adapter_error(
+        lma_segment_adapter_error(
             error, error_size, "cannot determine DeepSeek V4 expert size");
         goto fail;
     }
@@ -18105,7 +18105,7 @@ static int deepseek_v4_segment_engine_open(
     uint64_t slots = 8;
     if (options->memory_limit_bytes) {
         if (active_layers > UINT64_MAX / record_bytes) {
-            coli_segment_adapter_error(
+            lma_segment_adapter_error(
                 error, error_size,
                 "DeepSeek V4 Segment expert cache denominator overflows");
             goto fail;
@@ -18114,7 +18114,7 @@ static int deepseek_v4_segment_engine_open(
         slots = denominator ? options->memory_limit_bytes / denominator : 0;
     }
     if (slots < minimum_slots) {
-        coli_segment_adapter_error(
+        lma_segment_adapter_error(
             error, error_size,
             "DeepSeek V4 Segment memory limit cannot hold routed top-k");
         goto fail;
@@ -18123,13 +18123,13 @@ static int deepseek_v4_segment_engine_open(
         slots = (uint64_t)model->config.n_routed_experts;
     if (slots && (uint64_t)model->config.num_hidden_layers >
                      UINT64_MAX / slots / record_bytes) {
-        coli_segment_adapter_error(error, error_size,
+        lma_segment_adapter_error(error, error_size,
                                    "DeepSeek V4 expert cache size overflows");
         goto fail;
     }
     uint64_t store_capacity = (uint64_t)model->config.num_hidden_layers *
                               slots * record_bytes;
-    ColiDeepSeekV4ExpertStoreOptions store_options = {
+    LmaDeepSeekV4ExpertStoreOptions store_options = {
         .model_dir = options->model_dir,
         .layers = model->config.num_hidden_layers,
         .experts_per_layer = model->config.n_routed_experts,
@@ -18141,7 +18141,7 @@ static int deepseek_v4_segment_engine_open(
     /* The base store scans the complete content-addressed manifest because
      * expert keys use absolute layer IDs, but allocates slabs lazily.  Only
      * this engine's selected range can load expert bytes. */
-    if (coli_deepseek_v4_expert_store_open_base(
+    if (lma_deepseek_v4_expert_store_open_base(
             &store_options, &model->experts, error, error_size))
         goto fail;
     model->owns_experts = 1;
@@ -18151,22 +18151,22 @@ static int deepseek_v4_segment_engine_open(
 
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_SEGMENT_ABI_VERSION;
-    capabilities->flags = COLI_SEGMENT_CAP_TOKEN_IDS |
-                          COLI_SEGMENT_CAP_SNAPSHOT |
-                          COLI_SEGMENT_CAP_RANGE_NATIVE |
-                          COLI_SEGMENT_CAP_MULTI_SESSION |
-                          COLI_SEGMENT_CAP_CPU;
-    coli_segment_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_SEGMENT_ABI_VERSION;
+    capabilities->flags = LMA_SEGMENT_CAP_TOKEN_IDS |
+                          LMA_SEGMENT_CAP_SNAPSHOT |
+                          LMA_SEGMENT_CAP_RANGE_NATIVE |
+                          LMA_SEGMENT_CAP_MULTI_SESSION |
+                          LMA_SEGMENT_CAP_CPU;
+    lma_segment_capability_string(capabilities->engine_id,
                                    sizeof(capabilities->engine_id),
                                    "deepseek_v4");
-    coli_segment_capability_string(
+    lma_segment_capability_string(
         capabilities->state_schema, sizeof(capabilities->state_schema),
         "deepseek-v4/mhc-window-compressor-indexer-f32-v1");
-    coli_segment_capability_string(
+    lma_segment_capability_string(
         capabilities->numeric_class, sizeof(capabilities->numeric_class),
         "deepseek-v4/fp8-mxfp4-bf16/f32/cpu-v1");
-    capabilities->state_dtype = COLI_SEGMENT_DTYPE_F32;
+    capabilities->state_dtype = LMA_SEGMENT_DTYPE_F32;
     capabilities->state_width = engine->state_width;
     capabilities->max_batch_rows = 128;
     capabilities->max_context_tokens =
@@ -18183,22 +18183,22 @@ fail:
 static int deepseek_v4_segment_prepare_session(
     DeepSeekV4SegmentSession *session, char *error, size_t error_size) {
     DeepSeekV4SegmentEngine *engine = session->engine;
-    ColiV4Engine *model = engine->model;
+    LmaV4Engine *model = engine->model;
     int result = 0;
     pthread_mutex_lock(&engine->run_lock);
     for (uint32_t layer = engine->layer_begin;
          !result && layer < engine->layer_end; layer++) {
-        ColiDeepSeekV4LayerWeights weights;
-        if (coli_v4_layer_load(model, &weights, &model->config,
+        LmaDeepSeekV4LayerWeights weights;
+        if (lma_v4_layer_load(model, &weights, &model->config,
                                model->target_index, (int)layer,
                                error, error_size)) {
             result = -1;
             break;
         }
-        result = coli_v4_window_attention_prepare(
+        result = lma_v4_window_attention_prepare(
             session->attention[layer], &weights, &model->config,
             error, error_size);
-        coli_v4_layer_free(model, &weights);
+        lma_v4_layer_free(model, &weights);
     }
     pthread_mutex_unlock(&engine->run_lock);
     return result;
@@ -18210,22 +18210,22 @@ static void deepseek_v4_segment_session_destroy(void *session_impl) {
     if (session->attention)
         for (uint32_t layer = session->engine->layer_begin;
              layer < session->engine->layer_end; layer++)
-            coli_v4_window_attention_destroy(session->attention[layer]);
+            lma_v4_window_attention_destroy(session->attention[layer]);
     free(session->attention);
     free(session);
 }
 
 static int deepseek_v4_segment_session_create(
     void *engine_impl, void **session_impl,
-    const ColiSegmentSessionOptions *options, char *error, size_t error_size) {
+    const LmaSegmentSessionOptions *options, char *error, size_t error_size) {
     DeepSeekV4SegmentEngine *engine = engine_impl;
     if (!engine || !session_impl || !options)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "invalid DeepSeek V4 Segment session");
     *session_impl = NULL;
     DeepSeekV4SegmentSession *session = calloc(1, sizeof(*session));
     if (!session)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "out of memory creating DeepSeek V4 session");
     session->engine = engine;
     session->context_tokens = options->context_tokens;
@@ -18235,7 +18235,7 @@ static int deepseek_v4_segment_session_create(
     if (!session->attention) goto fail;
     for (uint32_t layer = engine->layer_begin; layer < engine->layer_end;
          layer++)
-        if (coli_v4_window_attention_create(
+        if (lma_v4_window_attention_create(
                 &session->attention[layer], &engine->model->config))
             goto fail;
     if (deepseek_v4_segment_prepare_session(session, error, error_size))
@@ -18252,28 +18252,28 @@ fail:
 }
 
 static int deepseek_v4_segment_session_run(
-    void *session_impl, const ColiSegmentRunRequest *request,
+    void *session_impl, const LmaSegmentRunRequest *request,
     char *error, size_t error_size) {
     DeepSeekV4SegmentSession *session = session_impl;
     if (!session || !request || request->position != session->position)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size,
             "DeepSeek V4 Segment requires contiguous positions");
     if (request->should_cancel &&
         request->should_cancel(request->cancel_user_data))
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "DeepSeek V4 Segment run cancelled");
     DeepSeekV4SegmentEngine *engine = session->engine;
     size_t cells;
-    if (coli_segment_size_mul(request->rows, engine->state_width, &cells))
-        return coli_segment_adapter_error(
+    if (lma_segment_size_mul(request->rows, engine->state_width, &cells))
+        return lma_segment_adapter_error(
             error, error_size, "DeepSeek V4 Segment activation size overflows");
     float *state = malloc(cells * sizeof(*state));
     float *next = malloc(cells * sizeof(*next));
     int *tokens = malloc((size_t)request->rows * sizeof(*tokens));
     if (!state || !next || !tokens) {
         free(tokens); free(next); free(state);
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "out of memory running DeepSeek V4 Segment");
     }
     memcpy(state, request->input, cells * sizeof(*state));
@@ -18281,22 +18281,22 @@ static int deepseek_v4_segment_session_run(
         tokens[row] = request->token_ids[row];
 
     int result = 0;
-    ColiV4Engine *model = engine->model;
+    LmaV4Engine *model = engine->model;
     pthread_mutex_lock(&engine->run_lock);
     for (uint32_t layer = engine->layer_begin;
          !result && layer < engine->layer_end; layer++) {
-        ColiDeepSeekV4LayerWeights weights;
-        if (coli_v4_layer_load(model, &weights, &model->config,
+        LmaDeepSeekV4LayerWeights weights;
+        if (lma_v4_layer_load(model, &weights, &model->config,
                                model->target_index, (int)layer,
                                error, error_size)) {
             result = -1;
             break;
         }
-        result = coli_v4_block_window_batch_ref(
+        result = lma_v4_block_window_batch_ref(
             next, session->attention[layer], &weights, &model->config,
             model->experts, state, tokens, (int)request->position,
             (int)request->rows, error, error_size);
-        coli_v4_layer_free(model, &weights);
+        lma_v4_layer_free(model, &weights);
         if (!result) {
             float *swap = state; state = next; next = swap;
         }
@@ -18327,10 +18327,10 @@ static int deepseek_v4_segment_seek(FILE *stream, int64_t offset, int origin) {
 #endif
 
 static void deepseek_v4_segment_snapshots_destroy(
-    ColiV4AttentionSnapshot **snapshots, uint32_t count) {
+    LmaV4AttentionSnapshot **snapshots, uint32_t count) {
     if (!snapshots) return;
     for (uint32_t item = 0; item < count; item++)
-        coli_v4_attention_snapshot_destroy(snapshots[item]);
+        lma_v4_attention_snapshot_destroy(snapshots[item]);
     free(snapshots);
 }
 
@@ -18338,47 +18338,47 @@ static int deepseek_v4_segment_snapshot_file(
     DeepSeekV4SegmentSession *session, FILE **output,
     uint64_t *payload_bytes, uint64_t *payload_hash,
     char *error, size_t error_size) {
-    *output = NULL; *payload_bytes = 0; *payload_hash = COLI_SEGMENT_HASH_INIT;
+    *output = NULL; *payload_bytes = 0; *payload_hash = LMA_SEGMENT_HASH_INIT;
     FILE *stream = tmpfile();
     if (!stream)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "cannot create DeepSeek V4 snapshot staging file");
     DeepSeekV4SegmentEngine *engine = session->engine;
     int result = 0;
     pthread_mutex_lock(&engine->run_lock);
     for (uint32_t layer = engine->layer_begin;
          !result && layer < engine->layer_end; layer++) {
-        ColiV4AttentionSnapshot *snapshot = NULL;
-        if (coli_v4_attention_snapshot_create(session->attention[layer],
+        LmaV4AttentionSnapshot *snapshot = NULL;
+        if (lma_v4_attention_snapshot_create(session->attention[layer],
                                                &snapshot) ||
-            coli_v4_attention_snapshot_write(snapshot, stream))
+            lma_v4_attention_snapshot_write(snapshot, stream))
             result = -1;
-        coli_v4_attention_snapshot_destroy(snapshot);
+        lma_v4_attention_snapshot_destroy(snapshot);
     }
     pthread_mutex_unlock(&engine->run_lock);
     int64_t length = deepseek_v4_segment_tell(stream);
     if (result || length < 0 || deepseek_v4_segment_seek(stream, 0, SEEK_SET)) {
         fclose(stream);
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "cannot serialize DeepSeek V4 Segment state");
     }
     unsigned char chunk[64 * 1024];
-    uint64_t hash = COLI_SEGMENT_HASH_INIT;
+    uint64_t hash = LMA_SEGMENT_HASH_INIT;
     uint64_t remaining = (uint64_t)length;
     while (remaining) {
         size_t wanted = remaining < sizeof(chunk) ? (size_t)remaining
                                                   : sizeof(chunk);
         if (fread(chunk, 1, wanted, stream) != wanted) {
             fclose(stream);
-            return coli_segment_adapter_error(
+            return lma_segment_adapter_error(
                 error, error_size, "cannot hash DeepSeek V4 Segment state");
         }
-        hash = coli_segment_hash_update(hash, chunk, wanted);
+        hash = lma_segment_hash_update(hash, chunk, wanted);
         remaining -= wanted;
     }
     if (deepseek_v4_segment_seek(stream, 0, SEEK_SET)) {
         fclose(stream);
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "cannot rewind DeepSeek V4 Segment state");
     }
     *output = stream;
@@ -18388,11 +18388,11 @@ static int deepseek_v4_segment_snapshot_file(
 }
 
 static int deepseek_v4_segment_session_snapshot(
-    void *session_impl, ColiSegmentWriteFn write_fn, void *write_user_data,
+    void *session_impl, LmaSegmentWriteFn write_fn, void *write_user_data,
     char *error, size_t error_size) {
     DeepSeekV4SegmentSession *session = session_impl;
     if (!session)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "invalid DeepSeek V4 snapshot session");
     FILE *stream = NULL;
     uint64_t payload_bytes = 0, payload_hash = 0;
@@ -18400,12 +18400,12 @@ static int deepseek_v4_segment_session_snapshot(
             session, &stream, &payload_bytes, &payload_hash,
             error, error_size))
         return -1;
-    ColiSegmentSnapshotHeader header;
-    coli_segment_snapshot_header_init(
+    LmaSegmentSnapshotHeader header;
+    lma_segment_snapshot_header_init(
         &header, "deepseek_v4", session->engine->layer_begin,
         session->engine->layer_end, session->context_tokens,
         session->position, payload_bytes, payload_hash);
-    int result = coli_segment_stream_write(
+    int result = lma_segment_stream_write(
         write_fn, write_user_data, &header, sizeof(header), error, error_size);
     unsigned char chunk[64 * 1024];
     uint64_t remaining = payload_bytes;
@@ -18413,10 +18413,10 @@ static int deepseek_v4_segment_session_snapshot(
         size_t wanted = remaining < sizeof(chunk) ? (size_t)remaining
                                                   : sizeof(chunk);
         if (fread(chunk, 1, wanted, stream) != wanted)
-            result = coli_segment_adapter_error(
+            result = lma_segment_adapter_error(
                 error, error_size, "cannot read DeepSeek V4 snapshot staging file");
         else
-            result = coli_segment_stream_write(
+            result = lma_segment_stream_write(
                 write_fn, write_user_data, chunk, wanted, error, error_size);
         remaining -= wanted;
     }
@@ -18426,7 +18426,7 @@ static int deepseek_v4_segment_session_snapshot(
 
 static int deepseek_v4_segment_payload_bound(
     const DeepSeekV4SegmentSession *session, uint64_t *bound) {
-    const ColiDeepSeekV4Config *config = &session->engine->model->config;
+    const LmaDeepSeekV4Config *config = &session->engine->model->config;
     uint64_t layers = session->engine->layer_end -
                       session->engine->layer_begin;
     uint64_t per_layer = (uint64_t)config->sliding_window * config->head_dim;
@@ -18445,15 +18445,15 @@ static int deepseek_v4_segment_payload_bound(
 }
 
 static int deepseek_v4_segment_session_restore(
-    void *session_impl, ColiSegmentReadFn read_fn, void *read_user_data,
+    void *session_impl, LmaSegmentReadFn read_fn, void *read_user_data,
     char *error, size_t error_size) {
     DeepSeekV4SegmentSession *session = session_impl;
-    ColiSegmentSnapshotHeader header;
-    if (!session || coli_segment_stream_read(
+    LmaSegmentSnapshotHeader header;
+    if (!session || lma_segment_stream_read(
             read_fn, read_user_data, &header, sizeof(header),
             error, error_size))
         return -1;
-    if (coli_segment_snapshot_header_valid(
+    if (lma_segment_snapshot_header_valid(
             &header, "deepseek_v4", session->engine->layer_begin,
             session->engine->layer_end, session->context_tokens,
             header.payload_bytes, error, error_size))
@@ -18461,51 +18461,51 @@ static int deepseek_v4_segment_session_restore(
     uint64_t bound = 0;
     if (deepseek_v4_segment_payload_bound(session, &bound) ||
         header.payload_bytes > bound)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "DeepSeek V4 snapshot payload is too large");
 
     FILE *stream = tmpfile();
     if (!stream)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "cannot create DeepSeek V4 restore staging file");
     unsigned char chunk[64 * 1024];
     uint64_t remaining = header.payload_bytes;
-    uint64_t hash = COLI_SEGMENT_HASH_INIT;
+    uint64_t hash = LMA_SEGMENT_HASH_INIT;
     int result = 0;
     while (!result && remaining) {
         size_t wanted = remaining < sizeof(chunk) ? (size_t)remaining
                                                   : sizeof(chunk);
-        if (coli_segment_stream_read(read_fn, read_user_data, chunk, wanted,
+        if (lma_segment_stream_read(read_fn, read_user_data, chunk, wanted,
                                      error, error_size))
             result = -1;
         else if (fwrite(chunk, 1, wanted, stream) != wanted)
-            result = coli_segment_adapter_error(
+            result = lma_segment_adapter_error(
                 error, error_size, "cannot stage DeepSeek V4 restore payload");
         else
-            hash = coli_segment_hash_update(hash, chunk, wanted);
+            hash = lma_segment_hash_update(hash, chunk, wanted);
         remaining -= wanted;
     }
     if (!result && hash != header.payload_hash)
-        result = coli_segment_adapter_error(
+        result = lma_segment_adapter_error(
             error, error_size, "DeepSeek V4 snapshot checksum mismatch");
     if (!result && deepseek_v4_segment_seek(stream, 0, SEEK_SET))
-        result = coli_segment_adapter_error(
+        result = lma_segment_adapter_error(
             error, error_size, "cannot rewind DeepSeek V4 restore payload");
 
     uint32_t count = session->engine->layer_end -
                      session->engine->layer_begin;
-    ColiV4AttentionSnapshot **incoming = calloc(count, sizeof(*incoming));
-    ColiV4AttentionSnapshot **backup = calloc(count, sizeof(*backup));
+    LmaV4AttentionSnapshot **incoming = calloc(count, sizeof(*incoming));
+    LmaV4AttentionSnapshot **backup = calloc(count, sizeof(*backup));
     if (!result && (!incoming || !backup))
-        result = coli_segment_adapter_error(
+        result = lma_segment_adapter_error(
             error, error_size, "out of memory restoring DeepSeek V4 state");
     for (uint32_t item = 0; !result && item < count; item++)
-        if (coli_v4_attention_snapshot_read(stream, &incoming[item]))
-            result = coli_segment_adapter_error(
+        if (lma_v4_attention_snapshot_read(stream, &incoming[item]))
+            result = lma_segment_adapter_error(
                 error, error_size, "invalid DeepSeek V4 attention snapshot");
     int64_t consumed = !result ? deepseek_v4_segment_tell(stream) : -1;
     if (!result && (consumed < 0 || (uint64_t)consumed != header.payload_bytes))
-        result = coli_segment_adapter_error(
+        result = lma_segment_adapter_error(
             error, error_size, "DeepSeek V4 snapshot has trailing data");
 
     DeepSeekV4SegmentEngine *engine = session->engine;
@@ -18513,22 +18513,22 @@ static int deepseek_v4_segment_session_restore(
         pthread_mutex_lock(&engine->run_lock);
         for (uint32_t item = 0; !result && item < count; item++) {
             uint32_t layer = engine->layer_begin + item;
-            if (coli_v4_attention_snapshot_create(
+            if (lma_v4_attention_snapshot_create(
                     session->attention[layer], &backup[item]))
-                result = coli_segment_adapter_error(
+                result = lma_segment_adapter_error(
                     error, error_size, "cannot back up DeepSeek V4 state");
         }
         for (uint32_t item = 0; !result && item < count; item++) {
             uint32_t layer = engine->layer_begin + item;
-            if (coli_v4_attention_snapshot_restore(
+            if (lma_v4_attention_snapshot_restore(
                     session->attention[layer], incoming[item]))
-                result = coli_segment_adapter_error(
+                result = lma_segment_adapter_error(
                     error, error_size, "incompatible DeepSeek V4 attention state");
         }
         if (result)
             for (uint32_t item = 0; item < count; item++) {
                 uint32_t layer = engine->layer_begin + item;
-                if (backup[item]) (void)coli_v4_attention_snapshot_restore(
+                if (backup[item]) (void)lma_v4_attention_snapshot_restore(
                     session->attention[layer], backup[item]);
             }
         else
@@ -18541,25 +18541,25 @@ static int deepseek_v4_segment_session_restore(
     return result;
 }
 
-static const ColiSegmentAdapter deepseek_v4_segment_adapter = {
-    sizeof(ColiSegmentAdapter), COLI_SEGMENT_ABI_VERSION, "deepseek_v4",
+static const LmaSegmentAdapter deepseek_v4_segment_adapter = {
+    sizeof(LmaSegmentAdapter), LMA_SEGMENT_ABI_VERSION, "deepseek_v4",
     deepseek_v4_segment_engine_open, deepseek_v4_segment_engine_destroy,
     deepseek_v4_segment_session_create, deepseek_v4_segment_session_destroy,
     deepseek_v4_segment_session_run, deepseek_v4_segment_session_snapshot,
     deepseek_v4_segment_session_restore, {0}
 };
 
-int coli_deepseek_v4_segment_adapter_register(void) {
-    return coli_segment_adapter_register(&deepseek_v4_segment_adapter);
+int lma_deepseek_v4_segment_adapter_register(void) {
+    return lma_segment_adapter_register(&deepseek_v4_segment_adapter);
 }
 
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 /* ######## DeepSeek V4 engine-owned model Edge adapter ################# */
 
 typedef struct {
-    ColiDeepSeekV4Config config;
-    ColiSafetensorsIndex *index;
-    ColiFloatTensor head_function, head_base, head_scale, final_norm;
+    LmaDeepSeekV4Config config;
+    LmaSafetensorsIndex *index;
+    LmaFloatTensor head_function, head_base, head_scale, final_norm;
     Tok tokenizer;
     uint32_t state_width;
 } DeepSeekV4EdgeEngine;
@@ -18568,32 +18568,32 @@ static void deepseek_v4_edge_engine_destroy(void *engine_impl) {
     DeepSeekV4EdgeEngine *engine = engine_impl;
     if (!engine) return;
     tok_free(&engine->tokenizer);
-    coli_float_tensor_free(&engine->final_norm);
-    coli_float_tensor_free(&engine->head_scale);
-    coli_float_tensor_free(&engine->head_base);
-    coli_float_tensor_free(&engine->head_function);
-    coli_st_index_close(engine->index);
+    lma_float_tensor_free(&engine->final_norm);
+    lma_float_tensor_free(&engine->head_scale);
+    lma_float_tensor_free(&engine->head_base);
+    lma_float_tensor_free(&engine->head_function);
+    lma_st_index_close(engine->index);
     free(engine);
 }
 
 static int deepseek_v4_edge_engine_open(
-    void **engine_impl, ColiEdgeCapabilities *capabilities,
-    const ColiEdgeEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaEdgeCapabilities *capabilities,
+    const LmaEdgeEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "invalid DeepSeek V4 Edge open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_EDGE_CAP_CPU))
-        return coli_edge_adapter_error(error, error_size,
+        (options->backend_mask & ~LMA_EDGE_CAP_CPU))
+        return lma_edge_adapter_error(error, error_size,
                                        "DeepSeek V4 Edge supports CPU only");
     DeepSeekV4EdgeEngine *engine = calloc(1, sizeof(*engine));
     if (!engine)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "out of memory opening DeepSeek V4 Edge");
-    if (coli_v4_config_load(&engine->config, options->model_dir,
+    if (lma_v4_config_load(&engine->config, options->model_dir,
                             error, error_size) ||
-        coli_st_index_open(&engine->index, options->model_dir,
+        lma_st_index_open(&engine->index, options->model_dir,
                            error, error_size)) {
         deepseek_v4_edge_engine_destroy(engine);
         return -1;
@@ -18602,17 +18602,17 @@ static int deepseek_v4_edge_engine_open(
                      (uint64_t)engine->config.hidden_size;
     if (!width || width > UINT32_MAX) {
         deepseek_v4_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "DeepSeek V4 boundary state is too wide");
     }
     engine->state_width = (uint32_t)width;
-    if (coli_tensor_load_f32(&engine->head_function, engine->index,
+    if (lma_tensor_load_f32(&engine->head_function, engine->index,
                              "hc_head_fn", error, error_size) ||
-        coli_tensor_load_f32(&engine->head_base, engine->index,
+        lma_tensor_load_f32(&engine->head_base, engine->index,
                              "hc_head_base", error, error_size) ||
-        coli_tensor_load_f32(&engine->head_scale, engine->index,
+        lma_tensor_load_f32(&engine->head_scale, engine->index,
                              "hc_head_scale", error, error_size) ||
-        coli_tensor_load_f32(&engine->final_norm, engine->index,
+        lma_tensor_load_f32(&engine->final_norm, engine->index,
                              "norm.weight", error, error_size)) {
         deepseek_v4_edge_engine_destroy(engine);
         return -1;
@@ -18624,21 +18624,21 @@ static int deepseek_v4_edge_engine_open(
         engine->head_scale.count < 1 ||
         engine->final_norm.count < (uint64_t)hidden) {
         deepseek_v4_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "DeepSeek V4 global tensor shape mismatch");
     }
-    const ColiSafetensorsTensor *embedding =
-        coli_st_find(engine->index, "embed.weight");
-    const ColiSafetensorsTensor *head =
-        coli_st_find(engine->index, "head.weight");
+    const LmaSafetensorsTensor *embedding =
+        lma_st_find(engine->index, "embed.weight");
+    const LmaSafetensorsTensor *head =
+        lma_st_find(engine->index, "head.weight");
     uint64_t boundary_cells = (uint64_t)engine->config.vocab_size *
                               (uint64_t)engine->config.hidden_size;
-    if (!embedding || embedding->dtype != COLI_ST_BF16 ||
+    if (!embedding || embedding->dtype != LMA_ST_BF16 ||
         embedding->numel != (int64_t)boundary_cells ||
-        !head || head->dtype != COLI_ST_BF16 ||
+        !head || head->dtype != LMA_ST_BF16 ||
         head->numel != (int64_t)boundary_cells) {
         deepseek_v4_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "DeepSeek V4 embedding/head shape or dtype mismatch");
     }
     char tokenizer_path[4096];
@@ -18651,30 +18651,30 @@ static int deepseek_v4_edge_engine_open(
                          engine->final_norm.count) * sizeof(float);
     if (options->memory_limit_bytes && resident > options->memory_limit_bytes) {
         deepseek_v4_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "DeepSeek V4 Edge exceeds memory limit");
     }
 
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_EDGE_ABI_VERSION;
-    capabilities->flags = COLI_EDGE_CAP_TOKENIZE |
-                          COLI_EDGE_CAP_DETOKENIZE |
-                          COLI_EDGE_CAP_GREEDY | COLI_EDGE_CAP_LOGITS |
-                          COLI_EDGE_CAP_CPU;
-    coli_edge_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_EDGE_ABI_VERSION;
+    capabilities->flags = LMA_EDGE_CAP_TOKENIZE |
+                          LMA_EDGE_CAP_DETOKENIZE |
+                          LMA_EDGE_CAP_GREEDY | LMA_EDGE_CAP_LOGITS |
+                          LMA_EDGE_CAP_CPU;
+    lma_edge_capability_string(capabilities->engine_id,
                                 sizeof(capabilities->engine_id),
                                 "deepseek_v4");
-    coli_edge_capability_string(
+    lma_edge_capability_string(
         capabilities->state_schema, sizeof(capabilities->state_schema),
         "deepseek-v4/mhc-window-compressor-indexer-f32-v1");
-    coli_edge_capability_string(
+    lma_edge_capability_string(
         capabilities->numeric_class, sizeof(capabilities->numeric_class),
         "deepseek-v4/fp8-mxfp4-bf16/f32/cpu-v1");
-    coli_edge_capability_string(capabilities->tokenizer_class,
+    lma_edge_capability_string(capabilities->tokenizer_class,
                                 sizeof(capabilities->tokenizer_class),
                                 "deepseek-v4/byte-bpe-v1");
-    capabilities->state_dtype = COLI_EDGE_DTYPE_F32;
+    capabilities->state_dtype = LMA_EDGE_DTYPE_F32;
     capabilities->state_width = engine->state_width;
     capabilities->vocab_size = (uint32_t)engine->config.vocab_size;
     capabilities->max_batch_rows = 128;
@@ -18694,7 +18694,7 @@ static int deepseek_v4_edge_tokenize(
     int32_t *token_ids, size_t token_capacity, size_t *token_count,
     char *error, size_t error_size) {
     DeepSeekV4EdgeEngine *engine = engine_impl;
-    return coli_edge_tok_tokenize(&engine->tokenizer, text, text_bytes,
+    return lma_edge_tok_tokenize(&engine->tokenizer, text, text_bytes,
                                   token_ids, token_capacity, token_count,
                                   error, error_size);
 }
@@ -18704,45 +18704,45 @@ static int deepseek_v4_edge_detokenize(
     char *text, size_t text_capacity, size_t *text_bytes,
     char *error, size_t error_size) {
     DeepSeekV4EdgeEngine *engine = engine_impl;
-    return coli_edge_tok_detokenize(&engine->tokenizer, token_ids, token_count,
+    return lma_edge_tok_detokenize(&engine->tokenizer, token_ids, token_count,
                                     text, text_capacity, text_bytes,
                                     error, error_size);
 }
 
 static int deepseek_v4_edge_embed(void *engine_impl,
-                                  const ColiEdgeEmbedRequest *request,
+                                  const LmaEdgeEmbedRequest *request,
                                   char *error, size_t error_size) {
     DeepSeekV4EdgeEngine *engine = engine_impl;
-    const ColiSafetensorsTensor *embedding =
-        coli_st_find(engine->index, "embed.weight");
-    if (!embedding || embedding->dtype != COLI_ST_BF16)
-        return coli_edge_adapter_error(error, error_size,
+    const LmaSafetensorsTensor *embedding =
+        lma_st_find(engine->index, "embed.weight");
+    if (!embedding || embedding->dtype != LMA_ST_BF16)
+        return lma_edge_adapter_error(error, error_size,
                                        "DeepSeek V4 embedding is unavailable");
     int hidden = engine->config.hidden_size;
     int copies = engine->config.hc_mult;
-    int shard = coli_st_tensor_shard(engine->index, embedding);
+    int shard = lma_st_tensor_shard(engine->index, embedding);
     uint16_t *packed = malloc((size_t)hidden * sizeof(*packed));
     if (!packed)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "out of memory reading DeepSeek V4 embedding");
     float *output = request->output;
     for (uint32_t row = 0; row < request->rows; row++) {
         int token = request->token_ids[row];
         if (token < 0 || token >= engine->config.vocab_size ||
-            coli_st_read_at(
+            lma_st_read_at(
                 engine->index, shard,
                 (uint64_t)embedding->off +
                     (uint64_t)token * hidden * sizeof(*packed),
                 (size_t)hidden * sizeof(*packed), packed)) {
             free(packed);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "cannot read DeepSeek V4 embedding");
         }
         float *state = output + (size_t)row * engine->state_width;
         for (int copy = 0; copy < copies; copy++)
             for (int item = 0; item < hidden; item++)
                 state[(size_t)copy * hidden + item] =
-                    coli_bf16_decode(packed[item]);
+                    lma_bf16_decode(packed[item]);
     }
     free(packed);
     return 0;
@@ -18775,11 +18775,11 @@ static void deepseek_v4_edge_final_hidden(
         float value = 0.0f;
         for (int copy = 0; copy < copies; copy++)
             value += pre[copy] * state[(size_t)copy * hidden + item];
-        output[item] = coli_bf16_round(value);
+        output[item] = lma_bf16_round(value);
     }
-    coli_v4_rmsnorm(output, output, engine->final_norm.data,
+    lma_v4_rmsnorm(output, output, engine->final_norm.data,
                     hidden, engine->config.rms_norm_eps);
-    coli_bf16_round_array(output, (size_t)hidden);
+    lma_bf16_round_array(output, (size_t)hidden);
 }
 
 static float deepseek_v4_edge_head_dot(
@@ -18798,20 +18798,20 @@ static float deepseek_v4_edge_head_dot(
     }
 #endif
     for (; column < dimension; column++)
-        sum += coli_bf16_decode(weight[column]) * hidden[column];
+        sum += lma_bf16_decode(weight[column]) * hidden[column];
     return sum;
 }
 
 static int deepseek_v4_edge_argmax(
     DeepSeekV4EdgeEngine *engine, const float *hidden,
     int32_t *best_token, float *best_logit,
-    ColiEdgeCancelFn should_cancel, void *cancel_user_data) {
-    const ColiSafetensorsTensor *head =
-        coli_st_find(engine->index, "head.weight");
-    if (!head || head->dtype != COLI_ST_BF16) return -1;
+    LmaEdgeCancelFn should_cancel, void *cancel_user_data) {
+    const LmaSafetensorsTensor *head =
+        lma_st_find(engine->index, "head.weight");
+    if (!head || head->dtype != LMA_ST_BF16) return -1;
     int dimension = engine->config.hidden_size;
     int vocab = engine->config.vocab_size;
-    int shard = coli_st_tensor_shard(engine->index, head);
+    int shard = lma_st_tensor_shard(engine->index, head);
     enum { TILE_ROWS = 64 };
     uint16_t *raw = malloc((size_t)TILE_ROWS * dimension * sizeof(*raw));
     float *scores = malloc((size_t)TILE_ROWS * sizeof(*scores));
@@ -18824,7 +18824,7 @@ static int deepseek_v4_edge_argmax(
         }
         int rows = vocab - start < TILE_ROWS ? vocab - start : TILE_ROWS;
         size_t bytes = (size_t)rows * dimension * sizeof(*raw);
-        if (coli_st_read_at(
+        if (lma_st_read_at(
                 engine->index, shard,
                 (uint64_t)head->off +
                     (uint64_t)start * dimension * sizeof(*raw),
@@ -18847,13 +18847,13 @@ static int deepseek_v4_edge_argmax(
 }
 
 static int deepseek_v4_edge_select(void *engine_impl,
-                                   const ColiEdgeSelectRequest *request,
+                                   const LmaEdgeSelectRequest *request,
                                    char *error, size_t error_size) {
     DeepSeekV4EdgeEngine *engine = engine_impl;
     int hidden = engine->config.hidden_size;
     float *final = malloc((size_t)hidden * sizeof(*final));
     if (!final)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "out of memory running DeepSeek V4 head");
     const float *input = request->input;
     for (uint32_t row = 0; row < request->rows; row++) {
@@ -18865,7 +18865,7 @@ static int deepseek_v4_edge_select(void *engine_impl,
             request->should_cancel, request->cancel_user_data);
         if (result) {
             free(final);
-            return coli_edge_adapter_error(
+            return lma_edge_adapter_error(
                 error, error_size, result == -2
                     ? "DeepSeek V4 Edge selection cancelled"
                     : "DeepSeek V4 Edge head failed");
@@ -18876,23 +18876,23 @@ static int deepseek_v4_edge_select(void *engine_impl,
 }
 
 static int deepseek_v4_edge_logits(void *engine_impl,
-                                   const ColiEdgeLogitsRequest *request,
+                                   const LmaEdgeLogitsRequest *request,
                                    char *error, size_t error_size) {
     DeepSeekV4EdgeEngine *engine = engine_impl;
-    const ColiSafetensorsTensor *head =
-        coli_st_find(engine->index, "head.weight");
-    if (!head || head->dtype != COLI_ST_BF16)
-        return coli_edge_adapter_error(error, error_size,
+    const LmaSafetensorsTensor *head =
+        lma_st_find(engine->index, "head.weight");
+    if (!head || head->dtype != LMA_ST_BF16)
+        return lma_edge_adapter_error(error, error_size,
                                        "DeepSeek V4 Edge head is unavailable");
     int hidden = engine->config.hidden_size;
     int vocab = engine->config.vocab_size;
-    int shard = coli_st_tensor_shard(engine->index, head);
+    int shard = lma_st_tensor_shard(engine->index, head);
     enum { TILE_ROWS = 64 };
     uint16_t *raw = malloc((size_t)TILE_ROWS * hidden * sizeof(*raw));
     float *final = malloc((size_t)hidden * sizeof(*final));
     if (!raw || !final) {
         free(final); free(raw);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "out of memory running DeepSeek V4 logits");
     }
     const float *input = request->input;
@@ -18904,18 +18904,18 @@ static int deepseek_v4_edge_logits(void *engine_impl,
             if (request->should_cancel &&
                 request->should_cancel(request->cancel_user_data)) {
                 free(final); free(raw);
-                return coli_edge_adapter_error(
+                return lma_edge_adapter_error(
                     error, error_size, "DeepSeek V4 Edge logits cancelled");
             }
             int rows = vocab - start < TILE_ROWS ? vocab - start : TILE_ROWS;
             size_t bytes = (size_t)rows * hidden * sizeof(*raw);
-            if (coli_st_read_at(
+            if (lma_st_read_at(
                     engine->index, shard,
                     (uint64_t)head->off +
                         (uint64_t)start * hidden * sizeof(*raw),
                     bytes, raw)) {
                 free(final); free(raw);
-                return coli_edge_adapter_error(
+                return lma_edge_adapter_error(
                     error, error_size, "DeepSeek V4 Edge head read failed");
             }
             #pragma omp parallel for schedule(static)
@@ -18928,16 +18928,16 @@ static int deepseek_v4_edge_logits(void *engine_impl,
     return 0;
 }
 
-static const ColiEdgeAdapter deepseek_v4_edge_adapter = {
-    sizeof(ColiEdgeAdapter), COLI_EDGE_ABI_VERSION, "deepseek_v4",
+static const LmaEdgeAdapter deepseek_v4_edge_adapter = {
+    sizeof(LmaEdgeAdapter), LMA_EDGE_ABI_VERSION, "deepseek_v4",
     deepseek_v4_edge_engine_open, deepseek_v4_edge_engine_destroy,
     deepseek_v4_edge_tokenize, deepseek_v4_edge_detokenize,
     deepseek_v4_edge_embed, deepseek_v4_edge_select,
     deepseek_v4_edge_logits, {0}
 };
 
-int coli_deepseek_v4_edge_adapter_register(void) {
-    return coli_edge_adapter_register(&deepseek_v4_edge_adapter);
+int lma_deepseek_v4_edge_adapter_register(void) {
+    return lma_edge_adapter_register(&deepseek_v4_edge_adapter);
 }
-#endif /* COLI_EDGE_ADAPTER */
-#endif /* COLI_V4_UNIT_SEGMENT_ADAPTER && COLI_SEGMENT_ADAPTER */
+#endif /* LMA_EDGE_ADAPTER */
+#endif /* LMA_V4_UNIT_SEGMENT_ADAPTER && LMA_SEGMENT_ADAPTER */

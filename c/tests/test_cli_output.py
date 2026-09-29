@@ -12,7 +12,7 @@ from unittest import mock
 
 
 HERE = Path(__file__).resolve().parent.parent
-CLI = HERE / "coli"
+CLI = HERE / "lmatomic"
 
 
 class CliOutputLanguageTest(unittest.TestCase):
@@ -76,7 +76,7 @@ class CliOutputLanguageTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         out = result.stdout + result.stderr
         self.assertIn("cannot read config.json", out)
-        self.assertIn("coli picks the engine from config.json", out)
+        self.assertIn("lmatomic picks the engine from config.json", out)
 
     def test_info_reads_registered_nested_text_config(self):
         with tempfile.TemporaryDirectory() as model:
@@ -102,7 +102,7 @@ class CliOutputLanguageTest(unittest.TestCase):
             result = self.run_cli("run", "--model", missing_model, "hello")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("model not found", result.stderr)
-        self.assertIn("set COLI_MODEL or use --model", result.stderr)
+        self.assertIn("set LMA_MODEL or use --model", result.stderr)
 
 
 class InteractivePromptTest(unittest.TestCase):
@@ -110,56 +110,56 @@ class InteractivePromptTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        loader = SourceFileLoader("coli_prompt_under_test", str(CLI))
+        loader = SourceFileLoader("lma_prompt_under_test", str(CLI))
         spec = importlib.util.spec_from_loader(loader.name, loader)
-        cls.coli = importlib.util.module_from_spec(spec)
-        loader.exec_module(cls.coli)
+        cls.lmatomic = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.lmatomic)
 
     def test_prompt_box_preserves_newlines_and_indentation(self):
-        lines = self.coli.prompt_box_lines("int main() {\n  return 0;\n}", 20)
+        lines = self.lmatomic.prompt_box_lines("int main() {\n  return 0;\n}", 20)
         self.assertEqual(lines, ["int main() {", "  return 0;", "}"])
 
     def test_prompt_box_wraps_long_lines_without_collapsing_whitespace(self):
-        lines = self.coli.prompt_box_lines("    return a_long_name;", 10)
+        lines = self.lmatomic.prompt_box_lines("    return a_long_name;", 10)
         self.assertEqual(lines, ["    return", " a_long_na", "me;"])
 
     def test_prompt_input_rows_accounts_for_explicit_lines(self):
-        self.assertEqual(self.coli.prompt_input_rows("one\ntwo", 80), 2)
-        self.assertEqual(self.coli.prompt_input_rows("x" * 80, 80), 2)
+        self.assertEqual(self.lmatomic.prompt_input_rows("one\ntwo", 80), 2)
+        self.assertEqual(self.lmatomic.prompt_input_rows("x" * 80, 80), 2)
 
     def test_read_prompt_collects_lines_already_queued_after_first(self):
         import io
         import select
 
         stream = io.StringIO("second\nthird\n")
-        with mock.patch.object(self.coli, "TTY", True), \
-             mock.patch.object(self.coli.sys, "platform", "freebsd"), \
+        with mock.patch.object(self.lmatomic, "TTY", True), \
+             mock.patch.object(self.lmatomic.sys, "platform", "freebsd"), \
              mock.patch("builtins.input", return_value="first"), \
-             mock.patch.object(self.coli.sys, "stdin", stream), \
+             mock.patch.object(self.lmatomic.sys, "stdin", stream), \
              mock.patch.object(select, "select", side_effect=(
                  ([stream], [], []), ([stream], [], []), ([], [], []),
              )):
-            self.assertEqual(self.coli.read_prompt(), "first\nsecond\nthird")
+            self.assertEqual(self.lmatomic.read_prompt(), "first\nsecond\nthird")
 
 
 class ChatCapForwardingTest(unittest.TestCase):
-    """#379/#386 r2 (F9): `coli chat` on a non-glm model spawns openai_server
+    """#379/#386 r2 (F9): `lmatomic chat` on a non-glm model spawns openai_server
     as its local server. An explicit --cap must ride along on that command
     line (it was silently eaten for years -- keeping it is a DISCLOSED
-    behavior change: a long-ignored `coli chat --cap 32` now takes effect),
+    behavior change: a long-ignored `lmatomic chat --cap 32` now takes effect),
     and an absent --cap must stay absent so openai_server's arch-keyed
     default (cap_for_arch) applies. This drives the real cmd_chat with the
     process boundary faked, and pins the argv it builds."""
 
     @classmethod
     def setUpClass(cls):
-        loader = SourceFileLoader("coli_cli_under_test", str(CLI))
+        loader = SourceFileLoader("lma_cli_under_test", str(CLI))
         spec = importlib.util.spec_from_loader(loader.name, loader)
-        cls.coli = importlib.util.module_from_spec(spec)
-        loader.exec_module(cls.coli)
+        cls.lmatomic = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.lmatomic)
 
     def _chat_server_cmd(self, cap):
-        coli = self.coli
+        lmatomic = self.lmatomic
         captured = {}
 
         class FakeProc:
@@ -187,15 +187,15 @@ class ChatCapForwardingTest(unittest.TestCase):
         (Path(model) / "config.json").write_text(json.dumps({"model_type": "inkling"}))
         args = types.SimpleNamespace(model=model, cap=cap, ngen=256, api_key=None,
                                      no_attach=True, attach=None)
-        with mock.patch.object(coli, "need_model"), \
-             mock.patch.object(coli, "banner"), \
-             mock.patch.object(coli, "engine_for", return_value="/stub/inkling"), \
-             mock.patch.object(coli, "env_for_engine", return_value={}), \
-             mock.patch.object(coli, "server_probe", return_value="inkling-colibri"), \
-             mock.patch.object(coli, "chat_attached"), \
-             mock.patch.object(coli, "Spinner", FakeSpinner), \
+        with mock.patch.object(lmatomic, "need_model"), \
+             mock.patch.object(lmatomic, "banner"), \
+             mock.patch.object(lmatomic, "engine_for", return_value="/stub/inkling"), \
+             mock.patch.object(lmatomic, "env_for_engine", return_value={}), \
+             mock.patch.object(lmatomic, "server_probe", return_value="inkling-lmatomic"), \
+             mock.patch.object(lmatomic, "chat_attached"), \
+             mock.patch.object(lmatomic, "Spinner", FakeSpinner), \
              mock.patch("subprocess.Popen", FakeProc):
-            coli.cmd_chat(args)
+            lmatomic.cmd_chat(args)
         return captured["cmd"]
 
     def test_explicit_cap_rides_along(self):
@@ -224,13 +224,13 @@ class BannerModelLineTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        loader = SourceFileLoader("coli_banner_under_test", str(CLI))
+        loader = SourceFileLoader("lma_banner_under_test", str(CLI))
         spec = importlib.util.spec_from_loader(loader.name, loader)
-        cls.coli = importlib.util.module_from_spec(spec)
-        loader.exec_module(cls.coli)
+        cls.lmatomic = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.lmatomic)
 
     def make_model(self, config, shard_bytes=0):
-        directory = Path(tempfile.mkdtemp(prefix="coli-banner-"))
+        directory = Path(tempfile.mkdtemp(prefix="lmatomic-banner-"))
         self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
         (directory / "config.json").write_text(json.dumps(config), encoding="utf-8")
         if shard_bytes:
@@ -245,14 +245,14 @@ class BannerModelLineTest(unittest.TestCase):
     def line(self, config, shard_bytes=0):
         directory = self.make_model(config, shard_bytes)
         if not shard_bytes:
-            return self.coli.model_banner_line(str(directory))
+            return self.lmatomic.model_banner_line(str(directory))
         real_getsize = os.path.getsize
 
         def fake_getsize(path):
             return shard_bytes if str(path).endswith(".safetensors") else real_getsize(path)
 
-        with mock.patch.object(self.coli.os.path, "getsize", fake_getsize):
-            return self.coli.model_banner_line(str(directory))
+        with mock.patch.object(self.lmatomic.os.path, "getsize", fake_getsize):
+            return self.lmatomic.model_banner_line(str(directory))
 
     def test_each_engine_names_itself(self):
         for model_type, expected in (
@@ -331,18 +331,18 @@ class BannerModelLineTest(unittest.TestCase):
         model. It used to assert the substring "GLM-5.2", which pinned the
         example rather than the property: the tagline named the flagship
         family, and #1367 renamed that family out from under it."""
-        line = self.coli.model_banner_line(None)
+        line = self.lmatomic.model_banner_line(None)
         self.assertTrue(line.strip())
         self.assertIn("model families", line)
-        for family in self.coli.all_families():
+        for family in self.lmatomic.all_families():
             self.assertNotIn(family.display_name, line,
                              "the generic tagline names a specific model; it is "
                              "printed when no model was given")
 
     def test_unreadable_model_falls_back_instead_of_raising(self):
-        """`coli info` banners before validating the path; it must not crash."""
-        self.assertEqual(self.coli.model_banner_line("/nonexistent/xyz"),
-                         self.coli.model_banner_line(None))
+        """`lmatomic info` banners before validating the path; it must not crash."""
+        self.assertEqual(self.lmatomic.model_banner_line("/nonexistent/xyz"),
+                         self.lmatomic.model_banner_line(None))
 
     def test_size_is_reported_without_rounding_to_zero(self):
         small = self.line({"model_type": "olmoe"}, shard_bytes=4_200_000_000)
@@ -355,7 +355,7 @@ class BannerModelLineTest(unittest.TestCase):
     def test_model_is_keyword_only(self):
         """banner(sub, x) must not read x as a path: other PRs add arguments."""
         with self.assertRaises(TypeError):
-            self.coli.banner("run", True)
+            self.lmatomic.banner("run", True)
 
 
 class OmpThreadsForEveryEngineTest(unittest.TestCase):
@@ -368,10 +368,10 @@ class OmpThreadsForEveryEngineTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        loader = SourceFileLoader("coli_omp_under_test", str(CLI))
+        loader = SourceFileLoader("lma_omp_under_test", str(CLI))
         spec = importlib.util.spec_from_loader(loader.name, loader)
-        cls.coli = importlib.util.module_from_spec(spec)
-        loader.exec_module(cls.coli)
+        cls.lmatomic = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.lmatomic)
 
     def args(self):
         return types.SimpleNamespace(model="/x", ram=None, ctx=None, ngen=None,
@@ -381,20 +381,20 @@ class OmpThreadsForEveryEngineTest(unittest.TestCase):
         with mock.patch("resource_plan.physical_cpu_count", return_value=6):
             for arch in ("inkling", "kimi", "olmoe"):
                 with self.subTest(arch=arch):
-                    env = self.coli.env_for_engine(self.args(), arch)
+                    env = self.lmatomic.env_for_engine(self.args(), arch)
                     self.assertEqual(env.get("OMP_NUM_THREADS"), "6")
 
     def test_v4_delegates_thread_team_to_runtime(self):
         with mock.patch.dict(os.environ, {}, clear=True), \
              mock.patch("resource_plan.physical_cpu_count",
                         side_effect=AssertionError("V4 launcher sized the team")):
-            env = self.coli.env_for_engine(self.args(), "deepseek_v4")
+            env = self.lmatomic.env_for_engine(self.args(), "deepseek_v4")
         self.assertNotIn("OMP_NUM_THREADS", env)
 
     def test_v4_gets_memory_bound_affinity_defaults(self):
         with mock.patch.dict(os.environ, {}, clear=True), \
-             mock.patch.object(self.coli.sys, "platform", "linux"):
-            env = self.coli.env_for_engine(self.args(), "deepseek_v4")
+             mock.patch.object(self.lmatomic.sys, "platform", "linux"):
+            env = self.lmatomic.env_for_engine(self.args(), "deepseek_v4")
         self.assertEqual(env.get("OMP_PROC_BIND"), "close")
         self.assertEqual(env.get("OMP_PLACES"), "cores")
         self.assertEqual(env.get("OMP_WAIT_POLICY"), "active")
@@ -405,12 +405,12 @@ class OmpThreadsForEveryEngineTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"OMP_NUM_THREADS": "3"}, clear=True), \
              mock.patch("resource_plan.physical_cpu_count",
                         side_effect=AssertionError("V4 launcher sized the team")):
-            env = self.coli.env_for_engine(self.args(), "deepseek_v4")
+            env = self.lmatomic.env_for_engine(self.args(), "deepseek_v4")
         self.assertEqual(env["OMP_NUM_THREADS"], "3")
 
     def test_kill_switch_is_honoured(self):
-        with mock.patch.dict(os.environ, {"COLI_NO_OMP_TUNE": "1"}, clear=True):
-            env = self.coli.env_for_engine(self.args(), "deepseek_v4")
+        with mock.patch.dict(os.environ, {"LMA_NO_OMP_TUNE": "1"}, clear=True):
+            env = self.lmatomic.env_for_engine(self.args(), "deepseek_v4")
         for key in ("OMP_NUM_THREADS", "OMP_WAIT_POLICY", "GOMP_SPINCOUNT",
                     "OMP_DYNAMIC", "OMP_PROC_BIND", "OMP_PLACES"):
             self.assertNotIn(key, env)
@@ -421,13 +421,13 @@ class OmpThreadsForEveryEngineTest(unittest.TestCase):
         binary they fail the way every accelerated engine's do: by asking for
         the CUDA build. cuda_binary() is mocked so the test does not depend on
         what happens to be built next to it."""
-        with mock.patch.object(self.coli, "cuda_binary", return_value=None):
+        with mock.patch.object(self.lmatomic, "cuda_binary", return_value=None):
             gpu_args = self.args();gpu_args.gpu="0";gpu_args.vram=0
             with self.assertRaisesRegex(SystemExit, "--gpu needs the CUDA build"):
-                self.coli.env_for_engine(gpu_args, "qwen38")
+                self.lmatomic.env_for_engine(gpu_args, "qwen38")
             vram_args = self.args();vram_args.gpu=None;vram_args.vram=4
             with self.assertRaisesRegex(SystemExit, "--vram needs the CUDA build"):
-                self.coli.env_for_engine(vram_args, "qwen38")
+                self.lmatomic.env_for_engine(vram_args, "qwen38")
 
 
 class ContextFlagHonestyTest(unittest.TestCase):
@@ -437,10 +437,10 @@ class ContextFlagHonestyTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        loader = SourceFileLoader("coli_ctx_under_test", str(CLI))
+        loader = SourceFileLoader("lma_ctx_under_test", str(CLI))
         spec = importlib.util.spec_from_loader(loader.name, loader)
-        cls.coli = importlib.util.module_from_spec(spec)
-        loader.exec_module(cls.coli)
+        cls.lmatomic = importlib.util.module_from_spec(spec)
+        loader.exec_module(cls.lmatomic)
 
     class Args(types.SimpleNamespace):
         """env_for_engine reads whatever flags the family cares about; every
@@ -452,15 +452,15 @@ class ContextFlagHonestyTest(unittest.TestCase):
         return self.Args(ctx=ctx, ram=0)
 
     def test_ctx_above_the_family_maximum_is_refused_with_the_number(self):
-        family = self.coli.family_by_id("qwen36")
+        family = self.lmatomic.family_by_id("qwen36")
         too_big = family.limits.max_context + 1
         with self.assertRaises(SystemExit) as stop:
-            self.coli.env_for_engine(self.args(too_big), "qwen36")
+            self.lmatomic.env_for_engine(self.args(too_big), "qwen36")
         self.assertIn(str(family.limits.max_context), str(stop.exception))
 
     def test_ctx_within_the_maximum_reaches_the_engine_variable(self):
-        family = self.coli.family_by_id("qwen36")
-        env = self.coli.env_for_engine(self.args(65536), "qwen36")
+        family = self.lmatomic.family_by_id("qwen36")
+        env = self.lmatomic.env_for_engine(self.args(65536), "qwen36")
         self.assertEqual(env.get(family.limits.context_env), "65536")
 
 

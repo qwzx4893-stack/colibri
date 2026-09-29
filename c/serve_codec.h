@@ -1,9 +1,9 @@
-#ifndef COLI_SERVE_CODEC_H
-#define COLI_SERVE_CODEC_H
+#ifndef LMA_SERVE_CODEC_H
+#define LMA_SERVE_CODEC_H
 
 #include <errno.h>
 #include <math.h>
-#include "decode_batch.h"   /* ColiSubmit, coli_submit_ext, coli_logprob_tail */
+#include "decode_batch.h"   /* LmaSubmit, lma_submit_ext, lma_logprob_tail */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,28 +14,28 @@
 /* Transport only: parse and emit frames. Admission, queueing, cancellation,
  * KV ownership, scheduling, and generation remain with each family engine. */
 
-#define COLI_SERVE_ID_CAP 64
+#define LMA_SERVE_ID_CAP 64
 
 typedef enum {
-    COLI_SERVE_COMMAND_UNKNOWN = 0,
-    COLI_SERVE_COMMAND_SUBMIT,
-    COLI_SERVE_COMMAND_STOP,
-    COLI_SERVE_COMMAND_CANCEL,
+    LMA_SERVE_COMMAND_UNKNOWN = 0,
+    LMA_SERVE_COMMAND_SUBMIT,
+    LMA_SERVE_COMMAND_STOP,
+    LMA_SERVE_COMMAND_CANCEL,
     /* IMAGE <id> <bytes> <grid_h> <grid_w>\n<payload>\n, annunciato subito prima
      * del SUBMIT a cui appartiene. Un motore di solo testo che non lo gestisce lo
      * vede come un comando che non sa trattare e lo rifiuta, che e' la risposta
      * giusta: meglio dire di no che accettare una foto e ignorarla. */
-    COLI_SERVE_COMMAND_IMAGE,
-} ColiServeCommandKind;
+    LMA_SERVE_COMMAND_IMAGE,
+} LmaServeCommandKind;
 
 typedef enum {
-    COLI_SERVE_READ_EOF = -1,
-    COLI_SERVE_READ_BAD_FRAME = -2,
-    COLI_SERVE_READ_NOMEM = -3,
-    COLI_SERVE_READ_BAD_REQUEST = -4,
-    COLI_SERVE_READ_IGNORED = 0,
-    COLI_SERVE_READ_OK = 1,
-} ColiServeReadResult;
+    LMA_SERVE_READ_EOF = -1,
+    LMA_SERVE_READ_BAD_FRAME = -2,
+    LMA_SERVE_READ_NOMEM = -3,
+    LMA_SERVE_READ_BAD_REQUEST = -4,
+    LMA_SERVE_READ_IGNORED = 0,
+    LMA_SERVE_READ_OK = 1,
+} LmaServeReadResult;
 
 typedef struct {
     size_t max_header_bytes;
@@ -46,11 +46,11 @@ typedef struct {
     int require_finite_sampling;
     int allow_extension_bytes;
     int allow_prefix_hint;
-} ColiServeWireProfile;
+} LmaServeWireProfile;
 
 typedef struct {
-    ColiServeCommandKind kind;
-    char id[COLI_SERVE_ID_CAP];
+    LmaServeCommandKind kind;
+    char id[LMA_SERVE_ID_CAP];
     int slot;
     uint64_t payload_bytes;
     int max_tokens;
@@ -67,7 +67,7 @@ typedef struct {
     int logprobs;
     int pin;        /* SUBMIT pin=1, vedi decode_batch.h */
     unsigned char *payload;
-} ColiServeCommand;
+} LmaServeCommand;
 
 typedef struct {
     int completion_tokens;
@@ -76,35 +76,35 @@ typedef struct {
     double rss_gb;
     int prompt_tokens;
     int length_limited;
-} ColiServeDone;
+} LmaServeDone;
 
-static inline void coli_serve_command_dispose(ColiServeCommand *command)
+static inline void lma_serve_command_dispose(LmaServeCommand *command)
 {
     if (!command) return;
     free(command->payload);
     memset(command, 0, sizeof(*command));
 }
 
-static inline void coli_serve_stdio_init(void)
+static inline void lma_serve_stdio_init(void)
 {
-    coli_serve_binary_mode();
+    lma_serve_binary_mode();
     setvbuf(stdin, NULL, _IONBF, 0);
 }
 
-static inline unsigned char *coli_serve_command_take_payload(ColiServeCommand *command)
+static inline unsigned char *lma_serve_command_take_payload(LmaServeCommand *command)
 {
     unsigned char *payload = command ? command->payload : NULL;
     if (command) command->payload = NULL;
     return payload;
 }
 
-static inline unsigned char *coli_serve_command_extension(ColiServeCommand *command)
+static inline unsigned char *lma_serve_command_extension(LmaServeCommand *command)
 {
     if (!command || !command->payload || !command->extension_bytes) return NULL;
     return command->payload + (size_t)command->payload_bytes + 1;
 }
 
-static inline int coli_serve_parse_i32(const char *text, int *value)
+static inline int lma_serve_parse_i32(const char *text, int *value)
 {
     char *end = NULL;
     errno = 0;
@@ -114,7 +114,7 @@ static inline int coli_serve_parse_i32(const char *text, int *value)
     return 1;
 }
 
-static inline int coli_serve_parse_u64(const char *text, uint64_t *value)
+static inline int lma_serve_parse_u64(const char *text, uint64_t *value)
 {
     char *end = NULL;
     if (!text[0] || text[0] == '-') return 0;
@@ -125,7 +125,7 @@ static inline int coli_serve_parse_u64(const char *text, uint64_t *value)
     return 1;
 }
 
-static inline int coli_serve_parse_f32(const char *text, float *value)
+static inline int lma_serve_parse_f32(const char *text, float *value)
 {
     char *end = NULL;
     float parsed = strtof(text, &end);
@@ -134,8 +134,8 @@ static inline int coli_serve_parse_f32(const char *text, float *value)
     return 1;
 }
 
-static inline void coli_serve_classify_line(
-    const char *line, ColiServeCommand *command)
+static inline void lma_serve_classify_line(
+    const char *line, LmaServeCommand *command)
 {
     const char *cursor = line;
     while (*cursor == ' ' || *cursor == '\t') cursor++;
@@ -143,13 +143,13 @@ static inline void coli_serve_classify_line(
     while (*cursor && *cursor != ' ' && *cursor != '\t') cursor++;
     size_t name_size = (size_t)(cursor - name);
     if (name_size == 6 && !memcmp(name, "SUBMIT", 6))
-        command->kind = COLI_SERVE_COMMAND_SUBMIT;
+        command->kind = LMA_SERVE_COMMAND_SUBMIT;
     else if (name_size == 4 && !memcmp(name, "STOP", 4))
-        command->kind = COLI_SERVE_COMMAND_STOP;
+        command->kind = LMA_SERVE_COMMAND_STOP;
     else if (name_size == 6 && !memcmp(name, "CANCEL", 6))
-        command->kind = COLI_SERVE_COMMAND_CANCEL;
+        command->kind = LMA_SERVE_COMMAND_CANCEL;
     else if (name_size == 5 && !memcmp(name, "IMAGE", 5))
-        command->kind = COLI_SERVE_COMMAND_IMAGE;
+        command->kind = LMA_SERVE_COMMAND_IMAGE;
     else
         return;
     while (*cursor == ' ' || *cursor == '\t') cursor++;
@@ -162,8 +162,8 @@ static inline void coli_serve_classify_line(
     }
 }
 
-static inline ColiServeReadResult coli_serve_read_command_alloc(
-    FILE *input, const ColiServeWireProfile *profile, ColiServeCommand *command,
+static inline LmaServeReadResult lma_serve_read_command_alloc(
+    FILE *input, const LmaServeWireProfile *profile, LmaServeCommand *command,
     void *(*allocate)(size_t))
 {
     char *line;
@@ -171,31 +171,31 @@ static inline ColiServeReadResult coli_serve_read_command_alloc(
     char *fields[10];
     int nfields = 0;
 
-    if (!input || !profile || !command) return COLI_SERVE_READ_BAD_FRAME;
+    if (!input || !profile || !command) return LMA_SERVE_READ_BAD_FRAME;
     memset(command, 0, sizeof(*command));
     size_t maximum = profile->max_header_bytes ? profile->max_header_bytes : 4096;
-    if (maximum == SIZE_MAX) return COLI_SERVE_READ_NOMEM;
+    if (maximum == SIZE_MAX) return LMA_SERVE_READ_NOMEM;
     line = allocate(maximum + 1);
-    if (!line) return COLI_SERVE_READ_NOMEM;
+    if (!line) return LMA_SERVE_READ_NOMEM;
     for (;;) {
         int ch = fgetc(input);
         if (ch == EOF) {
             free(line);
-            return count ? COLI_SERVE_READ_BAD_FRAME : COLI_SERVE_READ_EOF;
+            return count ? LMA_SERVE_READ_BAD_FRAME : LMA_SERVE_READ_EOF;
         }
         if (ch == '\n') break;
         if (count == maximum) {
             do ch = fgetc(input); while (ch != EOF && ch != '\n');
             line[count] = 0;
-            coli_serve_classify_line(line, command);
+            lma_serve_classify_line(line, command);
             free(line);
-            return COLI_SERVE_READ_BAD_REQUEST;
+            return LMA_SERVE_READ_BAD_REQUEST;
         }
         line[count++] = (char)ch;
     }
     line[count] = 0;
     if (count && line[count - 1] == '\r') line[--count] = 0;
-    coli_serve_classify_line(line, command);
+    lma_serve_classify_line(line, command);
 
     char *cursor = line;
     while (*cursor) {
@@ -203,7 +203,7 @@ static inline ColiServeReadResult coli_serve_read_command_alloc(
         if (!*cursor) break;
         if (nfields == (int)(sizeof(fields) / sizeof(fields[0]))) {
             free(line);
-            return COLI_SERVE_READ_BAD_REQUEST;
+            return LMA_SERVE_READ_BAD_REQUEST;
         }
         fields[nfields++] = cursor;
         while (*cursor && *cursor != ' ' && *cursor != '\t') cursor++;
@@ -211,28 +211,28 @@ static inline ColiServeReadResult coli_serve_read_command_alloc(
     }
     if (!nfields) {
         free(line);
-        return COLI_SERVE_READ_IGNORED;
+        return LMA_SERVE_READ_IGNORED;
     }
-    if (!strcmp(fields[0], "SUBMIT")) command->kind = COLI_SERVE_COMMAND_SUBMIT;
-    else if (!strcmp(fields[0], "STOP")) command->kind = COLI_SERVE_COMMAND_STOP;
-    else if (!strcmp(fields[0], "CANCEL")) command->kind = COLI_SERVE_COMMAND_CANCEL;
-    else if (!strcmp(fields[0], "IMAGE")) command->kind = COLI_SERVE_COMMAND_IMAGE;
+    if (!strcmp(fields[0], "SUBMIT")) command->kind = LMA_SERVE_COMMAND_SUBMIT;
+    else if (!strcmp(fields[0], "STOP")) command->kind = LMA_SERVE_COMMAND_STOP;
+    else if (!strcmp(fields[0], "CANCEL")) command->kind = LMA_SERVE_COMMAND_CANCEL;
+    else if (!strcmp(fields[0], "IMAGE")) command->kind = LMA_SERVE_COMMAND_IMAGE;
     else {
         free(line);
-        return COLI_SERVE_READ_IGNORED;
+        return LMA_SERVE_READ_IGNORED;
     }
     if (nfields < 2 || strlen(fields[1]) >= sizeof(command->id)) {
         free(line);
-        return COLI_SERVE_READ_BAD_REQUEST;
+        return LMA_SERVE_READ_BAD_REQUEST;
     }
     memcpy(command->id, fields[1], strlen(fields[1]) + 1);
-    if (command->kind == COLI_SERVE_COMMAND_STOP ||
-        command->kind == COLI_SERVE_COMMAND_CANCEL) {
-        if (nfields != 2) { free(line); return COLI_SERVE_READ_BAD_REQUEST; }
+    if (command->kind == LMA_SERVE_COMMAND_STOP ||
+        command->kind == LMA_SERVE_COMMAND_CANCEL) {
+        if (nfields != 2) { free(line); return LMA_SERVE_READ_BAD_REQUEST; }
         free(line);
-        return COLI_SERVE_READ_OK;
+        return LMA_SERVE_READ_OK;
     }
-    if (command->kind == COLI_SERVE_COMMAND_IMAGE) {
+    if (command->kind == LMA_SERVE_COMMAND_IMAGE) {
         /* IMAGE <id> <bytes> <grid_h> <grid_w>\n<payload>\n
          *
          * Il payload va consumato SEMPRE, anche quando il motore non sa cosa
@@ -240,30 +240,30 @@ static inline ColiServeReadResult coli_serve_read_command_alloc(
          * qualche megabyte e il gateway leggerebbe pixel come se fossero
          * un'intestazione. Per questo il rifiuto vive nel chiamante, non qui. */
         if (nfields != 5 ||
-            !coli_serve_parse_u64(fields[2], &command->payload_bytes) ||
-            !coli_serve_parse_i32(fields[3], &command->grid_h) ||
-            !coli_serve_parse_i32(fields[4], &command->grid_w) ||
+            !lma_serve_parse_u64(fields[2], &command->payload_bytes) ||
+            !lma_serve_parse_i32(fields[3], &command->grid_h) ||
+            !lma_serve_parse_i32(fields[4], &command->grid_w) ||
             command->payload_bytes > profile->max_payload_bytes ||
             command->grid_h < 1 || command->grid_w < 1) {
             free(line);
-            return COLI_SERVE_READ_BAD_REQUEST;
+            return LMA_SERVE_READ_BAD_REQUEST;
         }
         free(line);
         command->payload = (unsigned char *)allocate((size_t)command->payload_bytes + 1);
-        if (!command->payload) return COLI_SERVE_READ_NOMEM;
+        if (!command->payload) return LMA_SERVE_READ_NOMEM;
         if (command->payload_bytes &&
             fread(command->payload, 1, (size_t)command->payload_bytes, input)
                 != (size_t)command->payload_bytes) {
-            coli_serve_command_dispose(command);
-            return COLI_SERVE_READ_BAD_FRAME;
+            lma_serve_command_dispose(command);
+            return LMA_SERVE_READ_BAD_FRAME;
         }
         command->payload[command->payload_bytes] = 0;
         int terminator = fgetc(input);
         if (terminator != '\n' && !(terminator == '\r' && fgetc(input) == '\n')) {
-            coli_serve_command_dispose(command);
-            return COLI_SERVE_READ_BAD_FRAME;
+            lma_serve_command_dispose(command);
+            return LMA_SERVE_READ_BAD_FRAME;
         }
-        return COLI_SERVE_READ_OK;
+        return LMA_SERVE_READ_OK;
     }
     int minimum_fields = 7;
     int maximum_fields = minimum_fields + !!profile->allow_extension_bytes +
@@ -271,7 +271,7 @@ static inline ColiServeReadResult coli_serve_read_command_alloc(
     /* I token key=value vengono dopo i campi posizionali. Il primo campo che
      * contiene '=' apre l'estensione: da li in poi il conteggio posizionale si
      * ferma, e le regole (chiavi note, niente duplicati, valori in campo) sono
-     * quelle di coli_submit_ext, non una seconda copia scritta qui. */
+     * quelle di lma_submit_ext, non una seconda copia scritta qui. */
     int positional = nfields;
     for (int f = minimum_fields; f < nfields; f++)
         if (strchr(fields[f], '=')) { positional = f; break; }
@@ -281,15 +281,15 @@ static inline ColiServeReadResult coli_serve_read_command_alloc(
         char ext[128]; size_t used = 0; ext[0] = 0;
         for (int f = positional; f < nfields; f++) {
             size_t need = strlen(fields[f]) + 1;
-            if (used + need + 1 >= sizeof ext) { free(line); return COLI_SERVE_READ_BAD_REQUEST; }
+            if (used + need + 1 >= sizeof ext) { free(line); return LMA_SERVE_READ_BAD_REQUEST; }
             ext[used++] = ' ';
             memcpy(ext + used, fields[f], need);
             used += need - 1;
         }
         {
-            ColiSubmit tmp;
+            LmaSubmit tmp;
             memset(&tmp, 0, sizeof tmp);
-            if (!coli_submit_ext(ext, &tmp)) { free(line); return COLI_SERVE_READ_BAD_REQUEST; }
+            if (!lma_submit_ext(ext, &tmp)) { free(line); return LMA_SERVE_READ_BAD_REQUEST; }
             command->logprobs = tmp.logprobs;
             command->pin = tmp.pin;
         }
@@ -299,18 +299,18 @@ static inline ColiServeReadResult coli_serve_read_command_alloc(
         (positional >= 9 && (!profile->allow_prefix_hint ||
                           !profile->allow_extension_bytes))) {
         free(line);
-        return COLI_SERVE_READ_BAD_REQUEST;
+        return LMA_SERVE_READ_BAD_REQUEST;
     }
     command->extension_bytes = 0;
     command->prefix_bytes = 0;
-    if (!coli_serve_parse_i32(fields[2], &command->slot) ||
-        !coli_serve_parse_u64(fields[3], &command->payload_bytes) ||
-        !coli_serve_parse_i32(fields[4], &command->max_tokens) ||
-        !coli_serve_parse_f32(fields[5], &command->temperature) ||
-        !coli_serve_parse_f32(fields[6], &command->top_p) ||
+    if (!lma_serve_parse_i32(fields[2], &command->slot) ||
+        !lma_serve_parse_u64(fields[3], &command->payload_bytes) ||
+        !lma_serve_parse_i32(fields[4], &command->max_tokens) ||
+        !lma_serve_parse_f32(fields[5], &command->temperature) ||
+        !lma_serve_parse_f32(fields[6], &command->top_p) ||
         (positional >= 8 &&
-         !coli_serve_parse_u64(fields[7], &command->extension_bytes)) ||
-        (positional >= 9 && !coli_serve_parse_i32(fields[8], &command->prefix_bytes)) ||
+         !lma_serve_parse_u64(fields[7], &command->extension_bytes)) ||
+        (positional >= 9 && !lma_serve_parse_i32(fields[8], &command->prefix_bytes)) ||
         command->payload_bytes > profile->max_payload_bytes ||
         command->extension_bytes > profile->max_extension_bytes ||
         /* max_tokens=0 vale SOLO in modalita jev (logprobs>0) e vuol dire
@@ -325,40 +325,40 @@ static inline ColiServeReadResult coli_serve_read_command_alloc(
         (profile->require_finite_sampling &&
          (!isfinite(command->temperature) || !isfinite(command->top_p)))) {
         free(line);
-        return COLI_SERVE_READ_BAD_REQUEST;
+        return LMA_SERVE_READ_BAD_REQUEST;
     }
     free(line);
 
     if (command->payload_bytes > SIZE_MAX - 1 ||
         command->extension_bytes > SIZE_MAX - 1 - (size_t)command->payload_bytes)
-        return COLI_SERVE_READ_NOMEM;
+        return LMA_SERVE_READ_NOMEM;
     size_t payload_bytes = (size_t)command->payload_bytes;
     size_t extension_bytes = (size_t)command->extension_bytes;
     command->payload = allocate(payload_bytes + 1 + extension_bytes);
-    if (!command->payload) return COLI_SERVE_READ_NOMEM;
+    if (!command->payload) return LMA_SERVE_READ_NOMEM;
     if (fread(command->payload, 1, payload_bytes, input) != payload_bytes ||
         (extension_bytes &&
          fread(command->payload + payload_bytes + 1, 1, extension_bytes, input) !=
              extension_bytes)) {
-        coli_serve_command_dispose(command);
-        return COLI_SERVE_READ_BAD_FRAME;
+        lma_serve_command_dispose(command);
+        return LMA_SERVE_READ_BAD_FRAME;
     }
     command->payload[payload_bytes] = 0;
     int terminator = fgetc(input);
     if (terminator == EOF || (profile->require_exact_lf && terminator != '\n')) {
-        coli_serve_command_dispose(command);
-        return COLI_SERVE_READ_BAD_FRAME;
+        lma_serve_command_dispose(command);
+        return LMA_SERVE_READ_BAD_FRAME;
     }
-    return COLI_SERVE_READ_OK;
+    return LMA_SERVE_READ_OK;
 }
 
-static inline ColiServeReadResult coli_serve_read_command(
-    FILE *input, const ColiServeWireProfile *profile, ColiServeCommand *command)
+static inline LmaServeReadResult lma_serve_read_command(
+    FILE *input, const LmaServeWireProfile *profile, LmaServeCommand *command)
 {
-    return coli_serve_read_command_alloc(input, profile, command, malloc);
+    return lma_serve_read_command_alloc(input, profile, command, malloc);
 }
 
-static inline int coli_serve_write_ready(FILE *output, double rss_gb)
+static inline int lma_serve_write_ready(FILE *output, double rss_gb)
 {
     if (fputs("\x01\x01READY\x01\x01\n", output) == EOF ||
         fprintf(output, "STAT 0 0.0 0.0 %.2f 0 0\n", rss_gb) < 0)
@@ -366,13 +366,13 @@ static inline int coli_serve_write_ready(FILE *output, double rss_gb)
     return fflush(output) == 0;
 }
 
-static inline int coli_serve_write_accept(FILE *output, const char *id, int prompt_tokens)
+static inline int lma_serve_write_accept(FILE *output, const char *id, int prompt_tokens)
 {
     return fprintf(output, "ACCEPT %s %d\n", id, prompt_tokens) >= 0 &&
            fflush(output) == 0;
 }
 
-static inline int coli_serve_write_data(
+static inline int lma_serve_write_data(
     FILE *output, const char *id, const void *data, size_t bytes)
 {
     if (fprintf(output, "DATA %s %zu\n", id, bytes) < 0 ||
@@ -382,12 +382,12 @@ static inline int coli_serve_write_data(
     return fflush(output) == 0;
 }
 
-/* Come coli_serve_write_data, ma con la coda numerica del canale logprobs
+/* Come lma_serve_write_data, ma con la coda numerica del canale logprobs
  * appesa all'intestazione: "DATA <id> <n> <lp> <k> [tid tlp]*k". Un frame per
  * token, perche un client che punteggia vuole i token, non il testo accorpato.
  * Si usa SOLO quando la richiesta ha chiesto logprobs=k: senza, il frame resta
  * quello legacy byte per byte, e un gateway vecchio non vede mai questa forma. */
-static inline int coli_serve_write_data_lp(
+static inline int lma_serve_write_data_lp(
     FILE *output, const char *id, const void *data, size_t bytes, const char *tail)
 {
     if (fprintf(output, "DATA %s %zu%s\n", id, bytes, tail ? tail : "") < 0 ||
@@ -401,7 +401,7 @@ static inline int coli_serve_write_data_lp(
  * transport; the gateway applies the active family parser. A zero-byte frame
  * declares the sideband authoritative for the request, so ordinary DATA that
  * merely resembles a tool marker is never promoted into a tool call. */
-static inline int coli_serve_write_tool(
+static inline int lma_serve_write_tool(
     FILE *output, const char *id, const void *data, size_t bytes)
 {
     if (fprintf(output, "TOOL %s %zu\n", id, bytes) < 0 ||
@@ -411,7 +411,7 @@ static inline int coli_serve_write_tool(
     return fflush(output) == 0;
 }
 
-static inline int coli_serve_write_error(FILE *output, const char *id, const char *message)
+static inline int lma_serve_write_error(FILE *output, const char *id, const char *message)
 {
     if (fprintf(output, "ERROR %s ", id && *id ? id : "0") < 0) return 0;
     for (const unsigned char *p = (const unsigned char *)(message ? message : ""); *p; p++) {
@@ -421,8 +421,8 @@ static inline int coli_serve_write_error(FILE *output, const char *id, const cha
     return fputc('\n', output) != EOF && fflush(output) == 0;
 }
 
-static inline int coli_serve_write_done(
-    FILE *output, const char *id, const ColiServeDone *done)
+static inline int lma_serve_write_done(
+    FILE *output, const char *id, const LmaServeDone *done)
 {
     if (fprintf(output, "DONE %s STAT %d %.3f %.1f %.2f %d %d\n", id,
                 done->completion_tokens, done->tokens_per_second,
@@ -432,8 +432,8 @@ static inline int coli_serve_write_done(
     return fflush(output) == 0;
 }
 
-static inline int coli_serve_write_done_i32_suffix(
-    FILE *output, const char *id, const ColiServeDone *done,
+static inline int lma_serve_write_done_i32_suffix(
+    FILE *output, const char *id, const LmaServeDone *done,
     const int *suffix, size_t suffix_count)
 {
     if (fprintf(output, "DONE %s STAT %d %.3f %.1f %.2f %d %d", id,
@@ -446,8 +446,8 @@ static inline int coli_serve_write_done_i32_suffix(
     return fputc('\n', output) != EOF && fflush(output) == 0;
 }
 
-static inline int coli_serve_format_done(
-    char *output, size_t capacity, const char *id, const ColiServeDone *done)
+static inline int lma_serve_format_done(
+    char *output, size_t capacity, const char *id, const LmaServeDone *done)
 {
     int count = snprintf(output, capacity,
                          "DONE %s STAT %d %.3f %.1f %.2f %d %d\n", id,

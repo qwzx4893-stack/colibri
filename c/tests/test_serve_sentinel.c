@@ -1,18 +1,18 @@
 /* test_serve_sentinel — the serve handshake must leave the wire bytes alone.
  *
- * `coli` matches the engine's sentinels byte-exactly (endswith on
+ * `lmatomic` matches the engine's sentinels byte-exactly (endswith on
  * "\x01\x01READY\x01\x01\n", a "^STAT ..." regex). If anything rewrites the
  * trailing LF, the gateway waits for a byte that never arrives and the session
  * hangs with no error at all -- which is #748: Kimi K3 on Windows loaded 93
  * layers in 42 minutes and then sat there forever.
  *
  * The cause is the CRT opening stdout in TEXT mode on Windows, where '\n' is
- * written as "\r\n". colibri.c has called _setmode(..., _O_BINARY) since #195;
+ * written as "\r\n". glm52.c has called _setmode(..., _O_BINARY) since #195;
  * inkling.c and kimi_k3.c were written without it, and nothing in the tree
  * noticed for months because no test ever looked at the bytes.
  *
  * This is that test. It writes the sentinel through a real FILE* to a real file
- * with coli_serve_binary_mode() applied, then reads the bytes back and asserts
+ * with lma_serve_binary_mode() applied, then reads the bytes back and asserts
  * there is no CR. On Linux and macOS it can only pass -- which is the point:
  * it is a Windows regression guard that costs nothing to carry elsewhere, and
  * CI now builds every engine on Windows (#736), so it runs where it matters.
@@ -51,12 +51,12 @@ int main(void)
     /* Same call the serve loops make before emitting the handshake. On Windows it
      * flips the stream to binary; elsewhere it is a no-op. We point it at stdout,
      * so exercise the same primitive here on our own stream. */
-    coli_serve_binary_mode();
+    lma_serve_binary_mode();
 #ifdef _WIN32
     _setmode(_fileno(f), _O_BINARY);
 #endif
 
-    check(coli_serve_write_ready(f, 1.0), "shared READY writer succeeds");
+    check(lma_serve_write_ready(f, 1.0), "shared READY writer succeeds");
     fclose(f);
 
     FILE *r = fopen(path, "rb");         /* rb: read the bytes as they landed */

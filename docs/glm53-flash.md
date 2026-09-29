@@ -2,7 +2,7 @@
 
 A sibling engine for [GLM-5.3-Flash](https://huggingface.co/zai-org/GLM-5.3-Flash)
 (321B parameters, 45 layers + MTP, with a vision tower), following the
-one-engine-per-family pattern (`colibri.c` = GLM-5.2, `kimi_k3.c`, `inkling.c`).
+one-engine-per-family pattern (`glm52.c` = GLM-5.2, `kimi_k3.c`, `inkling.c`).
 It shares `st.h`, `json.h`, `tok.h`, `quant.h` and `hyper_connections.h`, and
 touches nothing in the other engines.
 
@@ -14,9 +14,9 @@ make glm53
 Or through the launcher, which is where images and chat templates live:
 
 ```
-coli chat  --model <dir> --no-think
-coli serve --model <dir>
-coli web   --model <dir>
+lmatomic chat  --model <dir> --no-think
+lmatomic serve --model <dir>
+lmatomic web   --model <dir>
 ```
 
 ## Getting the model
@@ -102,10 +102,10 @@ hold experts rather than as an accelerator here.
 
 ## Vision
 
-Reachable from every surface: a path pasted in `coli chat` (read by the client,
-sent as a data URI), a file attached or dropped in `coli web`, or an OpenAI
+Reachable from every surface: a path pasted in `lmatomic chat` (read by the client,
+sent as a data URI), a file attached or dropped in `lmatomic web`, or an OpenAI
 `image_url` part with a base64 data URI. A local path in the request is read
-only under `COLI_IMAGE_ROOT` (see `docs/ENVIRONMENT.md`): a file read by the
+only under `LMA_IMAGE_ROOT` (see `docs/ENVIRONMENT.md`): a file read by the
 server happens with its own rights, and an inference client is not the
 operator. Remote URLs are refused rather than fetched — a request should not
 make the server open a network connection of the sender's choosing.

@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-colibri — tiny engine, immense model.
+lmatomic — tiny engine, immense model.
 Run GLM-5.2 (744B) locally on CPU with roughly 15-26 GB of RAM.
 
-  coli chat                 interactive chat (loads the model once)
-  coli serve                OpenAI-compatible HTTP API (persistent engine)
-  coli run "prompt"         one-shot generation
-  coli info                 model, RAM, disk, and configuration status
-  coli plan                 Disk / RAM / VRAM resource plan
-  coli mirror               Plan, stage, or verify a learned partial mirror
-  coli doctor               installation and execution-plan diagnostics
-  coli bench [task...]      quality benchmarks (MMLU/HellaSwag/...)
-  coli convert              convert GLM-5.2-FP8 to int4, one shard at a time
-  coli build                build the engine
+  lmatomic chat                 interactive chat (loads the model once)
+  lmatomic serve                OpenAI-compatible HTTP API (persistent engine)
+  lmatomic run "prompt"         one-shot generation
+  lmatomic info                 model, RAM, disk, and configuration status
+  lmatomic plan                 Disk / RAM / VRAM resource plan
+  lmatomic mirror               Plan, stage, or verify a learned partial mirror
+  lmatomic doctor               installation and execution-plan diagnostics
+  lmatomic bench [task...]      quality benchmarks (MMLU/HellaSwag/...)
+  lmatomic convert              convert GLM-5.2-FP8 to int4, one shard at a time
+  lmatomic build                build the engine
 
 Configuration through environment variables or flags (also valid after the subcommand):
-  COLI_MODEL=<dir>   model directory (required; or pass --model <dir>)
-  COLI_MODEL_MIRROR=<dir>  second copy of the model on another drive: expert reads
-                     are split across both SSDs (COLI_DISK_WEIGHTS=9,3 sets the
+  LMA_MODEL=<dir>   model directory (required; or pass --model <dir>)
+  LMA_MODEL_MIRROR=<dir>  second copy of the model on another drive: expert reads
+                     are split across both SSDs (LMA_DISK_WEIGHTS=9,3 sets the
                      primary,mirror bandwidth ratio; default: measured at startup)
   --ram N            RAM budget in GB (automatically sizes the expert cache)
   --repin N          adapt RAM/VRAM experts every N tokens
@@ -54,18 +54,18 @@ if sys.platform == "win32":
         except (AttributeError, OSError): pass
 
 # realpath, not abspath: on a merged-/usr system /bin and /sbin are symlinks
-# to /usr/bin, and an installed launcher invoked as /bin/coli would otherwise
-# derive /libexec/colibri instead of /usr/libexec/colibri (#1689).
+# to /usr/bin, and an installed launcher invoked as /bin/lmatomic would otherwise
+# derive /libexec/lmatomic instead of /usr/libexec/lmatomic (#1689).
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 # version.py sits next to this script in a source checkout, but an installed
 # layout puts the launcher in $(PREFIX)/bin while the support modules live in
-# $(PREFIX)/libexec/colibri — and a packager may strip it entirely (#575,
+# $(PREFIX)/libexec/lmatomic — and a packager may strip it entirely (#575,
 # FreeBSD port). The launcher must never crash over a version string.
 try:
     from version import __version__ as _version
 except ModuleNotFoundError:
-    sys.path.insert(0, os.path.join(os.path.dirname(HERE), "libexec", "colibri"))
+    sys.path.insert(0, os.path.join(os.path.dirname(HERE), "libexec", "lmatomic"))
     try:
         from version import __version__ as _version
     except ModuleNotFoundError:
@@ -80,39 +80,39 @@ _TUNE_ROTATION_PROMPT = (
     "you would distinguish a CPU, memory, and storage bottleneck."
 )
 
-# Run-in-place (source checkout, "cd c && ./coli ..."): the engine, the
+# Run-in-place (source checkout, "cd c && ./lmatomic ..."): the engine, the
 # support modules (resource_plan.py, doctor.py, autotune.py, openai_server.py) and
 # tools/ all live next to this script — unchanged from before.
 #
-# Installed layout ("make install"): this script is $(PREFIX)/bin/coli,
+# Installed layout ("make install"): this script is $(PREFIX)/bin/lmatomic,
 # while the engine binaries and support files live in
-# $(PREFIX)/libexec/colibri, since they aren't meant to be run directly
-# by users. COLI_ENGINE overrides the engine path explicitly if neither
+# $(PREFIX)/libexec/lmatomic, since they aren't meant to be run directly
+# by users. LMA_ENGINE overrides the engine path explicitly if neither
 # guess is right (e.g. a custom packaging layout).
 _EXE = ".exe" if sys.platform == "win32" else ""
-_LIBEXEC = os.path.join(os.path.dirname(HERE), "libexec", "colibri")
-_here_colibri = os.path.join(HERE, "colibri" + _EXE)
+_LIBEXEC = os.path.join(os.path.dirname(HERE), "libexec", "lmatomic")
+_here_glm52 = os.path.join(HERE, "glm52" + _EXE)
 _here_glm = os.path.join(HERE, "glm" + _EXE)
 
-if os.environ.get("COLI_ENGINE"):
-    GLM = os.environ["COLI_ENGINE"]
+if os.environ.get("LMA_ENGINE"):
+    GLM = os.environ["LMA_ENGINE"]
     TOOLS = os.path.join(os.path.dirname(GLM), "tools")
-elif os.path.exists(_here_colibri):
-    GLM = _here_colibri
+elif os.path.exists(_here_glm52):
+    GLM = _here_glm52
     TOOLS = os.path.join(HERE, "tools")
 elif os.path.exists(_here_glm):
     GLM = _here_glm
     TOOLS = os.path.join(HERE, "tools")
 else:
-    GLM = os.path.join(_LIBEXEC, "colibri" + _EXE)
+    GLM = os.path.join(_LIBEXEC, "glm52" + _EXE)
     TOOLS = os.path.join(_LIBEXEC, "tools")
     sys.path.insert(0, _LIBEXEC)   # so `import resource_plan`, `doctor`, `openai_server` still resolve
 
 # No invented default: a path from whoever's machine this was written on is worse than
 # no path at all, because every downstream error then names a directory the user never
 # chose and cannot act on (#724). None here, and each command says so in its own voice.
-DEF_MODEL = os.environ.get("COLI_MODEL")
-NO_MODEL_HINT = "pass --model <dir>, or set COLI_MODEL=<dir>"
+DEF_MODEL = os.environ.get("LMA_MODEL")
+NO_MODEL_HINT = "pass --model <dir>, or set LMA_MODEL=<dir>"
 END   = b"\x01\x01END\x01\x01\n"
 READY = b"\x01\x01READY\x01\x01\n"
 
@@ -125,10 +125,10 @@ class C:
     def off():
         for k,v in vars(C).items():
             if isinstance(v,str) and v.startswith("\033"): setattr(C,k,"")
-TTY = sys.stdout.isatty() or os.environ.get("COLI_COLOR")=="1"
+TTY = sys.stdout.isatty() or os.environ.get("LMA_COLOR")=="1"
 if not TTY: C.off()
 
-# ---------- colibri 8-bit (pixel art, 2 pixel verticali per carattere) ----------
+# ---------- lmatomic 8-bit (pixel art, 2 pixel verticali per carattere) ----------
 SPRITE = [
     "....MMM.........",
     "...MMMMM..w.....",
@@ -161,7 +161,7 @@ def sprite_lines():
 
 # Display names for the banner, keyed on the RAW model_type -- deliberately not
 # on model_arch(), which returns "glm" for everything it does not recognise.
-# That fallback is right for picking an engine (colibri.c is the general path)
+# That fallback is right for picking an engine (glm52.c is the general path)
 # and wrong for telling someone what they loaded: it is why the banner said
 # GLM-5.2 over an Inkling, a Kimi K3 and a DeepSeek V4 alike.
 #
@@ -245,7 +245,7 @@ def banner(sub="", *, model=None):
     # silently be read as a path.
     sp=sprite_lines()
     txt=[
-        f"{C.teal}{C.b}colibri{C.r} {C.dim}v{_version}{C.r}",
+        f"{C.teal}{C.b}lmatomic{C.r} {C.dim}v{_version}{C.r}",
         f"{C.dim}tiny engine, immense model{C.r}",
         f"{C.gray}{model_banner_line(model)}{C.r}",
         f"{C.dgray}{sub}{C.r}" if sub else "",
@@ -340,9 +340,9 @@ def model_arch(model):
 
 def engine_for(model):
     family = resolve_model(model).descriptor
-    if os.environ.get("COLI_ENGINE"):
+    if os.environ.get("LMA_ENGINE"):
         if (family.id != "glm" and
-                os.environ.get("COLI_DOCKER_GLM_ONLY") == "1"):
+                os.environ.get("LMA_DOCKER_GLM_ONLY") == "1"):
             raise UnknownFamilyError(
                 f"this image contains only the GLM engine; {family.display_name} "
                 "needs a full release archive or source build")
@@ -353,7 +353,7 @@ def engine_for(model):
     local = os.path.join(HERE, name + _EXE)
     return local if os.path.exists(local) else os.path.join(_LIBEXEC, name + _EXE)
 
-def require_model(model, file="tokenizer.json", engine=None, target="", build="coli build"):
+def require_model(model, file="tokenizer.json", engine=None, target="", build="lmatomic build"):
     """Shared model-directory / required-file / engine presence check.
 
     `need_model` and `need_worker_model` differ only in which file they require
@@ -364,7 +364,7 @@ def require_model(model, file="tokenizer.json", engine=None, target="", build="c
     if not model:
         sys.exit(f"{C.yel}no model directory given.{C.r}\n  {NO_MODEL_HINT}")
     if not os.path.isdir(model):
-        sys.exit(f"{C.yel}model not found:{C.r} {model}\n  set COLI_MODEL or use --model")
+        sys.exit(f"{C.yel}model not found:{C.r} {model}\n  set LMA_MODEL or use --model")
     if file and not os.path.exists(os.path.join(model, file)):
         sys.exit(f"{C.yel}{file} is missing from {model}{C.r}")
     if engine and not os.path.exists(engine):
@@ -393,8 +393,8 @@ def ngen_for(a, interactive=False, family=None):
         return limits.interactive_max_output if interactive else limits.default_max_output
     return 16384 if interactive else 1024
 
-_PROFILE_CAP_ENV = "COLI_PROFILE_CAP"
-_PLAN_CAP_ENV = "COLI_PLAN_CAP"
+_PROFILE_CAP_ENV = "LMA_PROFILE_CAP"
+_PLAN_CAP_ENV = "LMA_PLAN_CAP"
 
 def apply_measured_profile(env, profile, explicit_env, explicit_cap):
     """Apply scheduling/resource results while preserving CLI precedence."""
@@ -463,7 +463,7 @@ def env_for_engine(a, arch, plan=None):
     # need the physical-core default below.
     #
     # setdefault, so an explicit OMP_NUM_THREADS still wins.
-    if not env.get("COLI_NO_OMP_TUNE"):
+    if not env.get("LMA_NO_OMP_TUNE"):
         if arch != "deepseek_v4":
             from resource_plan import physical_cpu_count
             env.setdefault("OMP_NUM_THREADS", str(physical_cpu_count()))
@@ -475,10 +475,10 @@ def env_for_engine(a, arch, plan=None):
                 env.setdefault("OMP_PROC_BIND", "close")
                 env.setdefault("OMP_PLACES", "cores")
     env["NGEN"] = str(ngen_for(a, family=arch))
-    if a.temp is not None: env["COLI_TEMP"] = str(a.temp)
+    if a.temp is not None: env["LMA_TEMP"] = str(a.temp)
     # SNAP is how every engine but GLM learns its model directory. env_for()
-    # sets it for GLM and openai_server.py sets it for the gateway, so `coli
-    # chat` and `coli serve` worked while `coli run` handed the sister engines
+    # sets it for GLM and openai_server.py sets it for the gateway, so `lmatomic
+    # chat` and `lmatomic serve` worked while `lmatomic run` handed the sister engines
     # an environment without it: OLMoE exited with "started without a model"
     # (#1501, #1600). Set it here, once, for all of them. --model is the
     # directory, same as env_for(): a leftover SNAP must not load another model.
@@ -487,12 +487,12 @@ def env_for_engine(a, arch, plan=None):
     if arch == "olmoe":
         env["CHAT"] = "1"
         env["MAX_NEW"] = str(ngen_for(a, family=arch))
-        # olmoe reads COLI_TEMP like every other engine (line above). Setting the
+        # olmoe reads LMA_TEMP like every other engine (line above). Setting the
         # legacy TEMP alias here also clobbered %TEMP% with "0.7" for every child
-        # of the chat process on Windows — and olmoe never read COLI_TEMP, so the
+        # of the chat process on Windows — and olmoe never read LMA_TEMP, so the
         # ONLY working channel was a poisoned system variable (#509's exact shape).
     # --ram reaches the engines that read it. kimi_k3 gained a RAM budget in
-    # #855; before that `grep -c RAM_GB c/kimi_k3.c` returned 0, so `coli chat
+    # #855; before that `grep -c RAM_GB c/kimi_k3.c` returned 0, so `lmatomic chat
     # --ram 242` on Kimi K3 set an environment variable nobody looked at and the
     # user's session ran itself out of memory with the flag apparently set.
     if arch in ("deepseek_v4", "deepseek_v41", "kimi", "glm53", "olmoe"):
@@ -537,7 +537,7 @@ def env_for_engine(a, arch, plan=None):
         # GPU mirroring of the MTP draft experts stays opt-in: the CUDA kernels
         # accumulate fp32 differently from the CPU refs and speculative
         # acceptance needs a bit-exact draft. V4_MTP_GPU=1 mirrors GLM's
-        # COLI_CUDA_MTP switch for CUDA-driven speculative decoding.
+        # LMA_CUDA_MTP switch for CUDA-driven speculative decoding.
         env.setdefault("V4_MTP_GPU", "0")
     # getattr: tests build partial Namespaces for env_for_engine.
     gpu = getattr(a, "gpu", None)
@@ -548,9 +548,9 @@ def env_for_engine(a, arch, plan=None):
         if vram and gpu!="none":
             sys.exit(f"{C.yel}{family.display_name} currently supports CPU only; --vram is unavailable{C.r}")
     if gpu is not None:
-        env.pop("COLI_GPU", None); env.pop("COLI_GPUS", None)
+        env.pop("LMA_GPU", None); env.pop("LMA_GPUS", None)
         if gpu == "none":
-            env["COLI_CUDA"] = "0"
+            env["LMA_CUDA"] = "0"
             env.pop("CUDA_EXPERT_GB", None); env.pop("CUDA_DENSE", None)
         else:
             if arch == "deepseek_v4":
@@ -558,9 +558,9 @@ def env_for_engine(a, arch, plan=None):
                     sys.exit(f"{C.yel}--gpu needs the CUDA build:{C.r} {dsv4_cuda_build_hint()}")
             elif not cuda_binary(engine_for_gpu_check(a)):
                 sys.exit(f"{C.yel}--gpu needs the CUDA build:{C.r} the engine binary is CPU-only")
-            env["COLI_CUDA"] = "1"
+            env["LMA_CUDA"] = "1"
             if gpu != "auto":
-                env["COLI_GPUS"] = gpu
+                env["LMA_GPUS"] = gpu
             env.setdefault("CUDA_DENSE", "1")
     if vram and gpu != "none":
         if arch == "deepseek_v4":
@@ -568,7 +568,7 @@ def env_for_engine(a, arch, plan=None):
                 sys.exit(f"{C.yel}--vram needs the CUDA build:{C.r} {dsv4_cuda_build_hint()}")
         elif not cuda_binary(engine_for_gpu_check(a)):
             sys.exit(f"{C.yel}--vram needs the CUDA build:{C.r} the engine binary is CPU-only")
-        env["COLI_CUDA"] = "1"
+        env["LMA_CUDA"] = "1"
         env["CUDA_EXPERT_GB"] = str(vram)
     if getattr(a, "auto_tier", False):
         # GLM has historically applied both the resource plan and its measured
@@ -583,8 +583,8 @@ def env_for_engine(a, arch, plan=None):
                                 kv_slots=requested_kv_slots(a,env))
             plan_must_not_choose_omp=("OMP_NUM_THREADS" not in env
                                       and (arch == "deepseek_v4"
-                                           or env.get("COLI_NO_OMP_TUNE")))
-            gpu_off_by_request = env.get("COLI_CUDA") == "0"
+                                           or env.get("LMA_NO_OMP_TUNE")))
+            gpu_off_by_request = env.get("LMA_CUDA") == "0"
             cuda_on = plan_cuda_enabled(a, arch, env)
             env=environment_for_plan(plan,env,cuda_enabled=cuda_on)
         except (OSError,ValueError,json.JSONDecodeError) as error:
@@ -596,7 +596,7 @@ def env_for_engine(a, arch, plan=None):
         if plan_must_not_choose_omp:
             # environment_for_plan supplies the physical-core default used by
             # the other engines. V4 deliberately computes logical CPUs minus
-            # its loader reservation at startup; COLI_NO_OMP_TUNE likewise
+            # its loader reservation at startup; LMA_NO_OMP_TUNE likewise
             # promises no automatic team. Keep those baselines unless a
             # measured profile (V4 only, below) or the user explicitly chooses
             # a team.
@@ -610,13 +610,13 @@ def env_for_engine(a, arch, plan=None):
                 gain=100.0*profile["gain"]
                 print(f"  {C.dim}[TUNE] applied measured profile · +{gain:.1f}% "
                       f"calibration throughput{C.r}",file=sys.stderr)
-    # Kimi's CUDA path is gated on K3_CUDA, not COLI_CUDA. --gpu / --vram /
-    # auto-tier write COLI_CUDA=1 after proving the build; without this copy
+    # Kimi's CUDA path is gated on K3_CUDA, not LMA_CUDA. --gpu / --vram /
+    # auto-tier write LMA_CUDA=1 after proving the build; without this copy
     # the flag was accepted and the experts still stayed on the CPU.
     if arch == "kimi":
-        if env.get("COLI_CUDA") == "0":
+        if env.get("LMA_CUDA") == "0":
             env["K3_CUDA"] = "0"
-        elif env.get("COLI_CUDA") == "1" and "K3_CUDA" not in explicit_env:
+        elif env.get("LMA_CUDA") == "1" and "K3_CUDA" not in explicit_env:
             env["K3_CUDA"] = "1"
     return env
 
@@ -631,9 +631,9 @@ def dsv4_cuda_available(model=None):
     if sys.platform == "win32":
         # backend_loader_dsv4.c tries the DeepGEMM build first and the generic
         # one second, so either next to the engine starts the tier (the same
-        # two names `coli doctor` accepts).
+        # two names `lmatomic doctor` accepts).
         return any(os.path.exists(os.path.join(os.path.dirname(eng), name))
-                   for name in ("coli_cuda_dsv4_dg.dll", "coli_cuda_dsv4.dll"))
+                   for name in ("lma_cuda_dsv4_dg.dll", "lma_cuda_dsv4.dll"))
     if sys.platform == "linux" and os.path.exists(eng):
         try:
             linked = subprocess.run(["ldd", eng], capture_output=True, text=True, timeout=3)
@@ -645,7 +645,7 @@ def dsv4_cuda_available(model=None):
 
 def dsv4_cuda_build_hint():
     if sys.platform == "win32":
-        return "build coli_cuda_dsv4.dll (make cuda-dsv4-dll)"
+        return "build lma_cuda_dsv4.dll (make cuda-dsv4-dll)"
     if sys.platform == "linux":
         return "make deepseek-v4 CUDA=1 (this binary is CPU-only)"
     return "the DeepSeek V4 CUDA tier is supported only on Linux and Windows"
@@ -672,7 +672,7 @@ def engine_for_gpu_check(a):
 
 def cuda_binary(engine=None):
     """Was `engine` (default: the GLM binary) built with the GPU backend?
-    Callers that know the family pass its engine: checking colibri.exe for a
+    Callers that know the family pass its engine: checking glm52.exe for a
     qwen36 run refused --gpu on a correct qwen36 CUDA build (#1533)."""
     engine = engine or GLM
     if not os.path.exists(engine): return False
@@ -686,10 +686,10 @@ def cuda_binary(engine=None):
     if sys.platform == "win32":
         # Windows CUDA_DLL/HIP_DLL hosts never link the GPU runtime directly:
         # the engine LoadLibrary's its backend (backend_loader.c). The host
-        # compiles exactly one basename -- coli_hip.dll or coli_cuda.dll --
+        # compiles exactly one basename -- lma_hip.dll or lma_cuda.dll --
         # and that is the file that must sit next to it. The GLM/Qwen banner
         # is not a GPU-build marker: Kimi K3 CUDA_DLL builds link the same
-        # loader without printing it, and a HIP host that only had coli_hip.dll
+        # loader without printing it, and a HIP host that only had lma_hip.dll
         # used to be refused as CPU-only.
         try:
             with open(engine,"rb") as f: image=f.read()
@@ -713,7 +713,7 @@ def resource_request(a, env):
     vram=a.vram or num(env.get("CUDA_EXPERT_GB",0))
     gpu=a.gpu
     if gpu is None:
-        gpu=env.get("COLI_GPUS",env.get("COLI_GPU","auto"))
+        gpu=env.get("LMA_GPUS",env.get("LMA_GPU","auto"))
     devices=None if gpu=="auto" else ([] if gpu=="none" else
         [int(value) for value in gpu.split(",")])
     return ram,ctx,devices,vram
@@ -721,11 +721,11 @@ def resource_request(a, env):
 
 def requested_kv_slots(a, env):
     value=getattr(a,"kv_slots",None)
-    if value is None: value=int(env.get("COLI_KV_SLOTS","1"))
+    if value is None: value=int(env.get("LMA_KV_SLOTS","1"))
     return value
 
 def plan_cuda_enabled(a, arch, env):
-    """Should --auto-tier apply the VRAM tier that `coli plan` printed?
+    """Should --auto-tier apply the VRAM tier that `lmatomic plan` printed?
 
     Yes exactly when the engine that is about to run was built with a GPU
     backend, which is the question the GLM path has always asked
@@ -743,10 +743,10 @@ def plan_cuda_enabled(a, arch, env):
     #1581 that was 11.8 tok/s against 21, with nothing on screen to explain it.
 
     A CPU-only build still never gets a CUDA launch: that is what the check
-    below says. `--gpu none` (COLI_CUDA=0) is still the off switch, and an
+    below says. `--gpu none` (LMA_CUDA=0) is still the off switch, and an
     explicit --gpu/--vram has already proved the build before we get here.
     """
-    value = env.get("COLI_CUDA")
+    value = env.get("LMA_CUDA")
     if value == "1": return True      # --gpu / --vram validated the build above
     if value == "0": return False     # --gpu none, or the user set it by hand
     # DeepSeek V4 links its tier differently on each platform, so it has its own
@@ -762,7 +762,7 @@ def report_unapplied_vram_tier(plan, gpu_off_by_request=False):
     can act on exactly one of them, so the notice says which: the GPU was turned
     off by request, or the engine binary has no GPU backend to turn on.
 
-    Being told matters because `coli plan` and `coli doctor` print the VRAM tier
+    Being told matters because `lmatomic plan` and `lmatomic doctor` print the VRAM tier
     as part of the plan and --auto-tier is documented as applying that plan. In
     #1581 the tier vanished with nothing on screen connecting the two, and the
     reporter only found it by watching nvidia-smi.
@@ -804,16 +804,16 @@ def env_for(a):
     if requested_cap is not None: explicit_env.add("RAM_GB")
     # OMP_NUM_THREADS on EVERY platform, not only Windows.
     #
-    # glm.c's self-exec tuning (colibri.c, the COLI_OMP_TUNED block) sets
+    # glm.c's self-exec tuning (glm52.c, the LMA_OMP_TUNED block) sets
     # OMP_WAIT_POLICY and GOMP_SPINCOUNT but never the thread count -- and it
-    # skips itself entirely when COLI_CUDA or COLI_METAL is on. So on Linux
+    # skips itself entirely when LMA_CUDA or LMA_METAL is on. So on Linux
     # nothing ever sets OMP_NUM_THREADS and libgomp falls back to nproc, i.e.
     # LOGICAL cores. On any SMT host that over-subscribes by 2x, which is
     # precisely what physical_cpu_count()'s own docstring warns about:
     # "two SMT siblings share one AVX-512 unit and contend".
     #
     # Measured, GLM-5.2 744B on 4x RTX A6000 + EPYC 7402P (24 cores / 48
-    # threads), CTX=32768, .coli_usage restored between runs:
+    # threads), CTX=32768, .lma_usage restored between runs:
     #
     #   OMP_NUM_THREADS   routed CPU read   decode      per thread
     #      4               6.48 GB/s        1.28 tok/s   1.62 GB/s
@@ -823,16 +823,16 @@ def env_for(a):
     #     48 (logical)    17.35             2.06         0.36   <- today's default
     #
     # setdefault, so an explicit OMP_NUM_THREADS still wins, and the whole
-    # thing stays behind COLI_NO_OMP_TUNE like the rest of the OMP tuning.
-    if not e.get("COLI_NO_OMP_TUNE"):
+    # thing stays behind LMA_NO_OMP_TUNE like the rest of the OMP tuning.
+    if not e.get("LMA_NO_OMP_TUNE"):
         from resource_plan import physical_cpu_count
         e.setdefault("OMP_NUM_THREADS", str(physical_cpu_count()))
     if sys.platform == "win32":
-        # COLI_NO_OMP_TUNE spegne SOLO il blocco OMP (stesso perimetro del
+        # LMA_NO_OMP_TUNE spegne SOLO il blocco OMP (stesso perimetro del
         # self-exec di glm.c; presence-based come nel motore: impostarla a
         # qualsiasi valore, anche 0, disattiva). I default I/O piu' sotto
         # restano attivi: kill-switch dedicati = le var stesse (DIRECT=0 ecc.)
-        if not e.get("COLI_NO_OMP_TUNE"):
+        if not e.get("LMA_NO_OMP_TUNE"):
             # parita' col tuning OMP self-exec di glm.c (solo Linux/FreeBSD, e
             # comunque saltato sotto CUDA/Metal): libgomp legge queste variabili
             # prima di main, quindi su Windows vanno nell'ambiente del figlio.
@@ -853,26 +853,26 @@ def env_for(a):
         e.setdefault("DIRECT", "1")
         e.setdefault("PIPE", "1")
         e.setdefault("PILOT_REAL", "1")
-    e["COLI_POLICY"]=a.policy
+    e["LMA_POLICY"]=a.policy
     if getattr(a, "cluster_workers", None): e["CLUSTER_WORKERS"] = a.cluster_workers
     if getattr(a, "cluster_coordinator", None): e["CLUSTER_COORDINATOR"] = a.cluster_coordinator
     if a.ram:  e["RAM_GB"]=str(a.ram)
     e["NGEN"]=str(ngen_for(a))
     if a.topp: e["TOPP"]=str(a.topp)
     if a.topk: e["TOPK"]=str(a.topk)
-    if a.temp is not None: e["COLI_TEMP"]=str(a.temp)   # 0 = greedy; default motore: 1.0 + nucleus 0.95
-                                                        # COLI_TEMP, non TEMP: ROCm e Windows leggono $TEMP come dir temporanea (#509)
+    if a.temp is not None: e["LMA_TEMP"]=str(a.temp)   # 0 = greedy; default motore: 1.0 + nucleus 0.95
+                                                        # LMA_TEMP, non TEMP: ROCm e Windows leggono $TEMP come dir temporanea (#509)
     if a.repin: e["REPIN"]=str(a.repin)
     if a.ctx: e["CTX"]=str(a.ctx)
     if a.auto_tier:
         from resource_plan import build_plan, environment_for_plan, format_bytes
         if a.gpu is not None:
-            e.pop("COLI_GPU",None); e.pop("COLI_GPUS",None)
+            e.pop("LMA_GPU",None); e.pop("LMA_GPUS",None)
             if a.gpu=="none":
-                e["COLI_CUDA"]="0"; e.pop("CUDA_EXPERT_GB",None); e.pop("CUDA_DENSE",None)
-            else: e.pop("COLI_CUDA",None)
-        elif e.get("COLI_CUDA")=="0":
-            e.pop("COLI_GPU",None); e.pop("COLI_GPUS",None)
+                e["LMA_CUDA"]="0"; e.pop("CUDA_EXPERT_GB",None); e.pop("CUDA_DENSE",None)
+            else: e.pop("LMA_CUDA",None)
+        elif e.get("LMA_CUDA")=="0":
+            e.pop("LMA_GPU",None); e.pop("LMA_GPUS",None)
             e.pop("CUDA_EXPERT_GB",None); e.pop("CUDA_DENSE",None)
         if a.vram and a.gpu!="none": e["CUDA_EXPERT_GB"]=str(a.vram)
         try:
@@ -894,33 +894,33 @@ def env_for(a):
         rt=plan["tiers"]["ram"]; vt=plan["tiers"]["vram"]
         # The plan label used to derive the backend from CUDA alone, so on
         # Apple Silicon it printed " · CPU" even when the calibration child
-        # processes ran on Metal (COLI_METAL is inherited through env_for and
+        # processes ran on Metal (LMA_METAL is inherited through env_for and
         # environment_for_plan, so the measurements are real). Report the
         # active backend: CUDA VRAM first, then Metal, then CPU.
         if has_cuda and vt["devices"]:
             gpu=f" · VRAM {format_bytes(vt['budget_bytes'])}"
-        elif str(e.get("COLI_METAL","")).strip() not in ("","0"):
+        elif str(e.get("LMA_METAL","")).strip() not in ("","0"):
             gpu=" · Metal (unified memory)"
         else:
             gpu=" · CPU"
         print(f"  {C.dim}[PLAN] RAM {format_bytes(rt['budget_bytes'])} · cap {rt['cache_slots_per_layer']}/layer{gpu}{C.r}",file=sys.stderr)
     else:
-        # Windows: a bare `coli chat` (no --gpu/--vram/--auto-tier) used to ALWAYS
+        # Windows: a bare `lmatomic chat` (no --gpu/--vram/--auto-tier) used to ALWAYS
         # run CPU-only, even on a CUDA build with a GPU present — cuda_binary()
-        # returned False on Windows (see above), and nothing set COLI_CUDA without
+        # returned False on Windows (see above), and nothing set LMA_CUDA without
         # an explicit flag. Now that detection works, auto-enable the GPU when one
-        # is detected so `coli chat` Just Works. Scoped to Windows: Linux already
+        # is detected so `lmatomic chat` Just Works. Scoped to Windows: Linux already
         # has working detection + the explicit-flag UX, and changing bare-chat
         # semantics there is out of scope. Falls back to CPU with a warning if
         # nvidia-smi is missing (discover_gpus can't size VRAM without it).
-        # An explicit COLI_CUDA=0 in the environment must win over the implicit
-        # auto-enable: before this check, a Windows user setting COLI_CUDA=0 for
+        # An explicit LMA_CUDA=0 in the environment must win over the implicit
+        # auto-enable: before this check, a Windows user setting LMA_CUDA=0 for
         # a CPU baseline silently got a ~12.6 GB VRAM expert tier anyway (the
         # engine's "CPU" rows were GPU-assisted). --gpu none remains the
         # canonical hard off-switch (works on every platform, also clears the
         # CUDA_* sizing vars).
         if (sys.platform == "win32" and a.gpu is None and not a.vram
-                and e.get("COLI_CUDA") != "0"):
+                and e.get("LMA_CUDA") != "0"):
             if cuda_binary():
                 from resource_plan import (discover_gpus, plans_placement, build_plan,
                                            environment_for_plan, format_bytes)
@@ -932,8 +932,8 @@ def env_for(a):
                 # own gate cannot cover this path -- filter at the source.
                 gpus = [g for g in discover_gpus() if plans_placement(g)]
                 if gpus:
-                    e["COLI_CUDA"]="1"
-                    e.setdefault("COLI_GPUS", ",".join(str(g["index"]) for g in gpus))
+                    e["LMA_CUDA"]="1"
+                    e.setdefault("LMA_GPUS", ",".join(str(g["index"]) for g in gpus))
                     # Reuse the planner so the expert-tier VRAM budget is the real
                     # free VRAM minus the 2 GB reserve — not a guess. Same machinery
                     # as --auto-tier, just without requiring the user to pass it.
@@ -965,36 +965,36 @@ def env_for(a):
                               f"{format_bytes(vt['budget_bytes'])} expert tier{C.r}", file=sys.stderr)
                     except (OSError,ValueError,json.JSONDecodeError) as error:
                         # Plan failed (e.g. model dir unreadable): don't block the
-                        # run, just leave the unsized COLI_CUDA=1 and let the engine
+                        # run, just leave the unsized LMA_CUDA=1 and let the engine
                         # pick its own budget. Engine handles a missing budget.
                         print(f"  {C.yel}[GPU] auto-enable: could not size VRAM ({error}); "
                               f"using engine default{C.r}", file=sys.stderr)
                 else:
-                    print(f"  {C.yel}[GPU] coli_cuda.dll present but nvidia-smi not found on PATH "
+                    print(f"  {C.yel}[GPU] lma_cuda.dll present but nvidia-smi not found on PATH "
                           f"(cannot size VRAM); running CPU-only. Add nvidia-smi to PATH or pass "
                           f"--vram N to enable CUDA.{C.r}", file=sys.stderr)
-            # else: CPU build (no coli_cuda.dll) — stay silent, CPU is correct.
-        elif e.get("COLI_CUDA") == "0":
+            # else: CPU build (no lma_cuda.dll) — stay silent, CPU is correct.
+        elif e.get("LMA_CUDA") == "0":
             # honoured off-switch: also drop stale device/sizing vars so the
             # engine can't be re-enabled by leftovers (same as --gpu none).
-            e.pop("COLI_GPU",None); e.pop("COLI_GPUS",None)
+            e.pop("LMA_GPU",None); e.pop("LMA_GPUS",None)
             e.pop("CUDA_EXPERT_GB",None); e.pop("CUDA_DENSE",None)
         # --gpu/--vram SENZA --auto-tier: prima venivano ignorati in silenzio e il run
         # partiva CPU-only senza alcun avviso — benchmark "GPU" pubblicati per errore (#121).
         if a.gpu is not None:
-            e.pop("COLI_GPU",None); e.pop("COLI_GPUS",None)
+            e.pop("LMA_GPU",None); e.pop("LMA_GPUS",None)
             if a.gpu=="none":
-                e["COLI_CUDA"]="0"; e.pop("CUDA_EXPERT_GB",None); e.pop("CUDA_DENSE",None)
+                e["LMA_CUDA"]="0"; e.pop("CUDA_EXPERT_GB",None); e.pop("CUDA_DENSE",None)
             else:
                 if not cuda_binary():
-                    sys.exit(f"{C.yel}--gpu needs the CUDA build:{C.r} make colibri CUDA=1 (this binary is CPU-only)")
-                e["COLI_CUDA"]="1"
-                if a.gpu!="auto": e["COLI_GPUS"]=a.gpu
+                    sys.exit(f"{C.yel}--gpu needs the CUDA build:{C.r} make glm52 CUDA=1 (this binary is CPU-only)")
+                e["LMA_CUDA"]="1"
+                if a.gpu!="auto": e["LMA_GPUS"]=a.gpu
                 e.setdefault("CUDA_DENSE","1")
         if a.vram and a.gpu!="none":
             if not cuda_binary():
-                sys.exit(f"{C.yel}--vram needs the CUDA build:{C.r} make colibri CUDA=1 (this binary is CPU-only)")
-            e["COLI_CUDA"]="1"; e["CUDA_EXPERT_GB"]=str(a.vram)
+                sys.exit(f"{C.yel}--vram needs the CUDA build:{C.r} make glm52 CUDA=1 (this binary is CPU-only)")
+            e["LMA_CUDA"]="1"; e["CUDA_EXPERT_GB"]=str(a.vram)
     return e
 
 # ---------- rendering markdown in STREAMING per il terminale ----------
@@ -1166,8 +1166,8 @@ def stream_turn(p, sentinel, on_bytes):
 def cmd_build(a):
     banner("build")
     if not os.path.exists(os.path.join(HERE, "Makefile")):
-        sys.exit(f"{C.yel}coli build{C.r} only works from a source checkout (this is an installed copy).\n"
-                  f"  Clone https://github.com/JustVugg/colibri and run ./setup.sh, or make -C c colibri.")
+        sys.exit(f"{C.yel}lmatomic build{C.r} only works from a source checkout (this is an installed copy).\n"
+                  f"  Clone https://github.com/JustVugg/colibri and run ./setup.sh, or make -C c glm52.")
     family=resolve_model(a.model).descriptor if a.model else family_by_id("glm")
     target=family.build_target
     sys.exit(subprocess.call(["make","-C",HERE,target]))
@@ -1191,7 +1191,7 @@ def cmd_info(a):
         # Multimodal wrappers such as Qwen3.8 keep the language architecture
         # below text_config.  The registry has already resolved that section;
         # using the root here produced a recognized family followed by four
-        # misleading `None` dimensions in `coli info`.
+        # misleading `None` dimensions in `lmatomic info`.
         arch_c=resolved.family_config if resolved else c
         experts=arch_c.get("n_routed_experts",arch_c.get("num_experts"))
         row("model", a.model)
@@ -1207,9 +1207,9 @@ def cmd_info(a):
         # support case: the GLM engine then died on a tensor name it never had).
         try: n_shards=len([x for x in os.listdir(a.model) if x.endswith('.safetensors')])
         except OSError: n_shards=0
-        print(f"   {C.yel}config.json is missing{C.r}: coli picks the engine from it, so nothing can run here yet.")
+        print(f"   {C.yel}config.json is missing{C.r}: lmatomic picks the engine from it, so nothing can run here yet.")
         print("   Copy the checkpoint's config.json (with tokenizer.json and model.safetensors.index.json)")
-        print(f"   from the model repo next to the {n_shards} shard(s) found here, then run coli info again.")
+        print(f"   from the model repo next to the {n_shards} shard(s) found here, then run lmatomic info again.")
     try:
         mi=open('/proc/meminfo').read()
         tot=int(re.search(r'MemTotal:\s+(\d+)',mi).group(1))/1e6
@@ -1223,7 +1223,7 @@ def cmd_info(a):
         row("disk", "? GB (unavailable)")
     if family:
         engine=engine_for(a.model)
-        row("engine", "ready ✓" if os.path.exists(engine) else "not built (coli build)")
+        row("engine", "ready ✓" if os.path.exists(engine) else "not built (lmatomic build)")
     else:
         row("engine", "unknown until config.json is present")
     knobs=[]
@@ -1282,14 +1282,14 @@ def cmd_doctor(a):
         engine=GLM
         engine_error=error
     report=run_doctor(
-        # engine_path was hardcoded to GLM, so `coli doctor` inspected colibri
+        # engine_path was hardcoded to GLM, so `lmatomic doctor` inspected lmatomic
         # no matter which model it was pointed at: a built kimi_k3/inkling was
-        # reported "engine is not built", and a stale colibri would have been
+        # reported "engine is not built", and a stale lmatomic would have been
         # reported ready for a model that never runs on it (#783).
         a.model, ram, ctx, devices, vram, engine_path=engine, deep=a.deep,
         kv_slots=requested_kv_slots(a,os.environ),
         engine_error=engine_error,
-        mirror_dir=os.environ.get("COLI_MODEL_MIRROR"),
+        mirror_dir=os.environ.get("LMA_MODEL_MIRROR"),
     )
     print(json.dumps(report,indent=2) if a.json else format_doctor(report))
     return exit_code(report)
@@ -1381,11 +1381,11 @@ def cmd_run(a):
     arch=family.id
     engine=engine_for(a.model)
     need_model(a.model,engine)
-    prompt=" ".join(a.prompt) if a.prompt else sys.exit('usage: coli run "your prompt"')
+    prompt=" ".join(a.prompt) if a.prompt else sys.exit('usage: lmatomic run "your prompt"')
     banner("run", model=a.model)
     if not family.has_cli_adapter:
-        sys.exit(f"{C.yel}coli run is not wired for {family.display_name};{C.r} "
-                 f"use coli chat or coli serve")
+        sys.exit(f"{C.yel}lmatomic run is not wired for {family.display_name};{C.r} "
+                 f"use lmatomic chat or lmatomic serve")
     if arch=="deepseek_v4":
         prompt_path=None
         try:
@@ -1394,7 +1394,7 @@ def cmd_run(a):
             if sys.platform in ("win32", "msys", "cygwin"):
                 with tempfile.NamedTemporaryFile(
                         mode="w",encoding="utf-8",newline="",delete=False,
-                        prefix="coli-v4-prompt-",suffix=".txt") as stream:
+                        prefix="lmatomic-v4-prompt-",suffix=".txt") as stream:
                     stream.write(prompt)
                     prompt_path=stream.name
                 cmd += ["--prompt-file",prompt_path]
@@ -1404,7 +1404,7 @@ def cmd_run(a):
             try: memory_gb=float(e.get("RAM_GB","0"))
             except (TypeError,ValueError): memory_gb=0.0
             if memory_gb>0: cmd += ["--memory-gb",str(e["RAM_GB"])]
-            if os.environ.get("COLI_THINK","0")=="1": cmd.append("--thinking")
+            if os.environ.get("LMA_THINK","0")=="1": cmd.append("--thinking")
             result=subprocess.call(cmd,env=e)
         finally:
             if prompt_path:
@@ -1415,15 +1415,15 @@ def cmd_run(a):
         e=env_for_engine(a,arch)
         # GLM53 accepts cache/layer as a positional numeric argument.  Keep the
         # same cap_for_launch contract used by the persistent gateway so an
-        # explicit `coli run --cap N` reaches the engine instead of being
+        # explicit `lmatomic run --cap N` reaches the engine instead of being
         # silently ignored by the one-shot path.
         cap = cap_for_launch(a.cap, e, 0)
         cmd=[engine,str(cap),"--model",os.path.abspath(a.model),"--prompt",prompt,
              "--greedy",str(ngen_for(a,interactive=True,family=family))]
         sys.exit(subprocess.call(cmd,env=e))
     if arch=="olmoe":
-        # olmoe.c now speaks the gateway's SERVE protocol too (`coli chat`/
-        # `coli web`/`coli serve` use it), but `coli run` predates that and
+        # olmoe.c now speaks the gateway's SERVE protocol too (`lmatomic chat`/
+        # `lmatomic web`/`lmatomic serve` use it), but `lmatomic run` predates that and
         # its one-shot contract is simpler without it: feed exactly one turn
         # over the engine's plain stdin chat loop and close stdin, the engine
         # emits the answer and exits cleanly. No reason to spin up the gateway
@@ -1445,7 +1445,7 @@ def cmd_run(a):
     sys.exit(subprocess.call([GLM, str(cap_for_launch(a.cap,e,0))], env=e))
 
 def server_probe(base, api_key=None, timeout=1.5):
-    """Is a coli serve alive at `base`? Returns its model_id, or None.
+    """Is a lmatomic serve alive at `base`? Returns its model_id, or None.
     Probes /health then /v1/models — both cheap, neither touches the engine."""
     import urllib.request, urllib.error
     def get(path):
@@ -1469,7 +1469,7 @@ def server_probe(base, api_key=None, timeout=1.5):
 CHAT_STATS_MODES = ("full", "compact", "off")
 
 def chat_stats_mode(a):
-    mode = getattr(a, "stats", None) or os.environ.get("COLI_CHAT_STATS", "full")
+    mode = getattr(a, "stats", None) or os.environ.get("LMA_CHAT_STATS", "full")
     return mode if mode in CHAT_STATS_MODES else "full"
 
 def gen_stats(reply_text, elapsed, exact_tokens=None, interrupted=False):
@@ -1584,7 +1584,7 @@ def chat_brio(a, base, model_id, msgs, question, options, w):
           f"{usage.get('completion_tokens',0)} generated{C.r}\n")
 
 def chat_attached(a, base, model_id):
-    """The chat REPL over HTTP against a running `coli serve`.
+    """The chat REPL over HTTP against a running `lmatomic serve`.
 
     Why this exists (the cold-chat cost, measured): spawning a private engine
     pays 34-136 s of resident load on EVERY start, and begins with an empty
@@ -1669,7 +1669,7 @@ def chat_attached(a, base, model_id):
         req=urllib.request.Request(base.rstrip("/")+"/v1/chat/completions", data=body,
                                    headers={"Content-Type":"application/json"})
         if a.api_key: req.add_header("Authorization", f"Bearer {a.api_key}")
-        print(f"\n  {C.teal}◆ colibri{C.r}")
+        print(f"\n  {C.teal}◆ lmatomic{C.r}")
         sp=Spinner("thinking…"); sp.start()
         md=MDStream("  "); reply=[]; first=True; t0=time.time(); interrupted=False; think_open=False
         exact_tokens=None
@@ -1688,12 +1688,12 @@ def chat_attached(a, base, model_id):
                     for ch in ev.get("choices",[]):
                         d=ch.get("delta",{})
                         rtxt=d.get("reasoning_content")
-                        if rtxt and os.environ.get("COLI_SHOW_THINK","1")=="0":
+                        if rtxt and os.environ.get("LMA_SHOW_THINK","1")=="0":
                             continue              # thinking nascosto: lo spinner resta a girare
                         if rtxt:
                             # Thinking arrives as its own delta field, and this loop
-                            # used to drop it on the floor: `coli run` streamed the
-                            # model's reasoning while `coli chat` silently hid it
+                            # used to drop it on the floor: `lmatomic run` streamed the
+                            # model's reasoning while `lmatomic chat` silently hid it
                             # (#979). Render it dim and unformatted — it is the
                             # model's scratchpad, not the answer — and keep it out
                             # of the saved reply so history carries content only.
@@ -1744,7 +1744,7 @@ def chat_attached(a, base, model_id):
     print(f"  {C.dim}goodbye — the engine keeps running for the next chat 🐦{C.r}")
 
 def kv_resume_notice(model_dir):
-    """SERVE mode silently resumes .coli_kv from disk (glm.c kv_disk_load): a chat
+    """SERVE mode silently resumes .lma_kv from disk (glm.c kv_disk_load): a chat
     started today continues a conversation from days ago, with `first=0` so the
     turn is appended WITHOUT the [gMASK]<sop> prefix. The engine does announce it
     on stderr — but nothing here ever shows that: the drain thread's
@@ -1760,7 +1760,7 @@ def kv_resume_notice(model_dir):
 
     So say it here, in Python, from the file itself: no pipe, no thread, no
     Windows deadlock risk (see the stderr comment below)."""
-    p=os.path.join(model_dir, ".coli_kv")
+    p=os.path.join(model_dir, ".lma_kv")
     try:
         with open(p,"rb") as f:
             if f.read(8)!=b"COLIKV1\0": return
@@ -1841,7 +1841,7 @@ def message_with_images(text):
         # data: URI. The server no longer opens local paths for a client (an
         # inference client is not the operator; with the API key it could read
         # any file the server process can), unless the operator sets
-        # COLI_IMAGE_ROOT, and a path sent by mistake would be refused.
+        # LMA_IMAGE_ROOT, and a path sent by mistake would be refused.
         content.append({"type":"image_url","image_url":{"url":image_data_uri(path)}})
     return content
 
@@ -1854,7 +1854,7 @@ def image_data_uri(path):
 
 
 def cmd_chat(a):
-    # ATTACH: a running `coli serve` beats a private engine every time — the load
+    # ATTACH: a running `lmatomic serve` beats a private engine every time — the load
     # (34-136 s) and the cache warmth survive between sessions. Explicit --attach
     # wins; otherwise probe localhost quietly and use it if it's there. --no-attach
     # forces the old behaviour. The probe costs ~1 ms when nothing is listening.
@@ -1865,7 +1865,7 @@ def cmd_chat(a):
             banner(f"chat · {mid} · attached")
             chat_attached(a, base, mid); return
         if getattr(a,"attach",None):
-            sys.exit(f"--attach: no coli serve answering at {base} (start one with: coli serve --model <dir>)")
+            sys.exit(f"--attach: no lmatomic serve answering at {base} (start one with: lmatomic serve --model <dir>)")
     need_model(a.model)
     family=resolve_model(a.model).descriptor
     arch=family.id
@@ -1877,7 +1877,7 @@ def cmd_chat(a):
         model_id=family.default_model_id
         banner(f"chat · {model_id} · local server", model=a.model)
         import openai_server
-        # --cap rides along so an explicit `coli chat --cap N` reaches the
+        # --cap rides along so an explicit `lmatomic chat --cap N` reaches the
         # engine (it was silently eaten for years -- disclosed behavior
         # change); absent stays absent, and openai_server translates the
         # missing flag per model arch (cap_for_arch, #379: non-glm gets the
@@ -1916,7 +1916,7 @@ def cmd_chat(a):
     e=env_for(a); e["SERVE"]="1"
     # stderr -> PIPE, NOT stderr=errlog (file). On Windows/MinGW, pointing the
     # child's stderr at a file/DEVNULL handle stalls the CRT so stdout (the byte
-    # protocol coli reads one byte at a time) never flushes and chat hangs at
+    # protocol lmatomic reads one byte at a time) never flushes and chat hangs at
     # ~10 GB resident. A PIPE whose read end nobody drains still works: the
     # engine emits only ~400 bytes of status to stderr, which fits comfortably
     # in the OS pipe buffer, so it never blocks. We snapshot stderr into errlog
@@ -1928,7 +1928,7 @@ def cmd_chat(a):
     sp=Spinner("waking the giant (744B)…"); sp.start()
     # Keep the pre-READY stdout preamble instead of discarding it: the engine's
     # "loaded in Xs | resident dense: Y MB" line is a printf, i.e. STDOUT
-    # (colibri.c:9595 — same in inkling.c/olmoe.c), so it arrives HERE and never
+    # (glm52.c:9595 — same in inkling.c/olmoe.c), so it arrives HERE and never
     # in errlog. The ready-line regex below used to scan stderr for it and could
     # never match. A few hundred bytes of banner; nothing else reads them.
     _preamble=bytearray()
@@ -2006,7 +2006,7 @@ def cmd_chat(a):
                 p.stdin.write(b"\x02MORE\n"); p.stdin.flush()
             else:
                 p.stdin.write((msg.replace("\n"," ")+"\n").encode()); p.stdin.flush()
-            print(f"\n  {C.teal}◆ colibri{C.r}")
+            print(f"\n  {C.teal}◆ lmatomic{C.r}")
             dec=codecs.getincrementaldecoder("utf-8")("replace")
             state={"first":True}
             def prefill_tick(path=errlog.name):
@@ -2018,7 +2018,7 @@ def cmd_chat(a):
                 except Exception: return ""
             sp2=Spinner("thinking…", tick=prefill_tick); sp2.start()
             md=MDStream("  ")            # markdown -> terminale, in streaming
-            raw=os.environ.get("COLI_RAW")=="1"
+            raw=os.environ.get("LMA_RAW")=="1"
             def echo(bs, _dec=dec, _st=state):
                 if _st["first"]:
                     sp2.stop(); _st["first"]=False
@@ -2055,16 +2055,16 @@ def cmd_chat(a):
         except Exception: pass
     print(f"  {C.teal}goodbye{C.r} {C.dim}— the hummingbird returns to its nest{C.r} 🐦\n")
 
-def serve_pidfile(port): return os.path.join(tempfile.gettempdir(), f"coli-serve-{port}.pid")
+def serve_pidfile(port): return os.path.join(tempfile.gettempdir(), f"lmatomic-serve-{port}.pid")
 
 def _serve_cmdline_matches_port(raw, port):
     argv=[part.decode("utf-8","replace") for part in raw.split(b"\0") if part]
-    try: coli_i=next(i for i,arg in enumerate(argv) if os.path.basename(arg)=="coli")
+    try: lma_i=next(i for i,arg in enumerate(argv) if os.path.basename(arg)=="lmatomic")
     except StopIteration: return False
-    if coli_i+1>=len(argv) or argv[coli_i+1]!="serve":
+    if lma_i+1>=len(argv) or argv[lma_i+1]!="serve":
         return False
     configured=8000
-    for i,arg in enumerate(argv[coli_i+2:], start=coli_i+2):
+    for i,arg in enumerate(argv[lma_i+2:], start=lma_i+2):
         if arg=="--port" and i+1<len(argv):
             try: configured=int(argv[i+1])
             except ValueError: return False
@@ -2078,11 +2078,11 @@ def _serve_environ_matches_port(raw, port):
     for entry in raw.split(b"\0"):
         if b"=" in entry:
             key,value=entry.split(b"=",1); env[key]=value
-    return env.get(b"SERVE")==b"1" and env.get(b"COLI_SERVE_PORT")==str(port).encode()
+    return env.get(b"SERVE")==b"1" and env.get(b"LMA_SERVE_PORT")==str(port).encode()
 
 def _serve_engine_env(a, arch):
     env=env_for_engine(a,arch)
-    env["COLI_SERVE_PORT"]=str(a.port)
+    env["LMA_SERVE_PORT"]=str(a.port)
     return env
 
 def cmd_serve(a):
@@ -2095,8 +2095,8 @@ def cmd_serve(a):
     need_model(a.model,engine)
     if a.kv_slots>family.limits.max_kv_slots:
         sys.exit(f"{arch} currently supports at most {family.limits.max_kv_slots} KV slot(s)")
-    # pidfile: cosi' `coli stop` spegne tutto con un comando, senza pkill a mano.
-    # EN: pidfile so `coli stop` can shut everything down without manual pkill.
+    # pidfile: cosi' `lmatomic stop` spegne tutto con un comando, senza pkill a mano.
+    # EN: pidfile so `lmatomic stop` can shut everything down without manual pkill.
     try:
         with open(serve_pidfile(a.port),"w") as f: f.write(f"{os.getpid()} {a.model}\n")
     except OSError: pass
@@ -2104,7 +2104,7 @@ def cmd_serve(a):
     openai_server.ARCH=arch
     model_id=a.model_id or family.default_model_id
     try:
-        if a.temp is not None: os.environ["COLI_TEMP"] = str(a.temp)
+        if a.temp is not None: os.environ["LMA_TEMP"] = str(a.temp)
         env=_serve_engine_env(a,arch)
         if a.cluster_coordinator and not a.cluster_workers:
             from cluster import discover_workers
@@ -2131,7 +2131,7 @@ def _pid_alive(pid):
     `os.kill(pid, 0)` is the POSIX idiom, but on Windows os.kill() has no signal
     semantics: for a pid this process did not spawn it raises
     OSError [WinError 87] "The parameter is incorrect" instead of reporting
-    liveness. cmd_stop caught that as "not running", so `coli stop` printed
+    liveness. cmd_stop caught that as "not running", so `lmatomic stop` printed
     "nothing running" while the port was still LISTENING and ~5 GB of engines
     were resident (#1049, reported with a reproduction on Windows 11 native).
     On win32 ask the OS directly instead."""
@@ -2173,10 +2173,10 @@ def cmd_cluster_worker(a):
             while not stop_heartbeat.wait(10):
                 try: heartbeat(coordinator, node_id)
                 except OSError: pass
-        threading.Thread(target=keep_registered, name="colibri-cluster-heartbeat", daemon=True).start()
+        threading.Thread(target=keep_registered, name="lmatomic-cluster-heartbeat", daemon=True).start()
     e=env_for(a)
     e.update({"EXPERT_WORKER":"1", "CLUSTER_WORKER_PORT":str(a.port),
-              "COLI_MMAP":os.environ.get("COLI_MMAP", "1")})
+              "LMA_MMAP":os.environ.get("LMA_MMAP", "1")})
     print(f"  {C.dim}[CLUSTER] expert worker · {host}:{a.port} · layers {a.layers}{C.r}")
     try:
         # cap_for_launch, not a.cap: --cap defaults to None and str(None) is the
@@ -2244,25 +2244,25 @@ def _stop_environ(pid):
     return b"\0".join(t.encode("utf-8","replace") for t in pairs)+b"\0"
 
 def cmd_stop(a):
-    """Shut down a running `coli serve` AND its engine — one command, no pkill.
+    """Shut down a running `lmatomic serve` AND its engine — one command, no pkill.
     The engine re-execs itself for OMP tuning, so its process is named `exe`,
     not `glm`: every `pkill -x glm` in history silently killed nothing (that is
     how two 17+5 GB ghost engines OOM'd this box on 2026-07-16). This finds the
     real processes: the pidfile first, then /proc by cmdline/environ — only
-    the requested port's tagged engine and matching `coli serve` wrapper."""
+    the requested port's tagged engine and matching `lmatomic serve` wrapper."""
     banner("stop")
     targets={}  # pid -> descrizione
     pf=serve_pidfile(a.port)
     try:
         with open(pf) as f: pid=int(f.read().split()[0])
-        if _pid_alive(pid): targets[pid]=f"coli serve (pidfile, port {a.port})"
+        if _pid_alive(pid): targets[pid]=f"lmatomic serve (pidfile, port {a.port})"
     except (OSError,ValueError,IndexError): pass
     process_names={"exe"}
     for family in all_families(): process_names.update(family.process_names)
     for pid,cmd,comm in _stop_proc_table(a.port):
         try:
             if pid!=os.getpid() and _serve_cmdline_matches_port(cmd,a.port):
-                targets.setdefault(pid,f"coli serve (cmdline, port {a.port})")
+                targets.setdefault(pid,f"lmatomic serve (cmdline, port {a.port})")
             if comm in process_names and _serve_environ_matches_port(_stop_environ(pid),a.port):
                 targets.setdefault(pid,f"engine `{comm}` (port {a.port})")
         except (OSError,PermissionError): continue
@@ -2274,8 +2274,8 @@ def cmd_stop(a):
     # (stdin EOF -> atexit -> HEAT_FILE save). SIGTERM the launchers and
     # give them the drain window to exit on their own; engine pids left
     # behind (orphaned, no launcher) get the old treatment after.
-    launchers = [pid for pid, d in targets.items() if d.startswith("coli serve")]
-    strays   = [pid for pid, d in targets.items() if not d.startswith("coli serve")]
+    launchers = [pid for pid, d in targets.items() if d.startswith("lmatomic serve")]
+    strays   = [pid for pid, d in targets.items() if not d.startswith("lmatomic serve")]
     deadline = time.time() + 30.0
     for pid in launchers:
         try: os.kill(pid, signal.SIGTERM)
@@ -2301,7 +2301,7 @@ def cmd_web(a):
     """serve + open the dashboard in the browser once the API answers."""
     need_model(a.model)
     # Same two layouts openai_server.py resolves: next to this script (release
-    # archive / installed tree) or one level up (source checkout, where this is c/coli).
+    # archive / installed tree) or one level up (source checkout, where this is c/lmatomic).
     cands = [os.path.join(HERE, "web", "dist"),
              os.path.join(os.path.dirname(os.path.abspath(HERE)), "web", "dist")]
     dist = next((d for d in cands if os.path.exists(os.path.join(d, "index.html"))), cands[-1])
@@ -2356,7 +2356,7 @@ def cmd_bench(a):
     # on it, which died on "this engine requires n_group=1" (#898's shape).
     family=resolve_model(a.model).descriptor
     if family.id!="glm":
-        sys.exit(f"{C.yel}coli bench is not wired for {family.display_name};{C.r} "
+        sys.exit(f"{C.yel}lmatomic bench is not wired for {family.display_name};{C.r} "
                  f"its harness scores the GLM-5.2/5.3 engine only")
     # python con `tokenizers`: l'ambiente del progetto se c'e', altrimenti quello corrente
     py = project_python()
@@ -2384,7 +2384,7 @@ def cmd_bench(a):
     print(f"  {C.dim}decode is disk-bound: this takes HOURS on slow hardware. Raise --limit on faster machines.{C.r}\n")
     sys.exit(subprocess.call(cmd, env=e))
 
-#: Le opzioni di precisione di `coli convert`: nome sulla riga di comando e
+#: Le opzioni di precisione di `lmatomic convert`: nome sulla riga di comando e
 #: default. Il parser le dichiara con default=None apposta, cosi' "l'utente
 #: l'ha scritta" e' semplicemente "non e' None" -- vale per --ebits 3,
 #: --ebits=3 e per le abbreviazioni che argparse accetta, senza frugare in
@@ -2423,7 +2423,7 @@ def checkpoint_family(repo):
 CONVERT_DEFAULT_REPO = "zai-org/GLM-5.2-FP8"
 
 def convert_output_refusal(out_dir):
-    """Why `coli convert --model out_dir` must not run, or None. A checkpoint
+    """Why `lmatomic convert --model out_dir` must not run, or None. A checkpoint
     already living there is the tell: --model names the OUTPUT directory,
     and a family that runs its official checkpoint as is needs no conversion
     at all, which is the usual reason someone points convert at one."""
@@ -2445,15 +2445,15 @@ def convert_output_refusal(out_dir):
             family = None
     head = (f"{C.yel}{out_dir} already holds a checkpoint ({what}"
             f"{', ' + family.display_name if family else ''}).{C.r}\n"
-            f"  --model is the OUTPUT directory of coli convert; the source is --repo <hf repo>.\n"
+            f"  --model is the OUTPUT directory of lmatomic convert; the source is --repo <hf repo>.\n"
             f"  Nothing was written.")
     if family and not family.converter:
         return (head + f"\n  {family.display_name} runs its official checkpoint as it is: no conversion needed.\n"
-                       f"  Point the engine at it: coli chat --model {out_dir}")
+                       f"  Point the engine at it: lmatomic chat --model {out_dir}")
     if family and family.converter:
         return (head + f"\n  To convert shards already on disk, run the family's converter on them:\n"
                        f"      python3 tools/{family.converter} --indir {out_dir} --outdir <new dir>")
-    return head + "\n  To convert into a fresh directory: coli convert --repo <hf repo> --model <new dir>"
+    return head + "\n  To convert into a fresh directory: lmatomic convert --repo <hf repo> --model <new dir>"
 
 def cmd_convert(a):
     banner("convert")
@@ -2462,8 +2462,8 @@ def cmd_convert(a):
     if not a.model:
         sys.exit(f"{C.yel}no output directory given.{C.r}\n"
                  f"  --model <dir> is where the converted model is written")
-    # A support case ran `coli convert --model <dir of a downloaded Qwen3.8>`,
-    # read --model as "the model to convert", and watched coli start fetching
+    # A support case ran `lmatomic convert --model <dir of a downloaded Qwen3.8>`,
+    # read --model as "the model to convert", and watched lmatomic start fetching
     # the default repo (GLM-5.2) INTO that directory. --model is the output:
     # refuse to write into a directory that already holds a checkpoint, and
     # say what the user most likely wanted instead.
@@ -2479,11 +2479,11 @@ def cmd_convert(a):
     # e' arrivato per primo. Prima di questo, una GLM-5.3-Flash passava per il
     # convertitore di GLM-5.2, che le quantizzava l'embedding perche' il suo nome
     # annidato non corrisponde a nessuna delle sue regole; il contenitore usciva
-    # senza un errore e moriva ore dopo, dentro `coli web`.
+    # senza un errore e moriva ore dopo, dentro `lmatomic web`.
     family = checkpoint_family(a.repo)
     script = family.converter if family else "convert_fp8_to_int4.py"
     if family and not script:
-        # Famiglia nota che coli non guida: il suo convertitore ha un'altra riga
+        # Famiglia nota che lmatomic non guida: il suo convertitore ha un'altra riga
         # di comando, o non serve. La guardia dentro convert_fp8_to_int4.py tiene
         # le indicazioni per famiglia, sotto test; le si lascia dire a lei
         # invece di tenerne una seconda copia qui.
@@ -2536,11 +2536,11 @@ def cmd_convert(a):
 
 def cmd_mirror(a):
     if not a.mirror:
-        sys.exit("mirror path required: pass --mirror or set COLI_MODEL_MIRROR")
+        sys.exit("mirror path required: pass --mirror or set LMA_MODEL_MIRROR")
     command = [sys.executable, os.path.join(TOOLS, "mirror_plan.py"), a.action,
                "--model", a.model, "--mirror", a.mirror]
     source_dirs = list(a.source_dir)
-    configured = os.environ.get("COLI_MODEL_DIRS", "")
+    configured = os.environ.get("LMA_MODEL_DIRS", "")
     if configured:
         source_dirs.extend(part.strip() for part in re.split(r"[;,]", configured)
                            if part.strip())
@@ -2564,17 +2564,17 @@ def main():
     common.add_argument("--gpu",default=None,help="auto, none, or a device list such as 0,1")
     common.add_argument("--vram",type=float,default=0,help="total VRAM budget in GB (0=auto)")
     common.add_argument("--policy",choices=("quality","balanced","experimental-fast"),
-                        default=os.environ.get("COLI_POLICY","quality"),
+                        default=os.environ.get("LMA_POLICY","quality"),
                         help="resource policy (explicit --topk/--topp overrides warn and proceed)")
     common.add_argument("--repin", type=int, default=0, help="adapt RAM/VRAM experts every N tokens")
     # Absent (None) = not explicitly set: the glm engine gets the 0 sentinel and picks
     # (8 historically; 1 on Metal+darwin+fast SSD, #379 -- an honest F_NOCACHE probe
-    # measures "fast", cached in <model>/.coli_ssd), while non-glm arches get the
+    # measures "fast", cached in <model>/.lma_ssd), while non-glm arches get the
     # legacy 8 (openai_server.cap_for_arch). An explicit --cap N -- 0 included --
-    # reaches the engine verbatim; see colibri.c's coli_resolve_cap().
+    # reaches the engine verbatim; see glm52.c's lma_resolve_cap().
     common.add_argument("--cap", type=int, default=None, help="cache slots/layer (default: auto)")
     # default None, resolved per command by ngen_for() below. 1024 is a sensible
-    # safety net for a one-shot `coli run`; it is the wrong number for a session
+    # safety net for a one-shot `lmatomic run`; it is the wrong number for a session
     # where the browser shows a "max output tokens" control, because the server
     # clamps to it and the control silently does nothing above 1024 (#889).
     common.add_argument("--ngen", type=int, default=None)  # rete di sicurezza: la fine vera la decidono gli stop token
@@ -2590,8 +2590,8 @@ def main():
                         help="comma-separated expert workers, host:port,...")
     common.add_argument("--cluster-coordinator", default=os.environ.get("CLUSTER_COORDINATOR"),
                         help="control-plane URL used to discover expert workers")
-    ap=argparse.ArgumentParser(prog="coli", parents=[common], description="colibri — run GLM-5.2 locally")
-    ap.add_argument("--version", action="version", version=f"colibri {_version}")
+    ap=argparse.ArgumentParser(prog="lmatomic", parents=[common], description="lmatomic — run GLM-5.2 locally")
+    ap.add_argument("--version", action="version", version=f"lmatomic {_version}")
     sub=ap.add_subparsers(dest="cmd")
     sub.add_parser("build", parents=[common]); sub.add_parser("info", parents=[common])
     pp=sub.add_parser("plan",parents=[common])
@@ -2599,7 +2599,7 @@ def main():
     pm=sub.add_parser("mirror", parents=[common],
                       help="plan, stage, or verify a usage-ranked partial model mirror")
     pm.add_argument("action", choices=("plan", "stage", "verify"))
-    pm.add_argument("--mirror", default=os.environ.get("COLI_MODEL_MIRROR"))
+    pm.add_argument("--mirror", default=os.environ.get("LMA_MODEL_MIRROR"))
     pm.add_argument("--source-dir", action="append", default=[])
     pm.add_argument("--usage")
     pm.add_argument("--budget-gib", type=float, default=0)
@@ -2624,26 +2624,26 @@ def main():
     pr=sub.add_parser("run", parents=[common]);  pr.add_argument("prompt", nargs="*")
     pc=sub.add_parser("chat", parents=[common])
     pc.add_argument("--attach", nargs="?", const="http://127.0.0.1:8000", default=None,
-                    help="chat against a running `coli serve` instead of spawning an engine "
+                    help="chat against a running `lmatomic serve` instead of spawning an engine "
                          "(keeps the model loaded and the expert cache warm across chat sessions). "
                          "Bare --attach probes localhost:8000.")
     pc.add_argument("--no-attach", action="store_true",
                     help="never auto-attach, always spawn a private engine")
-    pc.add_argument("--api-key", default=os.environ.get("COLI_API_KEY"))
+    pc.add_argument("--api-key", default=os.environ.get("LMA_API_KEY"))
     pc.add_argument("--stats", choices=list(CHAT_STATS_MODES), default=None,
                     help="generation statistics footer after each answer: full (tokens, seconds, tok/s), "
-                         "compact (tokens, tok/s), off. Default from COLI_CHAT_STATS, else full. "
+                         "compact (tokens, tok/s), off. Default from LMA_CHAT_STATS, else full. "
                          "Counts are exact when the server reports completion_tokens, ~estimated otherwise.")
     ps=sub.add_parser("serve", parents=[common])
     ps.add_argument("--host",default="127.0.0.1"); ps.add_argument("--port",type=int,default=8000)
-    ps.add_argument("--model-id",default=os.environ.get("COLI_MODEL_ID"))
-    ps.add_argument("--api-key",default=os.environ.get("COLI_API_KEY"))
+    ps.add_argument("--model-id",default=os.environ.get("LMA_MODEL_ID"))
+    ps.add_argument("--api-key",default=os.environ.get("LMA_API_KEY"))
     ps.add_argument("--cors-origin",action="append",default=None)
-    ps.add_argument("--max-queue",type=int,default=int(os.environ.get("COLI_MAX_QUEUE","8")))
-    ps.add_argument("--queue-timeout",type=float,default=float(os.environ.get("COLI_QUEUE_TIMEOUT","300")))
-    ps.add_argument("--kv-slots",type=int,default=int(os.environ.get("COLI_KV_SLOTS","1")))
+    ps.add_argument("--max-queue",type=int,default=int(os.environ.get("LMA_MAX_QUEUE","8")))
+    ps.add_argument("--queue-timeout",type=float,default=float(os.environ.get("LMA_QUEUE_TIMEOUT","300")))
+    ps.add_argument("--kv-slots",type=int,default=int(os.environ.get("LMA_KV_SLOTS","1")))
     ps.add_argument("--allowed-host",action="append",
-        default=[h.strip() for h in os.environ.get("COLI_ALLOWED_HOSTS","").split(",") if h.strip()],
+        default=[h.strip() for h in os.environ.get("LMA_ALLOWED_HOSTS","").split(",") if h.strip()],
         help="additional Host header accepted by the DNS-rebinding guard; repeat as needed")
     pcluster=sub.add_parser("cluster", help="run the local-cluster control plane or an expert worker")
     cluster_sub=pcluster.add_subparsers(dest="cluster_cmd")
@@ -2651,7 +2651,7 @@ def main():
     pcoord.add_argument("--host",default="127.0.0.1"); pcoord.add_argument("--port",type=int,default=8765)
     pcoord.add_argument("--stale-after",type=float,default=30.0)
     pcoord.add_argument("--allowed-host",action="append",
-                        default=[h.strip() for h in os.environ.get("COLI_ALLOWED_HOSTS","").split(",") if h.strip()],
+                        default=[h.strip() for h in os.environ.get("LMA_ALLOWED_HOSTS","").split(",") if h.strip()],
                         help="additional Host header accepted by the DNS-rebinding guard; repeat as needed")
     pworker=cluster_sub.add_parser("worker", parents=[common], help="serve disk-backed expert compute")
     pworker.add_argument("--port",type=int,default=int(os.environ.get("CLUSTER_WORKER_PORT","9100")))
@@ -2659,18 +2659,18 @@ def main():
     pworker.add_argument("--node-id",default=None); pworker.add_argument("--advertise-host",default=None)
     pworker.add_argument("--layers",default="all",help="topology label, e.g. 0-37")
     pworker.add_argument("--ebits",type=int,default=8); pworker.add_argument("--dbits",type=int,default=8)
-    pst=sub.add_parser("stop", parents=[common], help="shut down a running coli serve and its engine")
+    pst=sub.add_parser("stop", parents=[common], help="shut down a running lmatomic serve and its engine")
     pst.add_argument("--port",type=int,default=8000); pst.add_argument("--dry-run",action="store_true")
     pw=sub.add_parser("web", parents=[common], help="serve + open the dashboard in a browser")
     for arg,kw in (("--host",dict(default="127.0.0.1")),("--port",dict(type=int,default=8000)),
-                   ("--model-id",dict(default=os.environ.get("COLI_MODEL_ID"))),
-                   ("--api-key",dict(default=os.environ.get("COLI_API_KEY"))),
+                   ("--model-id",dict(default=os.environ.get("LMA_MODEL_ID"))),
+                   ("--api-key",dict(default=os.environ.get("LMA_API_KEY"))),
                    ("--cors-origin",dict(action="append",default=None)),
-                   ("--max-queue",dict(type=int,default=int(os.environ.get("COLI_MAX_QUEUE","8")))),
-                   ("--queue-timeout",dict(type=float,default=float(os.environ.get("COLI_QUEUE_TIMEOUT","300")))),
-                   ("--kv-slots",dict(type=int,default=int(os.environ.get("COLI_KV_SLOTS","1")))),
+                   ("--max-queue",dict(type=int,default=int(os.environ.get("LMA_MAX_QUEUE","8")))),
+                   ("--queue-timeout",dict(type=float,default=float(os.environ.get("LMA_QUEUE_TIMEOUT","300")))),
+                   ("--kv-slots",dict(type=int,default=int(os.environ.get("LMA_KV_SLOTS","1")))),
                    ("--allowed-host",dict(action="append",
-                       default=[h.strip() for h in os.environ.get("COLI_ALLOWED_HOSTS","").split(",") if h.strip()],
+                       default=[h.strip() for h in os.environ.get("LMA_ALLOWED_HOSTS","").split(",") if h.strip()],
                        help="additional Host header accepted by the DNS-rebinding guard; repeat as needed"))):
         pw.add_argument(arg,**kw)
     pw.add_argument("--no-browser",action="store_true",help="don't auto-open the browser")
@@ -2680,7 +2680,7 @@ def main():
         _cache_root = os.environ.get("LOCALAPPDATA", os.path.expanduser("~\\AppData\\Local"))
     else:
         _cache_root = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
-    _bench_cache = os.path.join(_cache_root, "colibri", "bench")
+    _bench_cache = os.path.join(_cache_root, "lmatomic", "bench")
     pb.add_argument("--data",default=_bench_cache)
     pc=sub.add_parser("convert", parents=[common])
     pc.add_argument("--repo",default=None,

@@ -2,7 +2,7 @@
 
 OLMoE and Qwen3.6 have no tool tokens in their chat templates, so the gateway
 answers 400 for `tools[]` and for a `role: "tool"` turn rather than invent a
-format. `COLI_TOOL_FALLBACK=1` opts into a translation that writes the
+format. `LMA_TOOL_FALLBACK=1` opts into a translation that writes the
 declaration, the prior assistant calls and the tool results as ordinary turns,
 in the GLM wire format `parse_tool_calls()` already reads back (#1378).
 
@@ -79,7 +79,7 @@ TOOLS = [{"type": "function", "function": {
                      "Windows CreateProcess cannot run it. The gateway logic under test "
                      "is platform-independent and covered by the POSIX CI jobs.")
 class _FallbackBase(unittest.TestCase):
-    """Boots the gateway for one arch, with COLI_TOOL_FALLBACK under test."""
+    """Boots the gateway for one arch, with LMA_TOOL_FALLBACK under test."""
 
     arch = None
     # config.json model_type for the family (family_registry.model_types), which
@@ -103,8 +103,8 @@ class _FallbackBase(unittest.TestCase):
             probe.bind(("127.0.0.1", 0))
             cls.port = probe.getsockname()[1]
         env = dict(os.environ, MOCK_LOG=str(cls.mock_log),
-                   COLI_TOOL_FALLBACK=cls.fallback)
-        env.pop("COLI_API_KEY", None)
+                   LMA_TOOL_FALLBACK=cls.fallback)
+        env.pop("LMA_API_KEY", None)
         cls.server = subprocess.Popen(
             [sys.executable, str(SERVER), "--model", cls.tmp.name,
              "--engine", str(mock), "--arch", cls.arch, "--port", str(cls.port)],
@@ -200,7 +200,7 @@ class _RefusedByDefault(_FallbackBase):
         err = self._expect_400({"model": self.model_id(),
                                 "messages": [{"role": "user", "content": "hi"}],
                                 "tools": TOOLS, "max_tokens": 16})
-        self.assertIn("COLI_TOOL_FALLBACK", json.dumps(err))
+        self.assertIn("LMA_TOOL_FALLBACK", json.dumps(err))
 
     def test_tool_role_refused(self):
         self._expect_400({"model": self.model_id(),

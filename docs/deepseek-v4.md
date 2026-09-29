@@ -16,16 +16,16 @@ across kernels and cache states is spelled out in [Validation](#validation).
 
 Windows users do not need to build or copy an engine manually. Download and
 unpack the [latest Windows release](https://github.com/JustVugg/colibri/releases/latest),
-then start Colibri through the release launcher:
+then start LM Atomic through the release launcher:
 
 ```powershell
-coli.cmd web --model F:\path\to\DeepSeek-V4-Flash
+lmatomic.cmd web --model F:\path\to\DeepSeek-V4-Flash
 ```
 
 The launcher reads the checkpoint's `config.json`, selects `deepseek_v4` from
 its `model_type`, and starts the matching prebuilt engine. The archive also
 contains the CUDA backend; hardware detection and the safe initial CPU/GPU
-plan are automatic. Use `coli.cmd doctor --model F:\path\to\DeepSeek-V4-Flash`
+plan are automatic. Use `lmatomic.cmd doctor --model F:\path\to\DeepSeek-V4-Flash`
 to inspect that plan before changing any of the advanced CUDA controls below.
 
 The build instructions in this document are for contributors and custom
@@ -40,7 +40,7 @@ unit.
   `c/backend_cuda_dsv4.cu` (+ `backend_loader_dsv4.c` on Windows).
 - Official sharded safetensors checkpoints load through shared `st.h`;
   standard MXFP4 matmul uses shared `quant.h`.
-- Unified `c/coli` routes `run`, `chat`, `serve`, and `web` to V4; `serve` is
+- Unified `c/lmatomic` routes `run`, `chat`, `serve`, and `web` to V4; `serve` is
   the OpenAI/Anthropic-compatible gateway (`c/openai_server.py`): it renders
   OpenAI and Anthropic tools into V4's native prompt contract and parses DSML
   call blocks back into each protocol (see the
@@ -63,7 +63,7 @@ on disk, ~12.6 MB each) are streamed and cached according to the RAM budget:
 the planner reserves workspace and a minimum expert working set, then enables
 dense/head residency and grows the expert cache when memory permits.
 `--ram GiB` is a planner budget, not an OS-enforced limit; without it the
-budget is derived from available OS memory. `COLI_MODEL_MIRROR=<dir>` (a
+budget is derived from available OS memory. `LMA_MODEL_MIRROR=<dir>` (a
 second copy of the checkpoint on another SSD) splits expert reads across two
 drives — measured 2× read bandwidth; on this workload the two NVMe are the
 limit for both prefill refill and decode (see Performance).
@@ -113,8 +113,8 @@ picks at start-up by GPU:
 
 | DLL | build target | kernels | GPUs |
 |---|---|---|---|
-| `coli_cuda_dsv4_dg.dll` | `make cuda-dsv4-dg-dll` (from a vcvars64 shell; fetches the pinned DeepGEMM headers on first use) | DeepGEMM tensor-core prefill paths + generic kernels | compute capability 12.x (RTX 50-series) |
-| `coli_cuda_dsv4.dll` | `make cuda-dsv4-dll CUDA_ARCH=portable` | generic CUDA kernels only (fp32 compute from fp8/fp4 decode) | any sm_80+ (RTX 30/40/50, A/H series) |
+| `lma_cuda_dsv4_dg.dll` | `make cuda-dsv4-dg-dll` (from a vcvars64 shell; fetches the pinned DeepGEMM headers on first use) | DeepGEMM tensor-core prefill paths + generic kernels | compute capability 12.x (RTX 50-series) |
+| `lma_cuda_dsv4.dll` | `make cuda-dsv4-dll CUDA_ARCH=portable` | generic CUDA kernels only (fp32 compute from fp8/fp4 decode) | any sm_80+ (RTX 30/40/50, A/H series) |
 
 The DeepGEMM sm120 headers the DLL needs are not in the repository:
 `c/tools/fetch_deepgemm.sh` checks out the community sm120 port of DeepGEMM
@@ -127,8 +127,8 @@ them). `make cuda-dsv4-dg-dll` and `DEEPGEMM=1` run it on first build
 `DEEPGEMM_HOME=<dir>` points at an existing tree instead and `DEEPGEMM_PIN`
 bumps the commit. Attribution: `THIRD_PARTY_NOTICES.md`. Loader rules:
 try `_dg` first, ask it whether device 0 fits (`dsv4_cuda_backend_arch_ok`),
-otherwise load the generic DLL; `COLI_DSV4_DLL=<file name>` forces one. The
-start-up banner names the choice: `[DSV4 CUDA] backend=coli_cuda_dsv4_dg.dll
+otherwise load the generic DLL; `LMA_DSV4_DLL=<file name>` forces one. The
+start-up banner names the choice: `[DSV4 CUDA] backend=lma_cuda_dsv4_dg.dll
 (deepgemm-sm120)`. Deploy = `deepseek_v4.exe` + both DLLs next to it.
 
 ### Linux CUDA tier
@@ -144,7 +144,7 @@ make -f Makefile.deepseek-v4 deepseek-v4 CUDA=1 CUDA_ARCH=sm_86 NO_TC=1   # tool
 to pick a versioned install). `CUDA_ARCH` is `native` (the local card),
 `portable` (sm_80/86/89/90/120 + PTX) or one `sm_XX`; `DEEPGEMM=1` ignores it
 and builds sm_120a only — the DeepGEMM kernels use block-scaled MMA PTX that
-exists for no other target. `NO_TC=1` (`-DCOLI_DSV4_NO_TC`) compiles out the
+exists for no other target. `NO_TC=1` (`-DLMA_DSV4_NO_TC`) compiles out the
 opt-in cuBLASLt MXFP8 path (`DSV4_CUDA_TC=1`), whose block-scaling API needs
 cuBLASLt ≥ 12.8; use it for CUDA 12.6 toolkits (Jetson JetPack). `libcuda`
 is linked from the toolkit's `lib64/stubs` (driver installs and WSL2 ship
@@ -170,23 +170,23 @@ Canonical serve line (Windows, PowerShell; the environment used for every
 number below):
 
 ```powershell
-$env:COLI_MODEL_MIRROR = "D:\models\DeepSeek-V4-Flash"   # optional second copy
-$env:COLI_CUDA = "1"; $env:COLI_GPU = "0"; $env:CUDA_DENSE = "1"; $env:COLI_CUDA_PIPE = "2"
-$env:COLI_CUDA_ATTN_BATCH = "1"; $env:COLI_CUDA_MOE_BATCH = "1"
+$env:LMA_MODEL_MIRROR = "D:\models\DeepSeek-V4-Flash"   # optional second copy
+$env:LMA_CUDA = "1"; $env:LMA_GPU = "0"; $env:CUDA_DENSE = "1"; $env:LMA_CUDA_PIPE = "2"
+$env:LMA_CUDA_ATTN_BATCH = "1"; $env:LMA_CUDA_MOE_BATCH = "1"
 $env:V4_MOE_REFILL_GROUP = "12"; $env:DSV4_CUDA_EXPERT_MIRRORS = "688"
 $env:V4_LOADER_LANES = "3"   # GPU tier: 9-lane default tuned for the CPU path, see the env table
-python ./coli serve --model C:\models\DeepSeek-V4-Flash --ram 32 --ctx 20000
+python ./lmatomic serve --model C:\models\DeepSeek-V4-Flash --ram 32 --ctx 20000
 ```
 
-`coli run|chat|web` take the same environment. `--ngen` is a ceiling, not a
+`lmatomic run|chat|web` take the same environment. `--ngen` is a ceiling, not a
 target (answers end at EOS; an oversized ceiling is clamped to the context
 with a stderr note). `CTX`/`--ctx` sets the context window.
 
 What the knobs do (full table in [Environment reference](#environment-reference)):
-`COLI_CUDA_ATTN_BATCH=1` puts the batched prefill attention block on the GPU
+`LMA_CUDA_ATTN_BATCH=1` puts the batched prefill attention block on the GPU
 (compressor/indexer projections, sparse attention on a persistent device KV
 ring, wo, mHC) and enables the GPU decode attention/indexer paths;
-`COLI_CUDA_MOE_BATCH=1` runs prefill MoE on a transient VRAM expert bank
+`LMA_CUDA_MOE_BATCH=1` runs prefill MoE on a transient VRAM expert bank
 (route-aware refill, expert-grouped GEMM); `DSV4_CUDA_EXPERT_MIRRORS` is the
 decode-side VRAM expert cache; `V4_MOE_REFILL_GROUP` the refill lookup width.
 All default to CPU-safe values when unset; the GPU tier itself is on when the
@@ -196,7 +196,7 @@ DLL loads (`DSV4_CUDA=0` disables it).
 
 What the tier keeps in VRAM (measured on a 16 GB RTX 5080): dense/attention
 mirrors **6.3 GB** (needed for GPU attention and the GPU dense matvecs in
-decode), the transient prefill expert bank **2.2 GB** (`COLI_CUDA_MOE_BATCH`,
+decode), the transient prefill expert bank **2.2 GB** (`LMA_CUDA_MOE_BATCH`,
 freed when decode starts), attention/KV/work buffers **~0.5 GB**, and the
 rest as decode expert mirrors at **~8 MB each**. `DSV4_CUDA_EXPERT_MIRRORS`
 is only an upper bound (default 4096): the cache grows while at least
@@ -208,9 +208,9 @@ the hit rate they add (~11 000 experts total; 600 mirrors ≈ 5 %); more RAM
 
 | VRAM | dense mirrors | prefill bank | recommended env | expected |
 |---|---|---|---|---|
-| 6 GB | no (6.3 GB does not fit) | yes (2.2 GB) | `CUDA_DENSE=0 COLI_CUDA_MOE_BATCH=1 COLI_CUDA_ATTN_BATCH=0` | GPU MoE prefill (generic kernels on non-RTX50), CPU attention/decode; ~150 mirrors between prefills |
-| 8 GB | yes | no (1.7 GB left) | `CUDA_DENSE=1 COLI_CUDA_ATTN_BATCH=1 COLI_CUDA_MOE_BATCH=0` | GPU attention + GPU decode dense; MoE prefill on the CPU union; ~100 mirrors |
-| 10–12 GB | yes | yes (tight) | `CUDA_DENSE=1 COLI_CUDA_ATTN_BATCH=1 COLI_CUDA_MOE_BATCH=1 DSV4_CUDA_VRAM_RESERVE_MB=2500` | full GPU prefill; 100–350 decode mirrors after the bank is released |
+| 6 GB | no (6.3 GB does not fit) | yes (2.2 GB) | `CUDA_DENSE=0 LMA_CUDA_MOE_BATCH=1 LMA_CUDA_ATTN_BATCH=0` | GPU MoE prefill (generic kernels on non-RTX50), CPU attention/decode; ~150 mirrors between prefills |
+| 8 GB | yes | no (1.7 GB left) | `CUDA_DENSE=1 LMA_CUDA_ATTN_BATCH=1 LMA_CUDA_MOE_BATCH=0` | GPU attention + GPU decode dense; MoE prefill on the CPU union; ~100 mirrors |
+| 10–12 GB | yes | yes (tight) | `CUDA_DENSE=1 LMA_CUDA_ATTN_BATCH=1 LMA_CUDA_MOE_BATCH=1 DSV4_CUDA_VRAM_RESERVE_MB=2500` | full GPU prefill; 100–350 decode mirrors after the bank is released |
 | 16 GB (this box) | yes | yes | the canonical line above (mirror cap can be left unset) | ~600 mirrors, the numbers in this document |
 | 24 GB | yes | yes | canonical | ~1 700 mirrors (~15 %); decode +10–15 % vs 16 GB |
 | 32 GB | yes | yes | canonical | ~2 700 mirrors (~25 %); decode +25–35 %; raise `--ram` first if RAM allows |
@@ -240,7 +240,7 @@ numbers, still far ahead of CPU.
   reuse fails at the reply boundary. `V4_PREFIX_CKPT_SLOTS` (4) in-memory
   slots, LRU with prompt-end evicted first. Log lines: `v4_ckpt store
   prefix=N` / `prompt_end=N`, `v4_ckpt hit prefix=N`.
-- **Persistence.** Prefix captures are written to `<model>/.coli_ckpt/`
+- **Persistence.** Prefix captures are written to `<model>/.lma_ckpt/`
   (`V4_PREFIX_CKPT_DISK`=1; `2` also persists prompt-end captures, `0` off;
   ~140 MB for an 8.3k-token prefix, config-fingerprinted, temp+rename) and
   loaded lazily on the first request after a restart — a fresh serve no
@@ -320,10 +320,10 @@ Defaults in parentheses; all read by `c/deepseek_v4.c` unless noted `.cu`.
 |---|---|
 | `DSV4_CUDA` (1) | master switch for the V4 GPU tier; `0` = CPU only |
 | `DSV4_CUDA_DEVICE` (0) | CUDA device ordinal |
-| `COLI_DSV4_DLL` | Windows: force a backend DLL file name (loader) |
-| `COLI_CUDA_ATTN_BATCH` (0) | `1` = GPU batched prefill attention block + GPU decode attention/indexer |
-| `COLI_CUDA_MOE_BATCH` (0) | `1` = prefill MoE on the transient VRAM expert bank |
-| `COLI_CUDA_MOE_BATCH_MIN` (256) | min fresh tokens to engage the bank |
+| `LMA_DSV4_DLL` | Windows: force a backend DLL file name (loader) |
+| `LMA_CUDA_ATTN_BATCH` (0) | `1` = GPU batched prefill attention block + GPU decode attention/indexer |
+| `LMA_CUDA_MOE_BATCH` (0) | `1` = prefill MoE on the transient VRAM expert bank |
+| `LMA_CUDA_MOE_BATCH_MIN` (256) | min fresh tokens to engage the bank |
 | `DSV4_CUDA_EXPERT_MIRRORS` (4096) | upper bound on decode VRAM expert mirrors (~8 MB each); free VRAM sizes the cache at run time |
 | `DSV4_CUDA_VRAM_RESERVE_MB` (2800 with the bank, else 600) | VRAM kept free while mirrors grow (bank + attention buffers) |
 | `V4_MTP_GPU_MIRRORS` (16) | separate mirror cache for the MTP drafter |
@@ -340,31 +340,31 @@ Defaults in parentheses; all read by `c/deepseek_v4.c` unless noted `.cu`.
 | `V4_PREFIX_LOG` | log hint boundary / reuse decisions |
 | `V4_IDX_BATCH` (1) | batched indexer selection in prefill; `0` = legacy per-token |
 | `V4_IDX_IDENTITY` (0) | `1` = skip indexer scoring when every candidate fits under `index_topk` (index order instead of upstream's score order; ~8 % faster prefill, changes rounding) |
-| `COLI_V4_ROWS16` (1) | `0` = never repack hot experts into the rows16 layout (reference matvec for all; numerics comparisons) |
+| `LMA_V4_ROWS16` (1) | `0` = never repack hot experts into the rows16 layout (reference matvec for all; numerics comparisons) |
 | `CTX` (4096) / `NGEN` | context window / generation ceiling (CLI + serve) |
 
 **Experts / I/O**
 | var | meaning |
 |---|---|
-| `COLI_MODEL_MIRROR`, `SNAP_MIRROR`, `COLI_DISK_WEIGHTS` | dual-SSD read split (see ENVIRONMENT.md) |
+| `LMA_MODEL_MIRROR`, `SNAP_MIRROR`, `LMA_DISK_WEIGHTS` | dual-SSD read split (see ENVIRONMENT.md) |
 | `V4_MOE_REFILL_GROUP` (6, max 16) | parallel lookups per bank refill group (bounded by pin slots; 12 measured best) |
 | `V4_LOADER_LANES` (9, max 16) | persistent expert-loader threads for decode. The default suits the CPU path (1.41× decode, #1097); **with the GPU tier set `3`**: mirrors/RAM absorb most decode misses (9 lanes ≈ +4 % decode) while the extra readers contend with the MoE bank refill for the NVMe queues (~10 % slower prefill; measured on the reference box, v1.7.0) |
 | `V4_EXPERT_UNION` (1) | per-chunk expert union batching on the CPU path |
-| `COLI_V4_DIRECT` (1) | O_DIRECT streaming reads |
-| `COLI_V4_AUTOPIN`, `COLI_V4_PREWARM`, `COLI_V4_SAVE_USAGE` | hot-expert pinning from `.coli_usage` history |
+| `LMA_V4_DIRECT` (1) | O_DIRECT streaming reads |
+| `LMA_V4_AUTOPIN`, `LMA_V4_PREWARM`, `LMA_V4_SAVE_USAGE` | hot-expert pinning from `.lma_usage` history |
 
 **Speculative decoding** (off by default): `V4_DRAFT`, `V4_MTP`, `V4_MTP_GB`,
 `V4_MTP_MIN`, `V4_MTP_DRAFT`, `V4_MTP_PARTIAL_KEEP`, `V4_NGRAM` (1),
-`V4_NGRAM_PARTIAL_KEEP`, `COLI_V4_MARKOV_SPEC`, `COLI_V4_MARKOV_BLOCK`,
-`COLI_V4_MARKOV_KEEP`.
+`V4_NGRAM_PARTIAL_KEEP`, `LMA_V4_MARKOV_SPEC`, `LMA_V4_MARKOV_BLOCK`,
+`LMA_V4_MARKOV_KEEP`.
 
 **Diagnostics**: `DSV4_ATTN_PROF`, `DSV4_DECODE_PROF`, `DSV4_IDX_VERIFY`,
 `DSV4_CUDA_MOE_PROF`, `DSV4_CUDA_DG_PROFILE`/`_AB`/`_DUMP` (`.cu`),
-`COLI_NO_OMP_TUNE`, `OMP_NUM_THREADS`.
+`LMA_NO_OMP_TUNE`, `OMP_NUM_THREADS`.
 
-Note: `COLI_CUDA`, `COLI_GPU`, `CUDA_DENSE`, `COLI_CUDA_PIPE` in the serve
-line are read by the CLI/`colibri.c` conventions; the V4 engine's own switch is
-`DSV4_CUDA` and the two `COLI_CUDA_*_BATCH` gates above.
+Note: `LMA_CUDA`, `LMA_GPU`, `CUDA_DENSE`, `LMA_CUDA_PIPE` in the serve
+line are read by the CLI/`glm52.c` conventions; the V4 engine's own switch is
+`DSV4_CUDA` and the two `LMA_CUDA_*_BATCH` gates above.
 
 ## Validation
 
@@ -406,7 +406,7 @@ the same as the Windows engine on the same prompt; the wall-clock gap is the
 |---|---|---|---|
 | Linux `CUDA=1 DEEPGEMM=1` (sm_120a) | `[DSV4 CUDA] device 0 ... sm_120`, dense mirrors 6.27 GiB | 119.9 s | 32.4 s |
 | Linux `CUDA=1 CUDA_ARCH=portable` (generic) | same | 122.1 s | 33.2 s |
-| Windows `deepseek_v4.exe` + `coli_cuda_dsv4_dg.dll` (NTFS, 2× NVMe) | same | 16.8 s | 2.0 s |
+| Windows `deepseek_v4.exe` + `lma_cuda_dsv4_dg.dll` (NTFS, 2× NVMe) | same | 16.8 s | 2.0 s |
 
 A native Linux box with the checkpoint on local NVMe is still the missing
 measurement (host-slab pinning is Windows-only, so refill is pageable there).
@@ -419,19 +419,19 @@ upstream `dev` engine built from its own tree vs this tree's engine built
 without the GPU tier (the Linux/macOS build shape) and with the tier
 disabled.
 
-- Compiles clean without `COLI_V4_GPU_TIER`; the tiny torch-reference suite
+- Compiles clean without `LMA_V4_GPU_TIER`; the tiny torch-reference suite
   (`tests/test_deepseek_v4_tiny.py`) is token-exact on the CPU-only build for
   every target case.
 - On the real checkpoint, greedy text is **not** a stable identity check
   across configurations, in upstream itself: hot (cache-resident) experts run
   the vectorized `rows16` kernel while cold ones run the reference matvec, the
   two accumulate in different orders, and which experts are hot depends on the
-  autopin history (`.coli_usage`, rewritten by every run), the chunk width and
+  autopin history (`.lma_usage`, rewritten by every run), the chunk width and
   the hit pattern. Upstream produced different 48-token texts with and without
   its history; so did this tree; every variant is a coherent answer differing
   by a rounding flip a few tokens in.
-- With that variable removed on both sides (`COLI_V4_ROWS16=0`
-  `COLI_V4_AUTOPIN=0 COLI_V4_SAVE_USAGE=0`: reference kernels only, no
+- With that variable removed on both sides (`LMA_V4_ROWS16=0`
+  `LMA_V4_AUTOPIN=0 LMA_V4_SAVE_USAGE=0`: reference kernels only, no
   history) **upstream and this tree's CPU-only build produce identical
   48-token text** — the CPU math is unchanged.
 - One change of this branch did alter CPU accumulation order and is now off

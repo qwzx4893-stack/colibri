@@ -21,7 +21,7 @@ def manifest():
         "hypothesis": "two loader lanes improve cold decode",
         "commit": "12" * 20,
         "model": "GLM-5.2 int4",
-        "command": "NGEN=16 PROF=1 ./coli run ...",
+        "command": "NGEN=16 PROF=1 ./lmatomic run ...",
         "prompt_hash": "sha256:example",
         "hardware": {"cpu": "example", "ram": "128 GB",
                      "storage": "NVMe ext4", "os": "Linux"},

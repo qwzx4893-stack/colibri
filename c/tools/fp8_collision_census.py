@@ -2,7 +2,7 @@
 """fp8_collision_census.py: enumerate every RESIDENT-role tensor shape in a
 safetensors container (JSON header parse ONLY -- no tensor data read, no
 torch/safetensors import, no model load) and evaluate THE DESIGN LANDMINE's
-collision predicate (qt_resolve_fmt in colibri.c): O == ceil(O/128)*ceil(I/128),
+collision predicate (qt_resolve_fmt in glm52.c): O == ceil(O/128)*ceil(I/128),
 the shape family where an int8-row tensor's per-row scale byte count (O*4)
 exactly equals a per-128x128-block fp8 scale byte count
 (ceil(O/128)*ceil(I/128)*4) for the SAME [O,I].
@@ -14,12 +14,12 @@ sampled" evidence for that finding, run against this repo's own containers.
 
 WHY config.json, not just the safetensors header: a container's on-disk
 weight tensor is stored FLATTENED (one dimension: O*I raw bytes for int8-row,
-O*ceil(I/2) for int4-packed, etc. -- see colibri.c's qt_bytes()) -- the header
+O*ceil(I/2) for int4-packed, etc. -- see glm52.c's qt_bytes()) -- the header
 alone cannot recover O and I separately for [O,I]. This script instead
 computes each tensor's [O,I] from the model's config.json (hidden_size,
 q_lora_rank, kv_lora_rank, num_attention_heads, qk_rope_head_dim,
 qk_nope_head_dim, v_head_dim, intermediate_size, moe_intermediate_size -- the
-same dimensions colibri.c's own Cfg struct reads at load time and passes into
+same dimensions glm52.c's own Cfg struct reads at load time and passes into
 qt_resolve_fmt as O,I), for every tensor NAME the header actually contains
 that this script's role table recognizes, then cross-checks the computed
 byte count against the header's own raw byte count (int8-row: O*I; int4-
@@ -48,7 +48,7 @@ def _nblk(n):
 
 
 def is_ambiguous(O, I):
-    """THE DESIGN LANDMINE's collision predicate (colibri.c qt_resolve_fmt):
+    """THE DESIGN LANDMINE's collision predicate (glm52.c qt_resolve_fmt):
     an int8-row tensor at this [O,I] has per-row scale bytes O*4 that exactly
     equal per-128x128-block fp8 scale bytes ceil(O/128)*ceil(I/128)*4."""
     return _nblk(O) * _nblk(I) == O

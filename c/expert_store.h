@@ -1,5 +1,5 @@
-#ifndef COLIBRI_EXPERT_STORE_H
-#define COLIBRI_EXPERT_STORE_H
+#ifndef LMA_EXPERT_STORE_H
+#define LMA_EXPERT_STORE_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -11,20 +11,20 @@
 extern "C" {
 #endif
 
-typedef struct ColiExpertStore ColiExpertStore;
+typedef struct LmaExpertStore LmaExpertStore;
 
 typedef struct {
     int layer;
     int expert;
-} ColiExpertKey;
+} LmaExpertKey;
 
 typedef struct {
-    ColiExpertKey key;
-    ColiTensorView gate;
-    ColiTensorView down;
-    ColiTensorView up;
+    LmaExpertKey key;
+    LmaTensorView gate;
+    LmaTensorView down;
+    LmaTensorView up;
     void *lease;
-} ColiExpertView;
+} LmaExpertView;
 
 typedef struct {
     uint64_t requests;
@@ -35,13 +35,13 @@ typedef struct {
     uint64_t bytes_read;
     uint64_t resident_bytes;
     uint64_t capacity_bytes;
-} ColiExpertStoreStats;
+} LmaExpertStoreStats;
 
 /*
  * ExpertStore lease contract:
  *
  * - After a successful lookup(), the caller must call release() exactly once
- *   on the same view (same store). Do not copy ColiExpertView; the lease is
+ *   on the same view (same store). Do not copy LmaExpertView; the lease is
  *   not shareable. Do not pass a view that already holds an active lease to
  *   lookup().
  * - On lookup failure the view is cleared; the caller must not use it and
@@ -58,28 +58,28 @@ typedef struct {
  */
 typedef struct {
     /* Returns zero on success. The view remains valid until release(). */
-    int (*lookup)(ColiExpertStore *store, ColiExpertKey key,
-                  ColiExpertView *view);
-    void (*release)(ColiExpertStore *store, ColiExpertView *view);
+    int (*lookup)(LmaExpertStore *store, LmaExpertKey key,
+                  LmaExpertView *view);
+    void (*release)(LmaExpertStore *store, LmaExpertView *view);
     /* Prefetch is advisory. Unsupported or rejected requests return zero. */
-    int (*prefetch)(ColiExpertStore *store, const ColiExpertKey *keys,
+    int (*prefetch)(LmaExpertStore *store, const LmaExpertKey *keys,
                     size_t count);
-    void (*stats)(const ColiExpertStore *store, ColiExpertStoreStats *stats);
-    void (*destroy)(ColiExpertStore *store);
-} ColiExpertStoreOps;
+    void (*stats)(const LmaExpertStore *store, LmaExpertStoreStats *stats);
+    void (*destroy)(LmaExpertStore *store);
+} LmaExpertStoreOps;
 
-struct ColiExpertStore {
-    const ColiExpertStoreOps *ops;
+struct LmaExpertStore {
+    const LmaExpertStoreOps *ops;
     void *state;
     /* Optional CUDA-tier mirror cache owned by the GPU translation unit
-     * (deepseek_v4.c COLI_V4_UNIT_GPU). NULL when the tier is inactive; the
+     * (deepseek_v4.c LMA_V4_UNIT_GPU). NULL when the tier is inactive; the
      * CPU lease path ignores it entirely. */
     void *gpu;
 };
 
-static inline int coli_expert_lookup(ColiExpertStore *store,
-                                     ColiExpertKey key,
-                                     ColiExpertView *view) {
+static inline int lma_expert_lookup(LmaExpertStore *store,
+                                     LmaExpertKey key,
+                                     LmaExpertView *view) {
     if (!store || !store->ops || !store->ops->lookup) {
         if (view) memset(view, 0, sizeof(*view));
         return -1;
@@ -89,8 +89,8 @@ static inline int coli_expert_lookup(ColiExpertStore *store,
     return result;
 }
 
-static inline void coli_expert_release(ColiExpertStore *store,
-                                       ColiExpertView *view) {
+static inline void lma_expert_release(LmaExpertStore *store,
+                                       LmaExpertView *view) {
     if (store && store->ops && store->ops->release)
         store->ops->release(store, view);
     if (view) memset(view, 0, sizeof(*view));

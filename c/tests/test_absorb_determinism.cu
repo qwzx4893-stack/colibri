@@ -71,7 +71,7 @@
  * The deterministic companion check, when the toolkit is present, is
  *     compute-sanitizer --tool=racecheck ./absorb_determinism_test
  * which reports the hazard on every run of an unpatched kernel and none on a
- * fixed one.  Set COLI_ABSORB_DET_ITERS to change the launch count per cell; it
+ * fixed one.  Set LMA_ABSORB_DET_ITERS to change the launch count per cell; it
  * is clamped to 2..1000 so that a stray value cannot hang the recipe, and a
  * value that is not a decimal integer (surrounding whitespace aside) is
  * reported on stderr before the default is used.
@@ -86,8 +86,8 @@
 #include <cstring>
 #include <vector>
 
-#ifndef COLI_KV_PAGE_TOKENS
-#define COLI_KV_PAGE_TOKENS 64
+#ifndef LMA_KV_PAGE_TOKENS
+#define LMA_KV_PAGE_TOKENS 64
 #endif
 
 static const int H = 8, Q = 8, R = 4, V = 8, K = 64;
@@ -150,14 +150,14 @@ static void score(const std::vector<float> &first, const std::vector<float> &got
 
 int main(void) {
     int dev = 0;
-    if (!coli_cuda_init(&dev, 1)) return 77;
+    if (!lma_cuda_init(&dev, 1)) return 77;
 
     /* Bounded at BOTH ends: this loop count is the whole runtime of the test,
      * and the test runs inside `make cuda-test`.  An unbounded value does not
      * fail loudly, it hangs the recipe.  strtol rather than atoi because atoi
      * on an out-of-range value is undefined -- and measured, an overflowing
      * count hangs exactly like an in-range huge one, so it is not benign. */
-    const char *env = std::getenv("COLI_ABSORB_DET_ITERS");
+    const char *env = std::getenv("LMA_ABSORB_DET_ITERS");
     long want = 30;
     if (env && *env) {   /* an empty value means the same as unset, and is not reported */
         char *end = nullptr;
@@ -176,7 +176,7 @@ int main(void) {
         } else {
             /* Falling back in silence is how a typo turns into a shorter run
              * that still reports PASS.  Name the variable and the value. */
-            std::fprintf(stderr, "WARN: COLI_ABSORB_DET_ITERS=\"%s\" is not a decimal "
+            std::fprintf(stderr, "WARN: LMA_ABSORB_DET_ITERS=\"%s\" is not a decimal "
                          "integer in range; using the default of %ld launches per cell\n",
                          env, want);
         }
@@ -191,10 +191,10 @@ int main(void) {
     for (size_t i = 0; i < p.size(); i++) p[i] = ((int)(i % 7) - 3) * .09f;
     for (size_t i = 0; i < q.size(); i++) q[i] = ((int)(i % 13) - 6) * .05f;
 
-    ColiCudaTensor *tw = nullptr, *tp = nullptr;
-    if (!coli_cuda_tensor_upload(&tw, w.data(), nullptr, 0, K, ROWS, dev) ||
-        !coli_cuda_tensor_upload(&tp, p.data(), nullptr, 0, D, O, dev)) {
-        std::fprintf(stderr, "FAIL: coli_cuda_tensor_upload failed on device %d "
+    LmaCudaTensor *tw = nullptr, *tp = nullptr;
+    if (!lma_cuda_tensor_upload(&tw, w.data(), nullptr, 0, K, ROWS, dev) ||
+        !lma_cuda_tensor_upload(&tp, p.data(), nullptr, 0, D, O, dev)) {
+        std::fprintf(stderr, "FAIL: lma_cuda_tensor_upload failed on device %d "
                      "(absorb weights %dx%d, projection %dx%d)\n", dev, ROWS, K, O, D);
         return 1;
     }
@@ -211,9 +211,9 @@ int main(void) {
         for (size_t i = 0; i < lat.size(); i++) lat[i] = ((int)(i % 9) - 4) * .08f;
         for (size_t i = 0; i < rope.size(); i++) rope[i] = ((int)(i % 5) - 2) * .06f;
         std::vector<float> first((size_t)SB * H * V), got((size_t)SB * H * V);
-        if (!coli_cuda_attention_absorb_batch(tw, first.data(), q.data(), lat.data(),
+        if (!lma_cuda_attention_absorb_batch(tw, first.data(), q.data(), lat.data(),
                                               rope.data(), SB, H, Q, R, V, K, T, .2f)) {
-            std::fprintf(stderr, "FAIL: coli_cuda_attention_absorb_batch reference launch "
+            std::fprintf(stderr, "FAIL: lma_cuda_attention_absorb_batch reference launch "
                          "failed at T=%d\n", T);
             rc = 2; goto done;
         }
@@ -221,9 +221,9 @@ int main(void) {
             double range = range_of(first);
             if (!live_range(first, range, "batch")) { rc = 5; goto done; }
             for (int it = 1; it < iters; it++) {
-                if (!coli_cuda_attention_absorb_batch(tw, got.data(), q.data(), lat.data(),
+                if (!lma_cuda_attention_absorb_batch(tw, got.data(), q.data(), lat.data(),
                                                       rope.data(), SB, H, Q, R, V, K, T, .2f)) {
-                    std::fprintf(stderr, "FAIL: coli_cuda_attention_absorb_batch failed at "
+                    std::fprintf(stderr, "FAIL: lma_cuda_attention_absorb_batch failed at "
                                  "T=%d iteration %d\n", T, it);
                     rc = 2; goto done;
                 }
@@ -237,8 +237,8 @@ int main(void) {
         std::vector<int> lengths(SR);
         for (int s = 0; s < SR; s++) lengths[s] = 129 + s;      /* 129 .. 256 */
         const int T = 129 + SR - 1;
-        const int PAGES = (T + COLI_KV_PAGE_TOKENS - 1) / COLI_KV_PAGE_TOKENS;
-        const int CAP = PAGES * COLI_KV_PAGE_TOKENS;
+        const int PAGES = (T + LMA_KV_PAGE_TOKENS - 1) / LMA_KV_PAGE_TOKENS;
+        const int CAP = PAGES * LMA_KV_PAGE_TOKENS;
         std::vector<std::vector<float> > l(SR), r(SR);
         std::vector<const float *> lp(SR), rp(SR);
         std::vector<const void *> keys(SR);
@@ -251,10 +251,10 @@ int main(void) {
         }
         std::vector<float> first((size_t)SR * O), got((size_t)SR * O);
         Verdict ragged = { 0, 0.0 };
-        if (!coli_cuda_attention_project_ragged(tw, tp, first.data(), q.data(), keys.data(),
+        if (!lma_cuda_attention_project_ragged(tw, tp, first.data(), q.data(), keys.data(),
                                                 lp.data(), rp.data(), lengths.data(),
                                                 SR, H, Q, R, V, K, T, .2f)) {
-            std::fprintf(stderr, "FAIL: coli_cuda_attention_project_ragged reference launch "
+            std::fprintf(stderr, "FAIL: lma_cuda_attention_project_ragged reference launch "
                          "failed at T=%d\n", T);
             rc = 3; goto done;
         }
@@ -262,10 +262,10 @@ int main(void) {
             double range = range_of(first);
             if (!live_range(first, range, "ragged")) { rc = 5; goto done; }
             for (int it = 1; it < iters; it++) {
-                if (!coli_cuda_attention_project_ragged(tw, tp, got.data(), q.data(), keys.data(),
+                if (!lma_cuda_attention_project_ragged(tw, tp, got.data(), q.data(), keys.data(),
                                                         lp.data(), rp.data(), lengths.data(),
                                                         SR, H, Q, R, V, K, T, .2f)) {
-                    std::fprintf(stderr, "FAIL: coli_cuda_attention_project_ragged failed at "
+                    std::fprintf(stderr, "FAIL: lma_cuda_attention_project_ragged failed at "
                                  "T=%d iteration %d\n", T, it);
                     rc = 3; goto done;
                 }
@@ -290,8 +290,8 @@ int main(void) {
     }
 
 done:
-    coli_cuda_tensor_free(tw);
-    coli_cuda_tensor_free(tp);
-    coli_cuda_shutdown();
+    lma_cuda_tensor_free(tw);
+    lma_cuda_tensor_free(tp);
+    lma_cuda_shutdown();
     return rc;
 }

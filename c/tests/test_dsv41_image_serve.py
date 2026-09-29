@@ -13,7 +13,7 @@ landed on the wrong positions, or the span were miscounted (the engine says so o
 stderr and answers without the image), both answers would be the same text.
 
 Needs a V4.1 container with a vision tower and a tokenizer, plus Pillow and numpy.
-Set COLI_DSV41_FIXTURE to the container; CI builds it with tools/make_dsv41_tiny.py.
+Set LMA_DSV41_FIXTURE to the container; CI builds it with tools/make_dsv41_tiny.py.
 """
 import base64
 import io
@@ -29,7 +29,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-FIXTURE = Path(os.environ.get("COLI_DSV41_FIXTURE", ""))
+FIXTURE = Path(os.environ.get("LMA_DSV41_FIXTURE", ""))
 # The fixture's context is 64 positions, so the image has to be told to be small: at
 # the container's own ceiling of 64 image tokens one photo would fill the whole window.
 IMAGE_TOKENS = "16"
@@ -63,7 +63,7 @@ def png_data_url(seed):
 
 @unittest.skipUnless(FIXTURE.name and (FIXTURE / "config.json").is_file()
                      and (FIXTURE / "tokenizer.json").is_file(),
-                     "COLI_DSV41_FIXTURE not set to a V4.1 container with a tokenizer")
+                     "LMA_DSV41_FIXTURE not set to a V4.1 container with a tokenizer")
 @unittest.skipUnless((HERE / "deepseek_v41").exists() or (HERE / "deepseek_v41.exe").exists(),
                      "deepseek_v41 engine is not built")
 @unittest.skipUnless(have_imaging(), "Pillow and numpy are needed to build the test image")
@@ -72,7 +72,7 @@ class Dsv41ImageServeTest(unittest.TestCase):
     def setUpClass(cls):
         cls.port = free_port()
         cls.proc = subprocess.Popen(
-            [sys.executable, str(HERE / "coli"), "serve", "--model", str(FIXTURE),
+            [sys.executable, str(HERE / "lmatomic"), "serve", "--model", str(FIXTURE),
              "--port", str(cls.port), "--cap", "4"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             env={**os.environ, "V41_MAX_IMAGE_TOKENS": IMAGE_TOKENS})
@@ -83,10 +83,10 @@ class Dsv41ImageServeTest(unittest.TestCase):
                 break
             except Exception:
                 if cls.proc.poll() is not None:
-                    raise RuntimeError("coli serve exited: " + cls.proc.stdout.read()[-2000:])
+                    raise RuntimeError("lmatomic serve exited: " + cls.proc.stdout.read()[-2000:])
                 time.sleep(1)
         else:
-            raise RuntimeError("coli serve did not come up in 180 s")
+            raise RuntimeError("lmatomic serve did not come up in 180 s")
 
     @classmethod
     def tearDownClass(cls):

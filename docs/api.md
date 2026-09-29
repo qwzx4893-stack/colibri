@@ -1,21 +1,21 @@
 # OpenAI-compatible API, KV contexts & web UI
 
-## `coli serve`
+## `lmatomic serve`
 
-`coli serve` keeps one model process loaded and exposes a text-only
+`lmatomic serve` keeps one model process loaded and exposes a text-only
 OpenAI-compatible HTTP API. The gateway uses only the Python standard library;
 inference still runs in the same dependency-free C engine.
 
 ```bash
 cd c
-COLI_MODEL=/nvme/glm52_i4 COLI_API_KEY=local-secret ./coli serve \
-  --host 127.0.0.1 --port 8000 --model-id glm-5.2-colibri
+LMA_MODEL=/nvme/glm52_i4 LMA_API_KEY=local-secret ./lmatomic serve \
+  --host 127.0.0.1 --port 8000 --model-id glm-5.2-lmatomic
 
 curl http://127.0.0.1:8000/v1/chat/completions \
   -H 'Authorization: Bearer local-secret' \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "glm-5.2-colibri",
+    "model": "glm-5.2-lmatomic",
     "messages": [{"role": "user", "content": "Hello"}],
     "stream": true
   }'
@@ -41,7 +41,7 @@ non-empty `assistant` turn continues, the same contract as Anthropic's API — a
 there is no request field for it, because a trailing assistant turn already says
 "continue me" and a body extension would only be reachable by hand-written JSON
 rather than from the clients that want it. The server-side switch
-`COLI_CONTINUE_ASSISTANT=0` restores the old behaviour (fold the turn into a
+`LMA_CONTINUE_ASSISTANT=0` restores the old behaviour (fold the turn into a
 completed one and append a fresh cue). Continuation is refused together with
 `tools`/`tool_calls`, because the tool-call parsers read an assistant turn from
 its start, and the turn must carry text not ending in whitespace: the template
@@ -63,7 +63,7 @@ resuming from an arbitrary byte offset rather than specific to this engine, and
 it is the same hazard as the trailing whitespace above — in the one form that
 cannot be refused, because splitting mid-word is sometimes exactly what the
 caller wants. Split at a token-ish boundary when the spelling matters. The extension
-`x_colibri_ignore_leading_stop: true` discards leading stop sequences until
+`x_lmatomic_ignore_leading_stop: true` discards leading stop sequences until
 the first non-whitespace response content, which is useful for local templates
 that occasionally emit a role marker before the answer; strict OpenAI stop
 behavior remains the default for client-provided sequences. GLM chat requests
@@ -81,7 +81,7 @@ copies. Tool calling depends on the active engine; see the support matrix below.
 Images, log probabilities, and token penalties return an explicit error rather
 than being silently ignored. `seed` is accepted and ignored (see below).
 Audio is accepted only by Inkling checkpoints with
-audio support. The default bind address is localhost; set `COLI_API_KEY` before
+audio support. The default bind address is localhost; set `LMA_API_KEY` before
 exposing the server beyond the machine.
 
 ### `seed`
@@ -94,7 +94,7 @@ wire, so the value has no effect at any temperature.
 
 | Engine | OpenAI `tools` | Anthropic `tool_use` | Native format |
 |---|---|---|---|
-| GLM-5.2 (`colibri`) | yes | yes | `<tool_call>` blocks |
+| GLM-5.2 (`lmatomic`) | yes | yes | `<tool_call>` blocks |
 | DeepSeek V4 | yes | yes | native DSML tool-call blocks |
 | Inkling | no | no | active tool declarations/choices return HTTP 400 |
 | Kimi K3 | yes | yes | native XTML `tools`/`call`/`argument` blocks (#1143) |
@@ -106,16 +106,16 @@ On supported engines, pass OpenAI `tools` and optionally `tool_choice` to
 `tool_use`/`tool_result`, and the `auto`, `any`, `none`, and forced-tool choice
 modes into the active engine's native prompt and back into protocol responses.
 Protocol support does not guarantee that every quantized model emits valid
-tool syntax; `COLI_TOOL_SALVAGE=1` is an opt-in recovery path for malformed GLM
+tool syntax; `LMA_TOOL_SALVAGE=1` is an opt-in recovery path for malformed GLM
 int4 tool calls. DeepSeek V4 uses its strict native DSML parser instead.
 
 When a reverse proxy or MagicDNS hostname preserves a public `Host` header,
 trust that exact hostname with repeatable `--allowed-host` options. The
-comma-separated `COLI_ALLOWED_HOSTS` environment variable is equivalent:
+comma-separated `LMA_ALLOWED_HOSTS` environment variable is equivalent:
 
 ```bash
-COLI_ALLOWED_HOSTS=llm.example.com ./coli serve --model /nvme/glm52_i4
-# or: ./coli serve --model /nvme/glm52_i4 --allowed-host llm.example.com
+LMA_ALLOWED_HOSTS=llm.example.com ./lmatomic serve --model /nvme/glm52_i4
+# or: ./lmatomic serve --model /nvme/glm52_i4 --allowed-host llm.example.com
 ```
 
 Only configure hostnames or IP addresses you control; there is no wildcard.
@@ -130,14 +130,14 @@ network.
 The engine owns its KV contexts, so HTTP generation uses a bounded FIFO
 admission queue instead of pretending to run unsafe parallel sequences.
 Configure it with `--max-queue N` (default 8) and `--queue-timeout SECONDS`
-(default 300), or the `COLI_MAX_QUEUE` / `COLI_QUEUE_TIMEOUT` environment
+(default 300), or the `LMA_MAX_QUEUE` / `LMA_QUEUE_TIMEOUT` environment
 variables. Saturated and timed-out requests receive OpenAI-shaped HTTP 429
 errors before streaming headers are sent. With `--max-queue 0`, a request
 pinned to an occupied KV slot is rejected immediately even if another slot
 is free. Queue deadlines are checked before slot assignment: an expired
 waiter receives `queue_timeout` even if a slot is now available. `GET /health` exposes
 active/queued/completed/rejected counters, and successful generation responses
-include `x-colibri-queue-wait-ms`.
+include `x-lmatomic-queue-wait-ms`.
 Requests targeting any slot may use a free slot not reserved by earlier waiters.
 An earlier pinned request keeps priority for its target; an earlier any-slot
 request keeps priority across all slots. A full waiting queue does not reject
@@ -152,7 +152,7 @@ API key is configured, supply the same `Authorization: Bearer ...` or
 401. Without an API key, the endpoint follows the server's usual unauthenticated
 access policy. Metrics contain no prompts, model paths, or request-ID labels.
 
-All names start with `colibri_scheduler_`:
+All names start with `lmatomic_scheduler_`:
 
 | Suffix | Type | Meaning |
 |---|---|---|
@@ -200,20 +200,20 @@ transport errors as well as engine failures.
 Example PromQL for the admitted-request queue-wait p95:
 
 ```promql
-histogram_quantile(0.95, sum by (le) (rate(colibri_scheduler_queue_wait_seconds_bucket[5m])))
+histogram_quantile(0.95, sum by (le) (rate(lmatomic_scheduler_queue_wait_seconds_bucket[5m])))
 ```
 
 ## Anthropic-protocol endpoint (`/v1/messages`)
 
 The same server also speaks the **Anthropic Messages API**, so clients that only talk
-to Anthropic endpoints — Claude Code, the Anthropic SDKs — work against colibri
+to Anthropic endpoints — Claude Code, the Anthropic SDKs — work against LM Atomic
 without a shim. Nothing to enable: `/v1/messages` is served alongside
 `/v1/chat/completions` on the same port.
 
 ```bash
 curl http://127.0.0.1:8000/v1/messages \
   -H 'x-api-key: local' -H 'content-type: application/json' \
-  -d '{"model":"glm-5.2-colibri","max_tokens":128,
+  -d '{"model":"glm-5.2-lmatomic","max_tokens":128,
        "messages":[{"role":"user","content":"Hello"}]}'
 ```
 
@@ -221,8 +221,8 @@ For Claude Code, point it at the server and give it any non-empty key:
 
 ```bash
 export ANTHROPIC_BASE_URL=http://localhost:8000
-export ANTHROPIC_API_KEY=local            # only enforced if you set COLI_API_KEY
-export ANTHROPIC_MODEL=glm-5.2-colibri
+export ANTHROPIC_API_KEY=local            # only enforced if you set LMA_API_KEY
+export ANTHROPIC_MODEL=glm-5.2-lmatomic
 claude
 ```
 
@@ -248,7 +248,7 @@ features that have not been wired to this protocol are likewise rejected with
 an explicit error.
 
 A trailing `assistant` message continues that turn by default on both the
-Anthropic- and OpenAI-compatible endpoints (`COLI_CONTINUE_ASSISTANT=0` restores
+Anthropic- and OpenAI-compatible endpoints (`LMA_CONTINUE_ASSISTANT=0` restores
 the old behavior, where this endpoint appended a fresh cue). Note this changes
 what an existing Anthropic client sees on `/v1/messages`: a trailing assistant
 turn now continues rather than starting fresh — which is the real Anthropic
@@ -262,21 +262,21 @@ behavior.
 ## Connect a coding CLI or editor
 
 The API is OpenAI-compatible, so most coding CLIs and editor extensions work by
-pointing them at Colibri as an *OpenAI-compatible* provider. Three settings:
+pointing them at LM Atomic as an *OpenAI-compatible* provider. Three settings:
 
 - **Base URL** — `http://localhost:8000/v1`
-- **Model** — `glm-5.2-colibri` (or whatever you pass to `--model-id`)
+- **Model** — `glm-5.2-lmatomic` (or whatever you pass to `--model-id`)
 - **API key** — any non-empty string, e.g. `local`
 
-Colibri needs **no** API key by default, but many clients refuse to start without
-one — give them any dummy value. The key is only enforced if you set `COLI_API_KEY`.
+LM Atomic needs **no** API key by default, but many clients refuse to start without
+one — give them any dummy value. The key is only enforced if you set `LMA_API_KEY`.
 
 Smoke-test the endpoint first (no key needed unless you set one):
 
 ```bash
 curl http://127.0.0.1:8000/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"glm-5.2-colibri","messages":[{"role":"user","content":"hi"}]}'
+  -d '{"model":"glm-5.2-lmatomic","messages":[{"role":"user","content":"hi"}]}'
 ```
 
 **aider**
@@ -294,13 +294,13 @@ aider --model openai/glm-5.2-colibri     # the openai/ prefix routes to OPENAI_A
 {
   "$schema": "https://charm.land/crush.json",
   "providers": {
-    "colibri": {
-      "name": "Colibri",
+    "LM Atomic": {
+      "name": "LM Atomic",
       "type": "openai-compat",
       "base_url": "http://localhost:8000/v1/",
       "api_key": "local",
       "models": [
-        { "name": "GLM-5.2 (Colibri)", "id": "glm-5.2-colibri",
+        { "name": "GLM-5.2 (LM Atomic)", "id": "glm-5.2-lmatomic",
           "context_window": 131072, "default_max_tokens": 1024 }
       ]
     }
@@ -317,7 +317,7 @@ KV configuration actually allows.
 ```json
 {
   "providers": {
-    "colibri": {
+    "LM Atomic": {
       "baseUrl": "http://localhost:8000/v1",
       "api": "openai-completions",
       "apiKey": "local",
@@ -327,8 +327,8 @@ KV configuration actually allows.
       },
       "models": [
         {
-          "id": "glm-5.2-colibri",
-          "name": "GLM-5.2 (Colibri)",
+          "id": "glm-5.2-lmatomic",
+          "name": "GLM-5.2 (LM Atomic)",
           "contextWindow": 131072,
           "maxTokens": 1024
         }
@@ -338,14 +338,14 @@ KV configuration actually allows.
 }
 ```
 
-The `apiKey` dummy satisfies pi's auth requirement; colibri only enforces a
-key if you set `COLI_API_KEY`. The `compat` flags tell pi to send the system
+The `apiKey` dummy satisfies pi's auth requirement; LM Atomic only enforces a
+key if you set `LMA_API_KEY`. The `compat` flags tell pi to send the system
 prompt as a plain `system` message and to omit `reasoning_effort`, which keeps
 the request inside what the gateway accepts by default. If you serve GLM-5.2
 and want its reasoning block, set `"reasoning": true` on the model and drop
 `supportsReasoningEffort` — the standard `reasoning_effort` field enables
 thinking on that engine. Then select the model with `pi --list-models` or the
-`/model` picker (`colibri / GLM-5.2 (Colibri)`).
+`/model` picker (`lmatomic / GLM-5.2 (LM Atomic)`).
 
 `contextWindow` is only the client's budget display — set it to whatever your
 KV configuration actually allows. Tool calling in pi works on the engines in
@@ -353,7 +353,7 @@ the [tool-calling matrix](#tool-calling-support) above; on unsupported engines
 pi's tool calls fail the same way any OpenAI `tools` request does.
 
 **Continue, Cline / Roo, `llm`, the OpenAI SDKs, …** — set the provider's base
-URL to `http://localhost:8000/v1`, the model to `glm-5.2-colibri`, and any dummy
+URL to `http://localhost:8000/v1`, the model to `glm-5.2-lmatomic`, and any dummy
 key (`OPENAI_API_KEY` / `OPENAI_BASE_URL` for env-based tools).
 
 > **Set your expectations before connecting an agentic CLI.** Two costs dominate,
@@ -377,23 +377,23 @@ key (`OPENAI_API_KEY` / `OPENAI_BASE_URL` for env-based tools).
 
 ## Isolated KV contexts
 
-`coli serve --kv-slots N` allocates up to 16 independent sequence contexts.
+`lmatomic serve --kv-slots N` allocates up to 16 independent sequence contexts.
 Requests select one with the optional integer `cache_slot` field; ordinary
 OpenAI clients omit it and keep the original slot 0 behavior.
 
 ```json
 {
-  "model": "glm-5.2-colibri",
+  "model": "glm-5.2-lmatomic",
   "messages": [{"role": "user", "content": "Continue this conversation"}],
   "cache_slot": 1
 }
 ```
 
 Each slot owns its token history, compressed MLA/DSA KV memory, MTP window, and
-crash-safe persistence file (`.coli_kv`, `.coli_kv.1`, ...). The engine matches
+crash-safe persistence file (`.lma_kv`, `.lma_kv.1`, ...). The engine matches
 each request's tokenized prompt against the slot's history and reuses the common
 KV prefix, so stateless HTTP turns keep their cache across requests and even
-across engine restarts. Use `COLI_KV_SLOTS=N` as the environment equivalent.
+across engine restarts. Use `LMA_KV_SLOTS=N` as the environment equivalent.
 Start small: at the default 4096-token context, every slot costs hundreds of MB.
 
 ## Web dashboard
@@ -403,12 +403,12 @@ same port, then opens your browser when the engine is ready:
 
 ```bash
 cd web && npm install && npm run build   # once
-./coli web --model <model-dir>
+./lmatomic web --model <model-dir>
 ```
 
-`coli web` differs from `coli serve` only in opening a browser — both serve the
+`lmatomic web` differs from `lmatomic serve` only in opening a browser — both serve the
 dashboard on the same port. On a headless host (no display, often no GPU at all)
-use `coli serve`, or `coli web --no-browser`, and point a browser at it from
+use `lmatomic serve`, or `lmatomic web --no-browser`, and point a browser at it from
 another machine. Nothing in the dashboard needs a desktop session on the host.
 
 What you get is one workspace with a dock to switch page:
@@ -433,13 +433,13 @@ What you get is one workspace with a dock to switch page:
 The dashboard talks to the engine over a small line protocol and plain JSON
 endpoints — nothing heavier than the engine itself. `web/` is a pure OpenAI-API
 client (React + TypeScript) and also works against any other compatible
-endpoint; the terminal `coli chat` remains the first-class interface.
+endpoint; the terminal `lmatomic chat` remains the first-class interface.
 
 The layout is responsive down to phone widths; the per-turn time breakdown and
 the tok/s trend live on the Profiling page:
 
 <p align="center">
-  <img src="media/colibri-mobile.png" width="270" alt="the dashboard on a phone-sized viewport" />
+  <img src="media/lmatomic-mobile.png" width="270" alt="the dashboard on a phone-sized viewport" />
   &nbsp;&nbsp;
-  <img src="media/colibri-profiling.png" width="560" alt="the Profiling page: where the engine spends each turn" />
+  <img src="media/lmatomic-profiling.png" width="560" alt="the Profiling page: where the engine spends each turn" />
 </p>

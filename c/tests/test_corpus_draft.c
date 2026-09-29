@@ -1,4 +1,4 @@
-/* Corpus draft source (COLI_DRAFT_CORPUS): the proposal lookup must be a pure
+/* Corpus draft source (LMA_DRAFT_CORPUS): the proposal lookup must be a pure
  * suffix match over the frozen ids, and it must never propose anything the
  * verifier would then have to reject for a structural reason.
  *
@@ -20,8 +20,8 @@
  *
  * In-memory only (no scratch files, no model), so it builds clean on the
  * Windows MinGW CI job. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 static int g_nfails = 0;

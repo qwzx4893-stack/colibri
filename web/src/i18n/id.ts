@@ -170,18 +170,18 @@ const id: Record<string, string> = {
   "topbar.clear": "Bersihkan",
 
   // hero / empty state
-  "hero.title": "COLIBRÌ ENGINE",
+  "hero.title": "LM ATOMIC ENGINE",
   "hero.subtitle": "Tanya sang raksasa.",
   "hero.tagline": "Mesin tetap milikmu.",
-  "hero.description": "Hubungkan ke server colibrì lokal dan alirkan respons langsung dari perangkat keras. Tidak ada data yang keluar dari endpoint yang dipilih.",
+  "hero.description": "Hubungkan ke server LM Atomic lokal dan alirkan respons langsung dari perangkat keras. Tidak ada data yang keluar dari endpoint yang dipilih.",
   "prompts.routing": "Jelaskan cara kerja routing pakar",
   "prompts.benchmark": "Tulis benchmark C kecil",
   "prompts.caching": "Bandingkan caching RAM dan VRAM",
 
   // chat
   "chat.you": "Anda",
-  "chat.colibri": "colibrì",
-  "chat.placeholder": "Pesan untuk colibrì…",
+  "chat.lmatomic": "LM Atomic",
+  "chat.placeholder": "Pesan untuk LM Atomic…",
   "chat.inputHint": "Enter untuk mengirim · Shift+Enter untuk baris baru",
   "chat.stop": "Hentikan generasi",
   "chat.send": "Kirim pesan",
@@ -230,7 +230,7 @@ const id: Record<string, string> = {
   "profile.diskNote": "Layanan disk adalah waktu yang digunakan untuk membaca pakar di thread I/O; proses ini tumpang tindih dengan komputasi, sehingga hanya waktu tunggu I/O yang dialami thread komputasi yang dihitung dalam waktu total. Dengan beberapa sesi KV, proporsi menggambarkan seluruh engine selama rentang waktu giliran.",
 
   // error boundary
-  "error.title": "UI colibrì mengalami kesalahan",
+  "error.title": "UI LM Atomic mengalami kesalahan",
   "error.hint": "Engine tidak terpengaruh. Coba muat ulang.",
   "error.retry": "Coba lagi",
 }

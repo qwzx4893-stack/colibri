@@ -1,7 +1,7 @@
 /* omp_tune.h — dimensionamento della squadra OpenMP sui CORE FISICI.
  *
  * PERCHE' SOLO IL DIMENSIONAMENTO, E NON LO SPIN-WAIT.
- * Il blocco di tuning in colibri.c fa due cose che hanno profili di rischio
+ * Il blocco di tuning in glm52.c fa due cose che hanno profili di rischio
  * OPPOSTI, e vanno tenute separate:
  *
  *   dimensionamento  OMP_NUM_THREADS = core fisici (niente SMT)
@@ -27,7 +27,7 @@
  * policy that its existing block controls.
  *
  * PERCHE' QUI NON SERVE IL RE-EXEC.
- * colibri.c si ri-esegue perche' OMP_WAIT_POLICY & co. le legge il COSTRUTTORE
+ * glm52.c si ri-esegue perche' OMP_WAIT_POLICY & co. le legge il COSTRUTTORE
  * di libgomp, prima di main(): un setenv() dentro main() arriva tardi. Il numero
  * di thread no: omp_set_num_threads() e' una API di runtime e ha effetto subito.
  * La meta' sicura e' anche la meta' semplice.
@@ -37,8 +37,8 @@
  * peggio di nessun conteggio (cfr. #325, dove un fallback silenzioso a 1
  * inchiodava il decode su un core solo).
  */
-#ifndef COLI_OMP_TUNE_H
-#define COLI_OMP_TUNE_H
+#ifndef LMA_OMP_TUNE_H
+#define LMA_OMP_TUNE_H
 
 #include <stdio.h>
 #include <stddef.h>
@@ -55,7 +55,7 @@
 
 /* Numero di core FISICI, o 0 se non determinabile. Mai un valore inventato. */
 #if defined(_WIN32)
-static int coli_count_windows_physical_cores(const void *buf, DWORD bytes)
+static int lma_count_windows_physical_cores(const void *buf, DWORD bytes)
 {
     const char *p = (const char *)buf;
     const char *end = p + bytes;
@@ -81,7 +81,7 @@ static int coli_count_windows_physical_cores(const void *buf, DWORD bytes)
 }
 #endif
 
-static int coli_physical_cores(void)
+static int lma_physical_cores(void)
 {
 #if defined(_WIN32)
     DWORD need = 0;
@@ -90,7 +90,7 @@ static int coli_physical_cores(void)
     void *buf = malloc(need);
     if (!buf) return 0;
     int cores = GetLogicalProcessorInformationEx(RelationProcessorCore, buf, &need)
-                    ? coli_count_windows_physical_cores(buf, need)
+                    ? lma_count_windows_physical_cores(buf, need)
                     : 0;
     free(buf);
     return cores;
@@ -142,14 +142,14 @@ static int coli_physical_cores(void)
 /* Dimensiona la squadra OpenMP sui core fisici. Rispetta OMP_NUM_THREADS se
  * l'utente l'ha impostata, e non fa nulla se il conteggio non e' affidabile.
  * `engine` finisce solo nella riga di log. */
-static void coli_omp_tune_threads(const char *engine)
+static void lma_omp_tune_threads(const char *engine)
 {
 #ifdef _OPENMP
-    const char *off = getenv("COLI_NO_OMP_TUNE");
+    const char *off = getenv("LMA_NO_OMP_TUNE");
     if (off) return;                       /* stesso kill-switch degli altri motori */
     if (getenv("OMP_NUM_THREADS")) return; /* l'utente comanda */
 
-    int phys = coli_physical_cores();
+    int phys = lma_physical_cores();
     if (phys <= 0) return;                 /* sconosciuto -> default di OpenMP */
     int logical = omp_get_max_threads();
     if (phys >= logical) return;           /* niente SMT da evitare: silenzio */
@@ -164,4 +164,4 @@ static void coli_omp_tune_threads(const char *engine)
 #endif
 }
 
-#endif /* COLI_OMP_TUNE_H */
+#endif /* LMA_OMP_TUNE_H */

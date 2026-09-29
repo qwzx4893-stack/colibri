@@ -1,12 +1,12 @@
 """Every model type the launcher NAMES, the launcher must also DISPATCH.
 
-#879: `coli` printed "OLMoE · 7B" in its banner and then handed the request to
+#879: `lmatomic` printed "OLMoE · 7B" in its banner and then handed the request to
 the GLM engine, because `_BANNER_MODELS` knew about `olmoe` and `model_arch()`
 did not. The engine binary shipped in the release archive the whole time; the
 launcher structurally could not select it.
 
-The release check that was supposed to catch this (#868, "coli would not
-resolve these next to itself") asserted the binary was PRESENT next to `coli`.
+The release check that was supposed to catch this (#868, "lmatomic would not
+resolve these next to itself") asserted the binary was PRESENT next to `lmatomic`.
 It passed. Presence is not dispatch, and a green test that proves the weaker
 property is worse than no test, because it is read as proving the stronger one.
 
@@ -35,11 +35,11 @@ from family_registry import all_families
 
 
 HERE = Path(__file__).resolve().parent.parent
-CLI = HERE / "coli"
+CLI = HERE / "lmatomic"
 
 
 def load_cli():
-    loader = importlib.machinery.SourceFileLoader("coli_dispatch_test", str(CLI))
+    loader = importlib.machinery.SourceFileLoader("lma_dispatch_test", str(CLI))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
@@ -154,13 +154,13 @@ class ProjectPythonTest(unittest.TestCase):
 
 
 class BenchDispatchTest(unittest.TestCase):
-    """`coli bench` scores the GLM-5.2/5.3 engine and nothing else.
+    """`lmatomic bench` scores the GLM-5.2/5.3 engine and nothing else.
 
-    tools/eval_glm.py drives the `colibri` binary through the log-likelihood
+    tools/eval_glm.py drives the `lmatomic` binary through the log-likelihood
     scoring protocol only that engine speaks. cmd_bench handed it every model,
-    so `coli bench` on an OLMoE container printed the OLMoE banner, started the
+    so `lmatomic bench` on an OLMoE container printed the OLMoE banner, started the
     GLM engine on it and died on "this engine requires n_group=1 (GLM-5.2)":
-    the shape #898 fixed for `coli tune`.
+    the shape #898 fixed for `lmatomic tune`.
     """
 
     @classmethod
@@ -188,7 +188,7 @@ class BenchDispatchTest(unittest.TestCase):
              mock.patch.object(self.cli.subprocess, "call", return_value=0) as call:
             with self.assertRaises(SystemExit) as exited:
                 self.cli.cmd_bench(bench)
-        self.assertIn("coli bench is not wired for OLMoE", str(exited.exception.code))
+        self.assertIn("lmatomic bench is not wired for OLMoE", str(exited.exception.code))
         call.assert_not_called()
 
 

@@ -42,8 +42,8 @@ static void slow_upload(int fmt) {
 
 int main(void) {
     enum { NL = 1, NE = 8, D = 64, IH = 32, TOPK = 2 };
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", "0", 1);
     setenv("QT_NO_WARMSTART", "1", 1);
     fake_upload_hook = slow_upload;
 

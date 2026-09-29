@@ -19,43 +19,43 @@
  * the current link is inside the same LTO set. */
 #if defined(__has_attribute)
 #  if __has_attribute(externally_visible)
-#    define COLI_ESR_EXTERNALLY_VISIBLE __attribute__((externally_visible))
+#    define LMA_ESR_EXTERNALLY_VISIBLE __attribute__((externally_visible))
 #  else
-#    define COLI_ESR_EXTERNALLY_VISIBLE
+#    define LMA_ESR_EXTERNALLY_VISIBLE
 #  endif
 #elif defined(__GNUC__)
-#  define COLI_ESR_EXTERNALLY_VISIBLE __attribute__((externally_visible))
+#  define LMA_ESR_EXTERNALLY_VISIBLE __attribute__((externally_visible))
 #else
-#  define COLI_ESR_EXTERNALLY_VISIBLE
+#  define LMA_ESR_EXTERNALLY_VISIBLE
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
-#  define COLI_ESR_EXPORT COLI_ESR_EXTERNALLY_VISIBLE __attribute__((used))
+#  define LMA_ESR_EXPORT LMA_ESR_EXTERNALLY_VISIBLE __attribute__((used))
 #else
-#  define COLI_ESR_EXPORT
+#  define LMA_ESR_EXPORT
 #endif
 
-/* The built-in on-disk/mmap backend, defined in the COLI_V4_UNIT_EXPERT_STORE_AUTO
+/* The built-in on-disk/mmap backend, defined in the LMA_V4_UNIT_EXPERT_STORE_AUTO
  * amalgamation unit of deepseek_v4.c. Declared here (not via its header, which
  * is a large amalgamated translation unit) so this module stays standalone. */
-int coli_v4_expert_store_open_planned(
-    ColiV4Engine *engine,
-    const ColiDeepSeekV4Config *config,
-    const ColiDeepSeekV4ExpertStoreOptions *options,
-    ColiExpertStore **output,
+int lma_v4_expert_store_open_planned(
+    LmaV4Engine *engine,
+    const LmaDeepSeekV4Config *config,
+    const LmaDeepSeekV4ExpertStoreOptions *options,
+    LmaExpertStore **output,
     char *error, size_t error_size);
 
-#define COLI_EXPERT_STORE_MAX_BACKENDS 8
+#define LMA_EXPERT_STORE_MAX_BACKENDS 8
 
 static struct {
     const char *name;
-    ColiExpertStoreBackendOpenFn open_fn;
-} g_backends[COLI_EXPERT_STORE_MAX_BACKENDS];
+    LmaExpertStoreBackendOpenFn open_fn;
+} g_backends[LMA_EXPERT_STORE_MAX_BACKENDS];
 static int g_backend_count;
 
-COLI_ESR_EXPORT
-int coli_expert_store_backend_register(const char *name,
-                                       ColiExpertStoreBackendOpenFn open_fn) {
+LMA_ESR_EXPORT
+int lma_expert_store_backend_register(const char *name,
+                                       LmaExpertStoreBackendOpenFn open_fn) {
     if (!name || !open_fn) return -1;
     for (int i = 0; i < g_backend_count; i++) {
         if (strcmp(g_backends[i].name, name) == 0) {
@@ -63,21 +63,21 @@ int coli_expert_store_backend_register(const char *name,
             return 0;
         }
     }
-    if (g_backend_count >= COLI_EXPERT_STORE_MAX_BACKENDS) return -1;
+    if (g_backend_count >= LMA_EXPERT_STORE_MAX_BACKENDS) return -1;
     g_backends[g_backend_count].name = name;
     g_backends[g_backend_count].open_fn = open_fn;
     g_backend_count++;
     return 0;
 }
 
-COLI_ESR_EXPORT
-int coli_expert_store_backend_count(void) {
+LMA_ESR_EXPORT
+int lma_expert_store_backend_count(void) {
     return g_backend_count;
 }
 
-COLI_ESR_EXPORT
-ColiExpertStoreBackendOpenFn
-coli_expert_store_backend_lookup(const char *name) {
+LMA_ESR_EXPORT
+LmaExpertStoreBackendOpenFn
+lma_expert_store_backend_lookup(const char *name) {
     if (!name) return NULL;
     for (int i = 0; i < g_backend_count; i++)
         if (strcmp(g_backends[i].name, name) == 0)
@@ -85,21 +85,21 @@ coli_expert_store_backend_lookup(const char *name) {
     return NULL;
 }
 
-COLI_ESR_EXPORT
-int coli_expert_store_backend_open_selected(
-    ColiV4Engine *engine,
-    const ColiDeepSeekV4Config *config,
-    const ColiDeepSeekV4ExpertStoreOptions *options,
-    ColiExpertStore **output,
+LMA_ESR_EXPORT
+int lma_expert_store_backend_open_selected(
+    LmaV4Engine *engine,
+    const LmaDeepSeekV4Config *config,
+    const LmaDeepSeekV4ExpertStoreOptions *options,
+    LmaExpertStore **output,
     char *error, size_t error_size) {
-    const char *name = getenv("COLI_EXPERT_STORE");
+    const char *name = getenv("LMA_EXPERT_STORE");
     if (!name || !*name) name = "auto";
-    ColiExpertStoreBackendOpenFn fn = coli_expert_store_backend_lookup(name);
+    LmaExpertStoreBackendOpenFn fn = lma_expert_store_backend_lookup(name);
     if (!fn) {
         if (error && error_size)
             snprintf(error, error_size,
                      "expert store backend '%s' is not registered "
-                     "(set COLI_EXPERT_STORE to a linked backend; "
+                     "(set LMA_EXPERT_STORE to a linked backend; "
                      "default is 'auto')",
                      name);
         return -1;
@@ -108,9 +108,9 @@ int coli_expert_store_backend_open_selected(
 }
 
 /* Register the built-in on-disk/mmap backend at static-link time so the
- * default (COLI_EXPERT_STORE unset) path is unchanged from before this seam. */
+ * default (LMA_EXPERT_STORE unset) path is unchanged from before this seam. */
 __attribute__((constructor))
-static void coli_register_auto_backend(void) {
-    coli_expert_store_backend_register("auto",
-                                       coli_v4_expert_store_open_planned);
+static void lma_register_auto_backend(void) {
+    lma_expert_store_backend_register("auto",
+                                       lma_v4_expert_store_open_planned);
 }

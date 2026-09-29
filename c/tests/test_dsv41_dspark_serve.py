@@ -6,7 +6,7 @@ turns it on, and this drives both paths.
 
 DSpark proposes tokens and the main model verifies them in one forward. The whole
 design rests on one property: what comes out has to be what would have come out
-without it. This drives `coli serve` twice over the same prompt, once with drafts on
+without it. This drives `lmatomic serve` twice over the same prompt, once with drafts on
 and once with V41_DSPARK=0, and compares the text.
 
 The tiny fixture's draft head is random, so almost nothing it proposes is accepted --
@@ -16,7 +16,7 @@ positions that were never committed, the two runs would part company within a fe
 tokens.
 
 Needs a V4.1 container with a DSpark head and a tokenizer. CI builds one with
-tools/make_dsv41_tiny.py; set COLI_DSV41_FIXTURE to it.
+tools/make_dsv41_tiny.py; set LMA_DSV41_FIXTURE to it.
 """
 import json
 import os
@@ -29,7 +29,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-FIXTURE = Path(os.environ.get("COLI_DSV41_FIXTURE", ""))
+FIXTURE = Path(os.environ.get("LMA_DSV41_FIXTURE", ""))
 PROMPT = "abcabcabcabcabc"
 TOKENS = 12
 
@@ -55,25 +55,25 @@ def completion(drafts):
     """One turn through the gateway, with drafting on or off. Returns (text, log)."""
     port = free_port()
     # V41_STATS: the per-turn "N of M drafts accepted" line is what this test reads,
-    # and it is off by default so that `coli chat` does not print accounting between
+    # and it is off by default so that `lmatomic chat` does not print accounting between
     # the question and the answer. A test that measures asks to be told.
     environment = {**os.environ, "V41_DSPARK": "1" if drafts else "0", "V41_STATS": "1"}
     process = subprocess.Popen(
-        [sys.executable, str(HERE / "coli"), "serve", "--model", str(FIXTURE),
+        [sys.executable, str(HERE / "lmatomic"), "serve", "--model", str(FIXTURE),
          "--port", str(port), "--cap", "4"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment)
     try:
         deadline = time.time() + 180
         while True:
             if time.time() > deadline:
-                raise RuntimeError("coli serve did not come up in 180 s")
+                raise RuntimeError("lmatomic serve did not come up in 180 s")
             try:
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=2) as r:
                     model = json.load(r)["data"][0]["id"]
                 break
             except Exception:
                 if process.poll() is not None:
-                    raise RuntimeError("coli serve exited early")
+                    raise RuntimeError("lmatomic serve exited early")
                 time.sleep(1)
         body = json.dumps({"model": model, "prompt": PROMPT,
                            "max_tokens": TOKENS, "temperature": 0.0}).encode()
@@ -91,7 +91,7 @@ def completion(drafts):
     return answer["choices"][0]["text"], output or ""
 
 
-@unittest.skipUnless(has_draft_head(), "COLI_DSV41_FIXTURE has no DSpark head")
+@unittest.skipUnless(has_draft_head(), "LMA_DSV41_FIXTURE has no DSpark head")
 @unittest.skipUnless((HERE / "deepseek_v41").exists() or (HERE / "deepseek_v41.exe").exists(),
                      "deepseek_v41 engine is not built")
 class Dsv41DsparkServeTest(unittest.TestCase):

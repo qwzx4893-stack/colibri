@@ -64,8 +64,8 @@
  * engine consumer must do the equivalent. The strictly scalar entry points
  * (rans_decode_stream / RANS_PATH_SCALAR) never over-read.
  */
-#ifndef COLI_RANS_H
-#define COLI_RANS_H
+#ifndef LMA_RANS_H
+#define LMA_RANS_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1148,4 +1148,4 @@ static rans_err rans_record_decode_packed(const rans_record *rec, const rans_tab
     return RANS_OK;
 }
 
-#endif /* COLI_RANS_H */
+#endif /* LMA_RANS_H */

@@ -56,10 +56,10 @@ typedef struct {
                            * (GLM: 256 expert x 78 layer x 3 x 2) la scansione lineare
                            * costava decine di secondi/token (misurato sul primo run reale) */
     int        hcap;
-    /* FORMAT METADATA STAMP (reference impl, see colibri.c's qt_verify_fmt_stamp):
+    /* FORMAT METADATA STAMP (reference impl, see glm52.c's qt_verify_fmt_stamp):
      * per-tensor {name -> format NAME string} pairs collected from every shard's
-     * __metadata__["colibri.fmt"] JSON blob (safetensors __metadata__ values are
-     * always strings, so colibri.fmt's value is itself JSON text, parsed a
+     * __metadata__["lma.fmt"] JSON blob (safetensors __metadata__ values are
+     * always strings, so lma.fmt's value is itself JSON text, parsed a
      * second time -- see st_init_multi below). Small in practice (only the
      * tensors a stamping tool selected, a subset of S->t), so a flat array +
      * linear st_fmt_stamp() lookup is fine; this is a reference implementation,
@@ -302,8 +302,8 @@ static int st_direct_fd_rep(shards *S, int fd, int rep) {
  * so every pread is valid on any copy. Missing or divergent files simply stay
  * on the primary (a mirror may be partial, e.g. a smaller SSD holding only the
  * expert shards). Returns the number of accepted files; a dir contributing 0
- * files claims no replica slot. Mirrors are NEVER written to: .coli_usage /
- * .coli_kv keep deriving from the primary alone. */
+ * files claims no replica slot. Mirrors are NEVER written to: .lma_usage /
+ * .lma_kv keep deriving from the primary alone. */
 static void st_mirror_reset(shards *S) {           /* re-init: drop every replica */
     for (int r = 0; r < S->nrep; r++) for (int i = 0; i < S->nfd; i++) {
         if (S->mfds[r][i] >= 0) close(S->mfds[r][i]);
@@ -400,9 +400,9 @@ static void st_pread_full(int fd, void *buf, int64_t n, int64_t off, const char 
  * (q_a/q_b/kv_a/kv_b_proj, o_proj, shared-expert and dense-MLP gate/up/down),
  * NEVER the tens of thousands of routed-expert tensors a large MoE model
  * carries (tools/repack_fp8_passthrough.py never stamps routed experts). A
- * container whose combined __metadata__["colibri.fmt"] entries exceed this
+ * container whose combined __metadata__["lma.fmt"] entries exceed this
  * cap is not using the convention as designed -- CAP, not a switch to a hash
- * table. Precisely what this bounds: the colibri.fmt blob is json_parse'd in
+ * table. Precisely what this bounds: the lma.fmt blob is json_parse'd in
  * FULL before the per-entry check below fires, so the parse allocation
  * itself is bounded by ST_MAX_HEADER (the shard-header size cap), not by
  * this constant -- what the cap bounds is the PERSISTENT fmt_name/fmt_val
@@ -411,14 +411,14 @@ static void st_pread_full(int fd, void *buf, int64_t n, int64_t off, const char 
  * rather than carry an absurd stamp map forward. */
 #define ST_FMT_STAMP_MAX 4096
 
-/* Parses one shard's __metadata__["colibri.fmt"] value (a safetensors metadata
- * value is always a plain string, so colibri.fmt's VALUE is itself JSON text --
+/* Parses one shard's __metadata__["lma.fmt"] value (a safetensors metadata
+ * value is always a plain string, so lma.fmt's VALUE is itself JSON text --
  * a flat {tensor_name: format_name} object -- parsed a second time here) and
  * appends every entry to S->fmt_name/fmt_val. Absent __metadata__, or a
- * __metadata__ without a colibri.fmt key, is NOT an error: that's simply an
+ * __metadata__ without a lma.fmt key, is NOT an error: that's simply an
  * unstamped container, and byte-arithmetic inference alone decides, exactly as
- * before this feature existed (see qt_verify_fmt_stamp in colibri.c). A
- * colibri.fmt key that IS present but doesn't parse into that shape is refused
+ * before this feature existed (see qt_verify_fmt_stamp in glm52.c). A
+ * lma.fmt key that IS present but doesn't parse into that shape is refused
  * loudly -- same "untrusted container" discipline qt_resolve_fmt applies
  * elsewhere: a stamp the engine cannot make sense of must not be silently
  * ignored (that would be indistinguishable from a real mismatch going
@@ -430,7 +430,7 @@ static void st_pread_full(int fd, void *buf, int64_t n, int64_t off, const char 
  * time, while the engine is still building its tensor index, before it has
  * resolved a single tensor against the model's architecture or read one byte
  * of weight data. This is coarser-grained and EARLIER than
- * qt_resolve_fmt/qt_verify_fmt_stamp's own per-tensor refusals in colibri.c
+ * qt_resolve_fmt/qt_verify_fmt_stamp's own per-tensor refusals in glm52.c
  * (which fire much later, during weight load, once a specific tensor's
  * [O,I] shape and stamp are both known): a malformed stamp anywhere in any
  * shard aborts the ENTIRE model load immediately, before the user ever sees
@@ -441,20 +441,20 @@ static void st_pread_full(int fd, void *buf, int64_t n, int64_t off, const char 
 static void st_fmt_stamp_ingest(shards *S, jval *root, const char *shard_path) {
     jval *meta = json_get(root, "__metadata__");
     if (!meta || meta->t != J_OBJ) return;                /* no metadata object: unstamped, fine */
-    jval *stamp = json_get(meta, "colibri.fmt");
+    jval *stamp = json_get(meta, "lma.fmt");
     if (!stamp) return;                                    /* no stamp key: unstamped, fine */
     if (stamp->t != J_STR) {
-        fprintf(stderr, "%s: __metadata__[\"colibri.fmt\"] is not a JSON string -- malformed stamp, refusing (untrusted container)\n",
+        fprintf(stderr, "%s: __metadata__[\"lma.fmt\"] is not a JSON string -- malformed stamp, refusing (untrusted container)\n",
                 shard_path); exit(1); }
     char *arena2 = NULL;
     jval *inner = json_parse(stamp->str, &arena2);
     if (!inner || inner->t != J_OBJ) {
-        fprintf(stderr, "%s: __metadata__[\"colibri.fmt\"] does not parse as a JSON object -- malformed stamp, refusing (untrusted container)\n",
+        fprintf(stderr, "%s: __metadata__[\"lma.fmt\"] does not parse as a JSON object -- malformed stamp, refusing (untrusted container)\n",
                 shard_path); exit(1); }
     for (int i = 0; i < inner->len; i++) {
         jval *v = inner->kids[i];
         if (v->t != J_STR) {
-            fprintf(stderr, "%s: colibri.fmt entry '%s' is not a string -- malformed stamp, refusing (untrusted container)\n",
+            fprintf(stderr, "%s: lma.fmt entry '%s' is not a string -- malformed stamp, refusing (untrusted container)\n",
                     shard_path, inner->keys[i]); exit(1); }
         /* DUPLICATE CLAIMS (user-ratified design, register D8): at most one
          * DISTINCT format claim per tensor name, container-wide. An entry
@@ -480,12 +480,12 @@ static void st_fmt_stamp_ingest(shards *S, jval *root, const char *shard_path) {
             if (!strcmp(S->fmt_name[k], inner->keys[i])) { dup = k; break; }
         if (dup >= 0) {
             if (!strcmp(S->fmt_val[dup], v->str)) continue;   /* agreeing duplicate: keep one */
-            fprintf(stderr, "%s: __metadata__[\"colibri.fmt\"] stamps tensor '%s' as '%s', but an "
+            fprintf(stderr, "%s: __metadata__[\"lma.fmt\"] stamps tensor '%s' as '%s', but an "
                     "earlier shard's map already stamped it '%s' -- conflicting format claims, "
                     "refusing (untrusted container)\n",
                     shard_path, inner->keys[i], v->str, S->fmt_val[dup]); exit(1); }
         if (S->fmt_n >= ST_FMT_STAMP_MAX) {
-            fprintf(stderr, "%s: __metadata__[\"colibri.fmt\"] stamps more than %d tensor names across "
+            fprintf(stderr, "%s: __metadata__[\"lma.fmt\"] stamps more than %d tensor names across "
                     "this container's shards -- stamps are a resident-tensor convention (docs/FORMATS.md), "
                     "not a bulk migration path; a container stamping this many names is malformed, "
                     "refusing (untrusted container)\n",
@@ -505,11 +505,11 @@ static void st_fmt_stamp_ingest(shards *S, jval *root, const char *shard_path) {
          * the duplicate-scan strcmp above on the very next entry, and a NULL fmt_val is
          * worse -- the process would exit 0 with no diagnostic, st_fmt_stamp() would then
          * return NULL for a tensor that IS stamped, and the container would silently read
-         * as unstamped: qt_verify_fmt_stamp's TRUST-VERIFY-REFUSE check (colibri.c) is a
+         * as unstamped: qt_verify_fmt_stamp's TRUST-VERIFY-REFUSE check (glm52.c) is a
          * no-op on an unstamped tensor, so one failed allocation would quietly disable it
          * on an untrusted-container path. Refuse instead. */
         char *sn = strdup(inner->keys[i]), *sv = strdup(v->str);
-        if (!sn || !sv) { fprintf(stderr, "%s: OOM duplicating __metadata__[\"colibri.fmt\"] stamp "
+        if (!sn || !sv) { fprintf(stderr, "%s: OOM duplicating __metadata__[\"lma.fmt\"] stamp "
                     "for tensor '%s' -- refusing (a dropped stamp would silently disable format "
                     "verification for this tensor)\n", shard_path, inner->keys[i]); exit(1); }
         S->fmt_name[S->fmt_n] = sn;
@@ -528,9 +528,9 @@ static void st_fmt_stamp_ingest(shards *S, jval *root, const char *shard_path) {
  * SCOPE: .qs-BACKED TENSORS ONLY. This function itself will happily look up
  * ANY name that got stamped -- st_fmt_stamp_ingest doesn't know or check
  * whether a stamped name belongs to a quantized (.qs-backed) tensor -- but
- * qt_from_disk (colibri.c) only ever CALLS this inside its `st_has(name+
+ * qt_from_disk (glm52.c) only ever CALLS this inside its `st_has(name+
  * ".qs")` branch, i.e. only for a tensor that already carries a quantized
- * scale sidecar. A colibri.fmt entry naming a raw f32/bf16 weight, a norm, a
+ * scale sidecar. A lma.fmt entry naming a raw f32/bf16 weight, a norm, a
  * router, or embed/lm_head is stored here like any other entry but never
  * looked up: it is silently ignored BY DESIGN, not an oversight -- the
  * convention exists to disambiguate a byte-count collision among quantized
@@ -641,7 +641,7 @@ static void st_scan_dir(const char *dir, char files[][1024], int *nf, int *added
  * (no duplication — unlike the dual-SSD mirror); a demand pread hits whichever
  * drive holds that shard, so concurrent expert loads parallelise across drives
  * and combined capacity is used. Scales to N drives. Metadata (config /
- * tokenizer / .coli_usage / .coli_kv) is read from snap_dir only. */
+ * tokenizer / .lma_usage / .lma_kv) is read from snap_dir only. */
 static void st_init_multi(shards *S, const char *snap_dir, const char *extra_dirs) {
     memset(S, 0, sizeof(*S));
     S->cap = 4096; S->t = calloc(S->cap, sizeof(st_tensor));
@@ -650,7 +650,7 @@ static void st_init_multi(shards *S, const char *snap_dir, const char *extra_dir
      * duplicate name across two shards would otherwise go unnoticed until AFTER both are
      * already appended to S->t -- by then the collision has already happened silently:
      * st_find() would return whichever shard was appended first, while a container-wide
-     * __metadata__["colibri.fmt"] stamp for that name (st_fmt_stamp_ingest above) would
+     * __metadata__["lma.fmt"] stamp for that name (st_fmt_stamp_ingest above) would
      * still apply uniformly. A directory blending two containers under the same tensor
      * names (e.g. an FP8 copy and an int8 copy of the same o_proj) would then silently read
      * one shard's bytes labeled with a format that describes the other's -- no error, no
@@ -770,7 +770,7 @@ static void st_init_multi(shards *S, const char *snap_dir, const char *extra_dir
              * ignored (an overlay shard superseding base-shard tensors, #1479). No index,
              * or an index that names neither shard, keeps the refusal: a directory
              * holding both would silently read one shard's bytes for this name while
-             * any __metadata__["colibri.fmt"] stamp for it still applies uniformly. This
+             * any __metadata__["lma.fmt"] stamp for it still applies uniformly. This
              * is intentionally NOT the same check as st_fmt_stamp_ingest's -- that one
              * only ever sees the small subset of names a stamping tool chose to
              * annotate; this one sees every tensor. */
@@ -790,7 +790,7 @@ static void st_init_multi(shards *S, const char *snap_dir, const char *extra_dir
                             fprintf(stderr, "%s: tensor '%s' is also indexed from shard '%s' -- duplicate "
                                     "tensor name across indexed shards, refusing (a directory holding both "
                                     "would silently read one shard's bytes for this name while any "
-                                    "__metadata__[\"colibri.fmt\"] stamp for it still applies uniformly).\n"
+                                    "__metadata__[\"lma.fmt\"] stamp for it still applies uniformly).\n"
                                     "  %s\n",
                                     files[fi], name, prev_path,
                                     ix.map ? (auth ? "model.safetensors.index.json maps it to a third shard; the index and the files disagree"
@@ -975,8 +975,8 @@ static void st_die_missing(shards *S, const char *name) {
                 fprintf(stderr,
                     "\n  model.safetensors.index.json does not list '%s': this checkpoint never had a\n"
                     "  tensor by that name. The engine running here expects one, so it is not this\n"
-                    "  checkpoint's engine. coli picks the engine from config.json -- run\n"
-                    "  `coli info --model <dir>` and check the family it names; without a config.json\n"
+                    "  checkpoint's engine. lmatomic picks the engine from config.json -- run\n"
+                    "  `lmatomic info --model <dir>` and check the family it names; without a config.json\n"
                     "  there is no family, and the files to copy next to the shards are config.json,\n"
                     "  tokenizer.json and model.safetensors.index.json from the model repo.\n", name);
             } else {
@@ -1167,7 +1167,7 @@ static int64_t st_read_scale_f32(shards *S, const char *name, float *out, int64_
  * skips its numel*esz==nbytes cross-check for dtype 3, because packed quant bytes
  * legitimately have numel != nbytes. So the caller MUST establish that its destination
  * is at least t->nbytes before calling. Today all callers do, by three routes:
- *   - colibri.c sizes the buffer from st_nbytes() itself, and qt_resolve_fmt validates
+ *   - glm52.c sizes the buffer from st_nbytes() itself, and qt_resolve_fmt validates
  *     both byte counts against [O,I];
  *   - kimi_k3.c makes the byte count the branch predicate (`if(t->nbytes==O*I ...)`),
  *     so identifying the format and validating it are the same act;
@@ -1331,7 +1331,7 @@ static void st_unmap_raw(st_mapped_raw *mapped) {
     mapped->nbytes = 0;
 }
 
-/* ---- per-shard mapping cache (opt-in: COLI_MAP_EXPERTS=1) --------------
+/* ---- per-shard mapping cache (opt-in: LMA_MAP_EXPERTS=1) --------------
  * One mapping per FILE, kept for the process lifetime (shards stay open for
  * the whole run, so there is nothing shorter-lived to tie the mapping to).
  * A failed mapping is remembered per fd so it is not retried on every call;
@@ -1343,7 +1343,7 @@ static signed char g_st_shard_tried[ST_MAX_MAPPED_FD];
 
 static int st_map_experts_enabled(void) {
     static int on = -1;
-    if (on < 0) { const char *e = getenv("COLI_MAP_EXPERTS"); on = (e && atoi(e)) ? 1 : 0; }
+    if (on < 0) { const char *e = getenv("LMA_MAP_EXPERTS"); on = (e && atoi(e)) ? 1 : 0; }
     return on;
 }
 
@@ -1353,7 +1353,7 @@ static int st_map_experts_enabled(void) {
  * of this both saw g_st_shard_tried[fd] == 0, both mapped the file, and one
  * leaked its mapping while a third could read g_st_shard_len[fd] as 0 through
  * an already-published base -- st_map_shard_range then rejects every range for
- * that shard. Latent only because COLI_MAP_EXPERTS is opt-in; #1350 proposes
+ * that shard. Latent only because LMA_MAP_EXPERTS is opt-in; #1350 proposes
  * flipping that default.
  *
  * Lock-free rather than the mutex qwen38_core.h uses for its lazy HITS table,

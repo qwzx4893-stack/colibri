@@ -21,8 +21,8 @@
  *
  * Run:  make tests/bench_topp && ./tests/bench_topp   (not in TEST_BINS -- not a gate)
  */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <math.h>

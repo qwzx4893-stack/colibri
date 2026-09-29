@@ -1,18 +1,18 @@
 /* Local expert-worker cluster: the wire protocol, the coordinator-side client (cluster_moe_batch)
  * and the worker loop (cluster_worker_run). Off unless workers are configured; POSIX only.
  *
- * Not a standalone header: colibri.c includes it in place, and the code below uses that
+ * Not a standalone header: glm52.c includes it in place, and the code below uses that
  * file's types and statics (Model, ESlot, QT, now_s, ...). Moving it out changes no
  * behaviour; the translation unit is byte-for-byte the same after preprocessing. */
-#ifndef COLIBRI_CLUSTER_H
-#define COLIBRI_CLUSTER_H
+#ifndef GLM52_CLUSTER_H
+#define GLM52_CLUSTER_H
 
 #if !defined(_WIN32)
 /* Expert-worker protocol. Headers use network-order u32 values; activation
  * bytes remain raw little-endian f32, matching the native engine ABI. One
  * request contains the routed batch-union for a layer. */
-#define COLI_CLUSTER_MAGIC "COLIEX01"
-#define COLI_CLUSTER_VERSION 1u
+#define LMA_CLUSTER_MAGIC "COLIEX01"
+#define LMA_CLUSTER_VERSION 1u
 static int cluster_io(int fd, void *buf, size_t n, int write_mode){
     char *p=(char*)buf;
     while(n){
@@ -94,8 +94,8 @@ static void cluster_moe_batch(Model *m,int layer,float *x,int S,float *out,
         }
         if(!n) continue;
         ClusterWorker *w=&g_cluster_workers[wi]; char magic[8]; uint32_t v;
-        if(cluster_io(w->fd,(void*)COLI_CLUSTER_MAGIC,8,1)) goto fail;
-        v=COLI_CLUSTER_VERSION; if(cluster_u32(w->fd,&v,1)) goto fail;
+        if(cluster_io(w->fd,(void*)LMA_CLUSTER_MAGIC,8,1)) goto fail;
+        v=LMA_CLUSTER_VERSION; if(cluster_u32(w->fd,&v,1)) goto fail;
         v=(uint32_t)layer; if(cluster_u32(w->fd,&v,1)) goto fail;
         v=(uint32_t)D; if(cluster_u32(w->fd,&v,1)) goto fail;
         v=(uint32_t)m->c.moe_inter; if(cluster_u32(w->fd,&v,1)) goto fail;
@@ -105,8 +105,8 @@ static void cluster_moe_batch(Model *m,int layer,float *x,int S,float *out,
             v=(uint32_t)items[j].nr; if(cluster_u32(w->fd,&v,1)) goto fail;
             if(cluster_io(w->fd,items[j].inputs,(size_t)items[j].nr*D*sizeof(float),1)) goto fail;
         }
-        if(cluster_io(w->fd,magic,8,0)||memcmp(magic,COLI_CLUSTER_MAGIC,8)) goto fail;
-        if(cluster_u32(w->fd,&v,0)||v!=COLI_CLUSTER_VERSION) goto fail;
+        if(cluster_io(w->fd,magic,8,0)||memcmp(magic,LMA_CLUSTER_MAGIC,8)) goto fail;
+        if(cluster_u32(w->fd,&v,0)||v!=LMA_CLUSTER_VERSION) goto fail;
         if(cluster_u32(w->fd,&v,0)||v!=0) goto fail;
         if(cluster_u32(w->fd,&v,0)||v!=(uint32_t)n) goto fail;
         for(int j=0;j<n;j++){
@@ -153,7 +153,7 @@ static int worker_expert_missing_tensor(Model *m,int layer,int eid,char *out,siz
 }
 static int cluster_worker_run(const char *snap,int port,int ebits,int dbits){
     Model m; memset(&m,0,sizeof(m)); m.ebits=ebits; m.dbits=dbits; load_cfg(&m.c,snap);
-    { const char *xd=getenv("COLI_MODEL_DIRS");        /* SPLIT: expert shards spread across N drives */
+    { const char *xd=getenv("LMA_MODEL_DIRS");        /* SPLIT: expert shards spread across N drives */
       st_init_multi(&m.S,snap,(xd&&*xd)?xd:NULL); }
     int nr_layers=m.c.n_layers+1; ESlot *cache=calloc((size_t)nr_layers,sizeof(ESlot));
     for(int i=0;i<nr_layers;i++) cache[i].eid=-1;
@@ -167,7 +167,7 @@ static int cluster_worker_run(const char *snap,int port,int ebits,int dbits){
         for(;;){
             char magic[8]; uint32_t v,layer,D,I,n;
             if(cluster_io(cfd,magic,8,0)) break;
-            if(memcmp(magic,COLI_CLUSTER_MAGIC,8)||cluster_u32(cfd,&v,0)||v!=COLI_CLUSTER_VERSION||
+            if(memcmp(magic,LMA_CLUSTER_MAGIC,8)||cluster_u32(cfd,&v,0)||v!=LMA_CLUSTER_VERSION||
                cluster_u32(cfd,&layer,0)||cluster_u32(cfd,&D,0)||cluster_u32(cfd,&I,0)||cluster_u32(cfd,&n,0)||
                D!=(uint32_t)m.c.hidden||I!=(uint32_t)m.c.moe_inter||layer>=(uint32_t)nr_layers||n<1||n>64){
                 close(cfd); cfd=-1; break;
@@ -180,7 +180,7 @@ static int cluster_worker_run(const char *snap,int port,int ebits,int dbits){
                 if(cluster_io(cfd,items[j].inputs,(size_t)nr*D*sizeof(float),0)){bad=1;break;}
             }
             if(bad){ for(uint32_t j=0;j<n;j++)free(items[j].inputs); free(items); close(cfd); cfd=-1; break; }
-            v=COLI_CLUSTER_VERSION; if(cluster_io(cfd,(void*)COLI_CLUSTER_MAGIC,8,1)||cluster_u32(cfd,&v,1)) break;
+            v=LMA_CLUSTER_VERSION; if(cluster_io(cfd,(void*)LMA_CLUSTER_MAGIC,8,1)||cluster_u32(cfd,&v,1)) break;
             v=0; if(cluster_u32(cfd,&v,1)) break; v=n; if(cluster_u32(cfd,&v,1)) break;
             ESlot *slot=&cache[layer];
             for(uint32_t j=0;j<n;j++){
@@ -212,4 +212,4 @@ static int cluster_worker_run(const char *snap,int port,int ebits,int dbits){
 }
 #endif
 
-#endif /* COLIBRI_CLUSTER_H */
+#endif /* GLM52_CLUSTER_H */

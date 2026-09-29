@@ -8,15 +8,15 @@
  * already took.
  *
  * Re-implements the OLD scalar reductions inline and calls the REAL attention
- * path via the include-colibri.c pattern — but since the reductions live inline
+ * path via the include-glm52.c pattern — but since the reductions live inline
  * in the MLA attention block (not a callable), this bench re-implements both
- * the OLD (scalar) and NEW (SIMD) reductions verbatim from the colibri.c source
+ * the OLD (scalar) and NEW (SIMD) reductions verbatim from the glm52.c source
  * and times them back-to-back at GLM-5.2 dimensions (kvl=512, realistic nt).
  *
  * Run:  make tests/bench_mla_simd && ./tests/bench_mla_simd   (not a gate)
  */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 #include <stdint.h>
 #include <string.h>
@@ -24,7 +24,7 @@
 static uint32_t rs=0x2545F491u;
 static uint32_t xr(void){ rs^=rs<<13; rs^=rs>>17; rs^=rs<<5; return rs; }
 
-/* ---- OLD: verbatim scalar reductions (pre-#442 colibri.c:2459, 2467) ---- */
+/* ---- OLD: verbatim scalar reductions (pre-#442 glm52.c:2459, 2467) ---- */
 static void score_scalar(const float *qabs, const float *Lt, int kvl, float *out){
     float a=0;
     for(int i=0;i<kvl;i++) a+=qabs[i]*Lt[i];
@@ -34,7 +34,7 @@ static void vmix_scalar(float *clat, const float *Lt, int kvl, float a){
     for(int i=0;i<kvl;i++) clat[i]+=a*Lt[i];
 }
 
-/* ---- NEW: verbatim SIMD reductions (post-#442 colibri.c, AVX2 path) ---- */
+/* ---- NEW: verbatim SIMD reductions (post-#442 glm52.c, AVX2 path) ---- */
 #if defined(__AVX2__)
 static void score_simd(const float *qabs, const float *Lt, int kvl, float *out){
     float a=0; int i=0;
@@ -60,7 +60,7 @@ static void vmix_simd(float *clat, const float *Lt, int kvl, float a){
 #define vmix_simd vmix_scalar
 #endif
 
-/* now_s() comes from colibri.c (included above) */
+/* now_s() comes from glm52.c (included above) */
 
 int main(void){
     /* GLM-5.2 dims: kvl=512, and nt (context tokens per head) at a realistic

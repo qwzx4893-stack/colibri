@@ -22,7 +22,7 @@ class MirrorPlannerTest(unittest.TestCase):
         self.split = self.root / "split"
         self.model.mkdir()
         self.split.mkdir()
-        self.usage = self.model / ".coli_usage"
+        self.usage = self.model / ".lma_usage"
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -177,7 +177,7 @@ class MirrorPlannerTest(unittest.TestCase):
 
     def test_verify_rejects_receipt_path_traversal(self):
         self.mirror.mkdir()
-        receipt = {"schema": "colibri.partial-mirror.v1", "files": [{
+        receipt = {"schema": "lmatomic.partial-mirror.v1", "files": [{
             "name": "../outside.safetensors", "size": 1, "sha256": "0" * 64,
         }]}
         (self.mirror / RECEIPT).write_text(json.dumps(receipt), encoding="utf-8")

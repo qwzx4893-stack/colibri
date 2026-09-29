@@ -10,7 +10,7 @@ import shutil
 
 # Files (relative to c/) to remove if present.
 FILES = [
-    "colibri", "colibri.exe",
+    "glm52", "glm52.exe",
     "inkling", "inkling.exe",
     "kimi_k3", "kimi_k3.exe",
     "olmoe", "olmoe.exe",
@@ -23,16 +23,16 @@ FILES = [
     "qwen36", "qwen36.exe",
     "qwen38", "qwen38.exe",
     "glm53", "glm53.exe",
-    "glm", "glm.exe",                       # pre-rename name of the colibri engine
+    "glm", "glm.exe",                       # pre-rename name of the lmatomic engine
     "iobench", "iobench.exe",
     "backend_cuda.o", "backend_loader.o",
     "backend_cuda_test", "backend_cuda_test.exe",
     "mxfp4_expert_cuda_test", "mxfp4_expert_cuda_test.exe",
     "backend_cuda_bench", "backend_cuda_bench.exe",
     "backend_metal.o", "backend_metal_test",
-    "coli_cuda.dll", "coli_cuda.lib", "coli_cuda.exp",
+    "lma_cuda.dll", "lma_cuda.lib", "lma_cuda.exp",
     # hipcc emits an import library, export file and PDB alongside the DLL.
-    "coli_hip.dll", "coli_hip.lib", "coli_hip.exp", "coli_hip.pdb",
+    "lma_hip.dll", "lma_hip.lib", "lma_hip.exp", "lma_hip.pdb",
     "deepseek_v4", "deepseek_v4.exe", "deepseek_v4.cflags", "deepseek_v4.cudaflags",
     "deepseek_v41", "deepseek_v41.exe",
     "native_quant.o", "native_quant_parallel.o", "native_quant_dual.o",
@@ -51,9 +51,9 @@ FILES = [
 # KEEP_EXT is the safety rail: a source file must never match. Everything the
 # repo tracks under tests/ carries one of these extensions, and directories
 # (tests/fixtures/) are skipped by the isfile() check. Object files are not in
-# it, so COLI_V4_UNIT_*.o is removed by the same rule rather than a second one.
+# it, so LMA_V4_UNIT_*.o is removed by the same rule rather than a second one.
 ARTIFACT_GLOBS = ["tests/test_*", "tests/bench_*", "tests/fuzz_*",
-                  "COLI_V4_UNIT_*.o"]
+                  "LMA_V4_UNIT_*.o"]
 KEEP_EXT = (".c", ".h", ".cc", ".cpp", ".cu", ".mm", ".py", ".txt", ".json",
             ".md", ".bin", ".sh", ".toml", ".yml", ".yaml")
 # Directories to remove.

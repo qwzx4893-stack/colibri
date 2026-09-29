@@ -75,9 +75,9 @@ class ServeEngine:
     def __init__(self, engine, argv, env, log_prefix=True, reuse=True):
         env = dict(os.environ, **env)
         if log_prefix:
-            env["COLI_PREFIX_LOG"] = "1"
+            env["LMA_PREFIX_LOG"] = "1"
         if not reuse:
-            env["COLI_KV_PREFIX"] = "0"
+            env["LMA_KV_PREFIX"] = "0"
         self.p = subprocess.Popen([str(engine)] + [str(a) for a in argv], env=env,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, bufsize=0)
@@ -218,7 +218,7 @@ class PrefixReuseContract:
         log = off.close()
 
         self.assertNotIn("[PREFIX] reusing", log,
-                         "COLI_KV_PREFIX=0 did not disable reuse")
+                         "LMA_KV_PREFIX=0 did not disable reuse")
         self.assertEqual(with_reuse, without,
                          "reuse changed the answer on the same engine")
 

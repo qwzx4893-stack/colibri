@@ -9,7 +9,7 @@
  * <|end_of_msg|> are special tokens; everything else is ordinary text, so the
  * round trip below (encode via chat_build_wire, decode id-by-id) must
  * reproduce the reference byte stream exactly. */
-#define main coli_k3_main_unused
+#define main lma_k3_main_unused
 #include "../kimi_k3.c"
 #undef main
 

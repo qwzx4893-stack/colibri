@@ -15,8 +15,8 @@
  * FP note: the kernel sums in f32 while the format reference sums in double, so
  * we compare those two against a relative epsilon. Forced-SSE builds separately
  * require byte identity with the scalar f32 operation tree. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 static uint32_t rng_state=0xC0FFEEu;
@@ -54,7 +54,7 @@ static void ref_grouped(double *y, double *mag, const float *x, const uint8_t *q
 /* Scalar contract: this is the scalar grouped kernel's operation tree, not a
  * higher-precision format reference. The forced-SSE builds compare its output
  * byte for byte with the four-output-row SIMD path. */
-#ifdef COLI_I4_GROUPED_SCALAR_EXACT
+#ifdef LMA_I4_GROUPED_SCALAR_EXACT
 static void ref_grouped_scalar(float *y,const float *x,const uint8_t *q4,
                                const float *scale,int S,int I,int O,int gs){
     int rb=(I+1)/2,ng=(I+gs-1)/gs;
@@ -89,13 +89,13 @@ static int check(const char *name, int S, int I, int O, int gs, int fill_edges){
     float *scale=malloc((size_t)O*ng*sizeof(float));
     float *x=malloc((size_t)S*I*sizeof(float));
     float *y=malloc((size_t)S*O*sizeof(float));
-#ifdef COLI_I4_GROUPED_SCALAR_EXACT
+#ifdef LMA_I4_GROUPED_SCALAR_EXACT
     float *ys=malloc((size_t)S*O*sizeof(float));
 #endif
     double *yr=malloc((size_t)S*O*sizeof(double));
     double *ym=malloc((size_t)S*O*sizeof(double));
     if(!q4||!scale||!x||!y||!yr||!ym
-#ifdef COLI_I4_GROUPED_SCALAR_EXACT
+#ifdef LMA_I4_GROUPED_SCALAR_EXACT
        ||!ys
 #endif
       ){ fprintf(stderr,"%s: OOM\n",name); return 1; }
@@ -112,7 +112,7 @@ static int check(const char *name, int S, int I, int O, int gs, int fill_edges){
 
     matmul_i4_grouped(y,x,q4,scale,S,I,O,gs);
     ref_grouped(yr,ym,x,q4,scale,S,I,O,gs);
-#ifdef COLI_I4_GROUPED_SCALAR_EXACT
+#ifdef LMA_I4_GROUPED_SCALAR_EXACT
     ref_grouped_scalar(ys,x,q4,scale,S,I,O,gs);
 #endif
 
@@ -127,7 +127,7 @@ static int check(const char *name, int S, int I, int O, int gs, int fill_edges){
             bad++;
         }
     }
-#ifdef COLI_I4_GROUPED_SCALAR_EXACT
+#ifdef LMA_I4_GROUPED_SCALAR_EXACT
     if(memcmp(y,ys,(size_t)S*O*sizeof(float))!=0){
         int first=0;
         while(first<S*O && memcmp(y+first,ys+first,sizeof(float))==0) first++;
@@ -141,7 +141,7 @@ static int check(const char *name, int S, int I, int O, int gs, int fill_edges){
     if(bad){ fprintf(stderr,"%s: FAIL (%d/%d mismatched, worst rel %.3g)\n",name,bad,S*O,worst); return 1; }
     printf("  %-42s ok (S=%d I=%d O=%d gs=%d ng=%d, worst rel %.2g%s)\n",
            name,S,I,O,gs,ng,worst,
-#ifdef COLI_I4_GROUPED_SCALAR_EXACT
+#ifdef LMA_I4_GROUPED_SCALAR_EXACT
            ", bit-exact vs scalar"
 #else
            ""
@@ -161,7 +161,7 @@ static int check(const char *name, int S, int I, int O, int gs, int fill_edges){
  * On AVX2, a PARTIAL last group falls to scalar code and the fused body can
  * round differently from the single-matrix one. The forced-SSE rows4 path has
  * no horizontal reduction or group tail and is exact for those shapes too. */
-#ifdef COLI_HAVE_GROUPED_PAIR
+#ifdef LMA_HAVE_GROUPED_PAIR
 static int check_pair(const char *name, int S, int I, int O, int gs){
     int rb=(I+1)/2, ng=(I+gs-1)/gs;
     uint8_t *qg=malloc((size_t)O*rb), *qu=malloc((size_t)O*rb);
@@ -197,7 +197,7 @@ static int check_pair(const char *name, int S, int I, int O, int gs){
         if(yg[i]!=rg[i]||yu[i]!=ru[i]) exact=0;
     }
     int require_exact=I%gs==0;
-#ifdef COLI_I4_GROUPED_SCALAR_EXACT
+#ifdef LMA_I4_GROUPED_SCALAR_EXACT
     require_exact=1;
     exact=memcmp(yg,rg,(size_t)S*O*sizeof(float))==0
        && memcmp(yu,ru,(size_t)S*O*sizeof(float))==0;
@@ -231,7 +231,7 @@ static int check_rows4_unpack(void){
             for(size_t i=0;i<n;i++) q4[i]=(uint8_t)(value+37*i);
             for(int byte=0;byte<rb;byte++){
                 __m128 lo,hi; float l[4],h[4];
-                colibri_sse41_i4_rows4(q4,rb,o,byte,&lo,&hi);
+                lma_sse41_i4_rows4(q4,rb,o,byte,&lo,&hi);
                 _mm_storeu_ps(l,lo); _mm_storeu_ps(h,hi);
                 for(int row=0;row<4;row++){
                     unsigned packed=q4[(o+row)*rb+byte];
@@ -282,7 +282,7 @@ int main(void){
     fail|=check("gs=64, batch S=8",                   8, 320, 6, 64, 0);
     fail|=check("one-byte rows, odd I=1",             1,   1, 4, 2, 0);
 
-#ifdef COLI_HAVE_GROUPED_PAIR
+#ifdef LMA_HAVE_GROUPED_PAIR
     printf("test_i4_grouped: matmul_i4_grouped_pair (fused gate+up) vs two separate calls\n");
     fail|=check_pair("pair: gs=64, I multiple of gs",  2, 512, 8, 64);
     fail|=check_pair("pair: gs=64, partial last group",2, 200, 4, 64);

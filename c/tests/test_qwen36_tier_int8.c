@@ -40,8 +40,8 @@ static void drain(void) {
 
 int main(void) {
     enum { NL = 2, NE = 4, D = 64, IH = 32, TOPK = 2 };
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", "0", 1);
     setenv("QT_NO_WARMSTART", "1", 1);
 
     /* ---- 1. container int8: il tier deve accendersi e promuovere ---- */

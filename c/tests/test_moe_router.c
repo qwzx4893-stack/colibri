@@ -56,7 +56,7 @@ static void check_matches_reference(int E, int K, int use_bias, int use_keep) {
         if (rep % 7 == 0) for (int e = 0; e + 1 < E; e += 2) score[e + 1] = score[e];   /* ties */
         int nref;
         ref_topk(score, use_bias ? bias : NULL, use_keep ? keep : NULL, E, K, a, &nref);
-        int got = coli_router_topk(score, use_bias ? bias : NULL, use_keep ? keep : NULL,
+        int got = lma_router_topk(score, use_bias ? bias : NULL, use_keep ? keep : NULL,
                                    E, K, b, v, 0, 0);
         assert(got == nref);
         for (int k = 0; k < K; k++) {
@@ -87,17 +87,17 @@ int main(void) {
 
     /* ties go to the lowest expert id */
     { float s[6] = {1.f, 3.f, 3.f, 3.f, 2.f, 3.f}; int idx[3];
-      coli_router_topk(s, NULL, NULL, 6, 3, idx, NULL, 0, 0);
+      lma_router_topk(s, NULL, NULL, 6, 3, idx, NULL, 0, 0);
       assert(idx[0] == 1 && idx[1] == 2 && idx[2] == 3); }
 
     /* bias changes the ranking but the caller keeps the raw score */
     { float s[4] = {0.9f, 0.5f, 0.4f, 0.1f}, bz[4] = {0.f, 0.f, 0.6f, 0.f}; int idx[2];
-      coli_router_topk(s, bz, NULL, 4, 2, idx, NULL, 0, 0);
+      lma_router_topk(s, bz, NULL, 4, 2, idx, NULL, 0, 0);
       assert(idx[0] == 2 && idx[1] == 0); }
 
     /* -inf masks a candidate out */
     { float s[4] = {-INFINITY, 0.2f, -INFINITY, 0.1f}; int idx[4];
-      int n = coli_router_topk(s, NULL, NULL, 4, 4, idx, NULL, 0, 0);
+      int n = lma_router_topk(s, NULL, NULL, 4, 4, idx, NULL, 0, 0);
       assert(n == 2 && idx[0] == 1 && idx[1] == 3 && idx[2] == -1 && idx[3] == -1); }
 
     /* --- 2. non-finite scores --- */
@@ -106,10 +106,10 @@ int main(void) {
       int nref; ref_topk(s, NULL, NULL, 8, 4, idx, &nref);
       assert(nref == 0 && idx[0] == -1 && "all-NaN leaves the naive scan at -1");
       /* degrade = 0: honest "none" */
-      int n = coli_router_topk(s, NULL, NULL, 8, 4, idx, NULL, 0, 0);
+      int n = lma_router_topk(s, NULL, NULL, 8, 4, idx, NULL, 0, 0);
       assert(n == 0 && idx[0] == -1 && idx[3] == -1);
       /* degrade = 1: in range, distinct, deterministic (lowest ids) */
-      n = coli_router_topk(s, NULL, NULL, 8, 4, idx, NULL, 0, 1);
+      n = lma_router_topk(s, NULL, NULL, 8, 4, idx, NULL, 0, 1);
       assert(n == 0);
       check_in_range_distinct(idx, 4, 8);
       for (int k = 0; k < 4; k++) assert(idx[k] == k); }
@@ -117,49 +117,49 @@ int main(void) {
     /* one finite expert among NaNs: it is picked first and never duplicated by the fallback.
      * The old fallback (slot index kk) picked expert 3 twice here. */
     { float s[8]; for (int e = 0; e < 8; e++) s[e] = NAN; s[3] = 2.f; int idx[5];
-      int n = coli_router_topk(s, NULL, NULL, 8, 5, idx, NULL, 0, 1);
+      int n = lma_router_topk(s, NULL, NULL, 8, 5, idx, NULL, 0, 1);
       assert(n == 1 && idx[0] == 3);
       check_in_range_distinct(idx, 5, 8); }
 
     /* NaN entries are skipped, not chosen (a NaN-first scan that latches onto it would pick 0) */
     { float s[5] = {NAN, 0.1f, 0.7f, NAN, 0.4f}; int idx[3];
-      int n = coli_router_topk(s, NULL, NULL, 5, 3, idx, NULL, 0, 0);
+      int n = lma_router_topk(s, NULL, NULL, 5, 3, idx, NULL, 0, 0);
       assert(n == 3 && idx[0] == 2 && idx[1] == 4 && idx[2] == 1); }
 
     /* NaN bias poisons the choice, not the process */
     { float s[4] = {1.f, 2.f, 3.f, 4.f}, bz[4] = {0.f, NAN, 0.f, 0.f}; int idx[4];
-      coli_router_topk(s, bz, NULL, 4, 4, idx, NULL, 0, 1);
+      lma_router_topk(s, bz, NULL, 4, 4, idx, NULL, 0, 1);
       check_in_range_distinct(idx, 4, 4);
       assert(idx[0] == 3 && idx[1] == 2 && idx[2] == 0 && "finite candidates first"); }
 
     /* K larger than E (malformed config): still in range */
     { float s[3] = {0.3f, 0.2f, 0.1f}; int idx[7];
-      coli_router_topk(s, NULL, NULL, 3, 7, idx, NULL, 0, 1);
+      lma_router_topk(s, NULL, NULL, 3, 7, idx, NULL, 0, 1);
       for (int k = 0; k < 7; k++) assert(idx[k] >= 0 && idx[k] < 3); }
 
     /* prefix-scan path (E above the bitmap limit) degrades the same way */
     { int E = 5000; float *s = malloc((size_t)E * sizeof(float)); int idx[6];
       for (int e = 0; e < E; e++) s[e] = NAN;
-      coli_router_topk(s, NULL, NULL, E, 6, idx, NULL, 0, 1);
+      lma_router_topk(s, NULL, NULL, E, 6, idx, NULL, 0, 1);
       check_in_range_distinct(idx, 6, E);
       for (int k = 0; k < 6; k++) assert(idx[k] == k);
       free(s); }
 
     /* keep mask with degrade = 0: nothing eligible is "none", not a masked expert */
     { float s[4] = {1.f, 2.f, 3.f, 4.f}; unsigned char keep[4] = {0, 0, 0, 0}; int idx[2];
-      int n = coli_router_topk(s, NULL, keep, 4, 2, idx, NULL, 0, 0);
+      int n = lma_router_topk(s, NULL, keep, 4, 2, idx, NULL, 0, 0);
       assert(n == 0 && idx[0] == -1 && idx[1] == -1); }
 
-    /* coli_router_best: incremental picking reproduces coli_router_topk */
+    /* lma_router_best: incremental picking reproduces lma_router_topk */
     { float s[9] = {0.2f, 0.9f, NAN, 0.9f, 0.1f, 0.5f, 0.8f, NAN, 0.3f}; int a[5], b[5]; float v;
-      coli_router_topk(s, NULL, NULL, 9, 5, a, NULL, 0, 0);
-      for (int k = 0; k < 5; k++) { b[k] = coli_router_best(s, NULL, NULL, 9, b, k, &v); assert(b[k] == a[k]); }
+      lma_router_topk(s, NULL, NULL, 9, 5, a, NULL, 0, 0);
+      for (int k = 0; k < 5; k++) { b[k] = lma_router_best(s, NULL, NULL, 9, b, k, &v); assert(b[k] == a[k]); }
       float t[3] = {NAN, NAN, NAN};
-      assert(coli_router_best(t, NULL, NULL, 3, NULL, 0, &v) == -1 && v == 0.f); }
+      assert(lma_router_best(t, NULL, NULL, 3, NULL, 0, &v) == -1 && v == 0.f); }
 
-    /* coli_router_fill: only unfilled slots change, in range, distinct from filled ones */
+    /* lma_router_fill: only unfilled slots change, in range, distinct from filled ones */
     { int idx[5] = {4, -1, 0, -1, -1}; float v[5] = {.5f, .1f, .3f, .2f, .9f};
-      coli_router_fill(idx, v, 5, 6, 0);
+      lma_router_fill(idx, v, 5, 6, 0);
       assert(idx[0] == 4 && idx[2] == 0 && v[0] == .5f && v[2] == .3f);
       check_in_range_distinct(idx, 5, 6);
       assert(idx[1] == 1 && idx[3] == 2 && idx[4] == 3 && v[1] == 0.f && v[4] == 0.f); }

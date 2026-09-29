@@ -1,8 +1,8 @@
 /* Model-free regression for GLM's pin + LRU expert indices, including the
  * negative PILOT reservation state.  No checkpoint or large allocation. */
-#define COLI_CACHE_INDEX_TEST 1
-#define main colibri_main_unused
-#include "../colibri.c"
+#define LMA_CACHE_INDEX_TEST 1
+#define main lma_main_unused
+#include "../glm52.c"
 #undef main
 
 static int failures;

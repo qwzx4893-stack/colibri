@@ -1,4 +1,4 @@
-/* COLI_PIPE_BLOCK: the pipe pool's condvar waiter must be observably
+/* LMA_PIPE_BLOCK: the pipe pool's condvar waiter must be observably
  * equivalent to the sched_yield spin it replaces — same bytes land in the
  * same ws[] slots, and no interleaving loses a wakeup (the worker RELEASE-
  * stores ready[] BEFORE taking mx to broadcast; the waiter re-checks under
@@ -18,8 +18,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 static int fail(const char *s){ fprintf(stderr,"FAIL: %s\n",s); return 1; }

@@ -168,7 +168,7 @@ class IdotKernelRosterTest(unittest.TestCase):
 
     Source of the 7 entries, cited by file:line: c/quant.h:582-594's
     #if/#elif ladder defines IDOT_KERNEL to each of these string
-    literals in turn, and c/colibri.c:11243 prints it unmodified inside
+    literals in turn, and c/glm52.c:11243 prints it unmodified inside
     the exact banner format this fixture reproduces character-for-
     character (cache=%d experts/layer | compute experts@%d-bit
     dense@%d-bit | idot: <IDOT_KERNEL>).

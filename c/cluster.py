@@ -65,7 +65,7 @@ class _Handler(openai_server.APIHandler):
     # keep-alive. Keep that wire shape; the shared APIHandler machinery (Host
     # guard, body cap, deadline reader, connection bookkeeping) still applies.
     protocol_version = "HTTP/1.0"
-    server_version = "colibri-cluster/1"
+    server_version = "lmatomic-cluster/1"
 
     def log_message(self, *_args):
         return
@@ -108,7 +108,7 @@ class ClusterServer(openai_server.APIServer):
         # no API key or CORS surface, and its Host guard stays loopback + bind
         # address (the same default openai_server enforces). A cross-host worker
         # registers from a LAN IP, so the operator opts those hosts in via
-        # --allowed-host (the same #597 escape hatch coli serve exposes); the
+        # --allowed-host (the same #597 escape hatch lmatomic serve exposes); the
         # default stays loopback + bind address.
         self.cors_origins = ()
         self.allowed_hosts = tuple(
@@ -131,7 +131,7 @@ def serve(host="127.0.0.1", port=8765, stale_after=30.0, allowed_hosts=()):
         print("WARNING: --allowed-host '*' accepts ANY Host header "
               "(DNS-rebinding guard disabled)", file=sys.stderr)
     server = ClusterServer((host, port), ClusterRegistry(stale_after), allowed_hosts)
-    print(f"colibri cluster coordinator listening on http://{host}:{port}", flush=True)
+    print(f"lmatomic cluster coordinator listening on http://{host}:{port}", flush=True)
     try:
         server.serve_forever()
     finally:
@@ -167,7 +167,7 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--stale-after", type=float, default=30.0)
     parser.add_argument("--allowed-host", action="append",
-                        default=[h.strip() for h in os.environ.get("COLI_ALLOWED_HOSTS", "").split(",") if h.strip()],
+                        default=[h.strip() for h in os.environ.get("LMA_ALLOWED_HOSTS", "").split(",") if h.strip()],
                         help="additional Host header accepted by the DNS-rebinding guard; repeat as needed")
     args = parser.parse_args()
     serve(args.host, args.port, args.stale_after, args.allowed_host)

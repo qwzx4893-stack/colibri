@@ -4,7 +4,7 @@
  *
  * Formato d'uscita: safetensors normale, ma:
  *   - __metadata__ contiene "cfse":"1"
- *   - il payload di OGNI tensore e' un flusso CFS1 (fse_coli.h), col fallback
+ *   - il payload di OGNI tensore e' un flusso CFS1 (fse_lma.h), col fallback
  *     raw interno per i tensori incomprimibili
  *   - data_offsets copre l'estensione COMPRESSA; la taglia raw resta
  *     ricostruibile da shape x dtype (invariante safetensors) e dal campo
@@ -21,7 +21,7 @@
 #include <string.h>
 #include <stdint.h>
 #include "json.h"
-#include "fse_coli.h"
+#include "fse_lma.h"
 
 static void *xmalloc(size_t n){ void *p=malloc(n?n:1); if(!p){fprintf(stderr,"OOM %zu\n",n);exit(1);} return p; }
 

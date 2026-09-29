@@ -2,11 +2,11 @@
 
 Same contract as every other family: EMAP after READY and STAT, HITS and PROF after
 DONE, over the rows and columns the grid declares. This drives the engine the way the
-gateway does -- through `coli serve` -- so a family that stops emitting one of the four
+gateway does -- through `lmatomic serve` -- so a family that stops emitting one of the four
 lines fails here rather than as a blank tab.
 
 Needs a V4.1-shaped container with a tokenizer and a built `deepseek_v41`. Set
-COLI_DSV41_FIXTURE to the container; without it the test skips with the reason on
+LMA_DSV41_FIXTURE to the container; without it the test skips with the reason on
 the record. CI builds the fixture with tools/make_dsv41_tiny.py.
 """
 import json
@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-FIXTURE = Path(os.environ.get("COLI_DSV41_FIXTURE", ""))
+FIXTURE = Path(os.environ.get("LMA_DSV41_FIXTURE", ""))
 
 
 def free_port():
@@ -36,7 +36,7 @@ def get_json(url, timeout=10):
 
 @unittest.skipUnless(FIXTURE.name and (FIXTURE / "config.json").is_file()
                      and (FIXTURE / "tokenizer.json").is_file(),
-                     "COLI_DSV41_FIXTURE not set to a V4.1 container with a tokenizer")
+                     "LMA_DSV41_FIXTURE not set to a V4.1 container with a tokenizer")
 @unittest.skipUnless((HERE / "deepseek_v41").exists() or (HERE / "deepseek_v41.exe").exists(),
                      "deepseek_v41 engine is not built")
 class Dsv41DashboardTest(unittest.TestCase):
@@ -47,7 +47,7 @@ class Dsv41DashboardTest(unittest.TestCase):
         # about, and a draft head that got lucky would fold two tokens into one
         # forward. tests/test_dsv41_dspark_serve.py covers the other path.
         cls.proc = subprocess.Popen(
-            [sys.executable, str(HERE / "coli"), "serve", "--model", str(FIXTURE),
+            [sys.executable, str(HERE / "lmatomic"), "serve", "--model", str(FIXTURE),
              "--port", str(cls.port), "--cap", "4"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             env={**os.environ, "V41_DSPARK": "0"})
@@ -58,10 +58,10 @@ class Dsv41DashboardTest(unittest.TestCase):
                 break
             except Exception:
                 if cls.proc.poll() is not None:
-                    raise RuntimeError("coli serve exited: " + cls.proc.stdout.read()[-2000:])
+                    raise RuntimeError("lmatomic serve exited: " + cls.proc.stdout.read()[-2000:])
                 time.sleep(1)
         else:
-            raise RuntimeError("coli serve did not come up in 180 s")
+            raise RuntimeError("lmatomic serve did not come up in 180 s")
         model = get_json(f"http://127.0.0.1:{cls.port}/v1/models")["data"][0]["id"]
         body = json.dumps({"model": model, "prompt": "abcabcabc", "max_tokens": 3}).encode()
         request = urllib.request.Request(f"http://127.0.0.1:{cls.port}/v1/completions",

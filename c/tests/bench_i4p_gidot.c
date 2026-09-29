@@ -11,8 +11,8 @@
  *
  * Run:  make tests/bench_i4p_gidot ARCH=native && ./tests/bench_i4p_gidot
  *       (not in TEST_BINS -- not a gate) */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 #include <stdint.h>
 #include <string.h>
@@ -39,13 +39,13 @@ static void gidot_old(float *y, const int8_t *xq, const float *sx,
                     int base=g*gs+b*64;
                     const uint8_t *blk=w+(base>>1);
                     const int8_t *xb=xr2+base;
-#if defined(coli_dpbusd256)
+#if defined(lma_dpbusd256)
                     const __m256i m4=_mm256_set1_epi8(0x0F);
                     __m256i bb=_mm256_loadu_si256((const __m256i*)blk);
                     __m256i acc=_mm256_setzero_si256();
-                    acc=coli_dpbusd256(acc,_mm256_and_si256(bb,m4),
+                    acc=lma_dpbusd256(acc,_mm256_and_si256(bb,m4),
                                        _mm256_loadu_si256((const __m256i*)xb));
-                    acc=coli_dpbusd256(acc,_mm256_and_si256(_mm256_srli_epi16(bb,4),m4),
+                    acc=lma_dpbusd256(acc,_mm256_and_si256(_mm256_srli_epi16(bb,4),m4),
                                        _mm256_loadu_si256((const __m256i*)(xb+32)));
                     d+=hsum256_i32(acc);
 #elif defined(__AVX2__)

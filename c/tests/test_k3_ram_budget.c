@@ -10,9 +10,9 @@
  *
  *     [K3] init done in 2540.5s | 93 layers | expert cache 136/layer
  *          (17.5 MB/slot) | RSS 35.2 GB
- *     set K3_EXPERT_GB=220 ; python coli web --ram 242 ...
+ *     set K3_EXPERT_GB=220 ; python lmatomic web --ram 242 ...
  */
-#define main coli_k3_main_unused
+#define main lma_k3_main_unused
 #include "../kimi_k3.c"
 #undef main
 
@@ -62,7 +62,7 @@ int main(void){
 
     /* ---- opt-in recurrent checkpoints are part of the same ceiling ------- */
     /* Full K3 geometry: 69 KDA rows, 24 heads x 256 recurrent state and three
-     * 6144x4 conv windows. This is the ~434 MiB/photo stated by COLI_K3_CKPT.
+     * 6144x4 conv windows. This is the ~434 MiB/photo stated by LMA_K3_CKPT.
      * The planner runs before photos are allocated, so it must reserve every
      * enabled slot or RAM_GB will be exceeded later in the conversation. */
     Model cm={0}; cm.c.n_layers=69; cm.c.kda_heads=24; cm.c.kda_hd=256;
@@ -71,12 +71,12 @@ int main(void){
     for(int i=0;i<cm.c.n_layers;i++) cm.L[i].kda=1;
     double one_ckpt=k3_ckpt_reserve_gb(&cm,1);
     double four_ckpt=k3_ckpt_reserve_gb(&cm,4);
-    printf("        COLI_K3_CKPT=1 -> %.1f MiB; 4 slots -> %.2f GB reserved\n",
+    printf("        LMA_K3_CKPT=1 -> %.1f MiB; 4 slots -> %.2f GB reserved\n",
            one_ckpt*1e9/1048576.0,four_ckpt);
     CHECK(k3_ckpt_reserve_gb(&cm,0)==0.0);
     CHECK(one_ckpt>0.42&&one_ckpt<0.47);
     CHECK(four_ckpt>1.7&&four_ckpt<1.9);
-    /* disk-parked photos (COLI_K3_CKPT_DIR): one bounce buffer in RAM no
+    /* disk-parked photos (LMA_K3_CKPT_DIR): one bounce buffer in RAM no
      * matter how many slots -- the low-RAM machine must not be charged N. */
     g_k3_ckpt_dir="/anywhere";
     CHECK(k3_ckpt_reserve_gb(&cm,4)==one_ckpt);

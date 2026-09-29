@@ -1,5 +1,5 @@
-#ifndef COLIBRI_DECODE_BATCH_H
-#define COLIBRI_DECODE_BATCH_H
+#ifndef LMA_DECODE_BATCH_H
+#define LMA_DECODE_BATCH_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -9,17 +9,17 @@
 
 /* `base` belongs to one sequence's KV state.  Keeping this arithmetic in a
  * model-independent seam makes ragged decode row ownership directly testable. */
-static inline float *coli_kv_row(float *base, int position, int width)
+static inline float *lma_kv_row(float *base, int position, int width)
 {
     return base + (size_t)position * (size_t)width;
 }
 
 /* Per-token top-k emission cap: run_ablate_score's existing top-32 read-out
  * ceiling, adopted as the wire cap too (no named consumer asks for more). */
-#define COLI_SUBMIT_TOPK_MAX 32
+#define LMA_SUBMIT_TOPK_MAX 32
 
 /* KV8 twin: same row arithmetic on the fp8 (e4m3) byte cache. */
-static inline uint8_t *coli_kv_row8(uint8_t *base, int position, int width)
+static inline uint8_t *lma_kv_row8(uint8_t *base, int position, int width)
 {
     return base + (size_t)position * (size_t)width;
 }
@@ -35,7 +35,7 @@ typedef struct {
     float temperature, top_p;
     int logprobs;   /* requested per-token top-k count; 0 = channel off (opt-in) */
     int tok_ids;    /* 1 = payload is ASCII token ids, not raw prompt text */
-} ColiSubmit;
+} LmaSubmit;
 
 /* Extension fields, 8th whitespace field onward: "key=value" tokens after the
  * full 7-field header, e.g. "SUBMIT 1 0 12 16 0 1 0 logprobs=5 ids=1".
@@ -55,7 +55,7 @@ typedef struct {
  * the running value exceeds the largest legal value of any key, then a
  * pending-digit check rejects): sscanf %llu on an overflowing field is
  * undefined behavior (C11 7.21.6.2), so no sscanf ever touches the value. */
-static inline int coli_submit_ext(const char *p, ColiSubmit *s)
+static inline int lma_submit_ext(const char *p, LmaSubmit *s)
 {
     int seen = 0, seen_logprobs = 0, seen_ids = 0, seen_pin = 0;
     while (*p == ' ' || *p == '\t') p++;
@@ -69,13 +69,13 @@ static inline int coli_submit_ext(const char *p, ColiSubmit *s)
         if (kn == 0 || *p != '=') return 0;
         p++;
         d = p;
-        while (*p >= '0' && *p <= '9' && val <= COLI_SUBMIT_TOPK_MAX)
+        while (*p >= '0' && *p <= '9' && val <= LMA_SUBMIT_TOPK_MAX)
             val = val * 10 + (*p++ - '0');
         if (p == d) return 0;                        /* no digits after '=' */
         if (*p >= '0' && *p <= '9') return 0;        /* out of range: digits left */
         if (*p && *p != ' ' && *p != '\t') return 0; /* glued garbage after value */
         if (!strcmp(key, "logprobs")) {          /* per-token top-k emission */
-            if (seen_logprobs || val > COLI_SUBMIT_TOPK_MAX) return 0;
+            if (seen_logprobs || val > LMA_SUBMIT_TOPK_MAX) return 0;
             seen_logprobs = 1;
             s->logprobs = val;
         } else if (!strcmp(key, "ids")) {        /* pre-tokenized prompt intake */
@@ -100,9 +100,9 @@ static inline int coli_submit_ext(const char *p, ColiSubmit *s)
  * Optional 7th field `gbytes`: length of a per-request grammar (raw GBNF, or a
  * JSON-Schema compiled engine-side) appended to the payload AFTER the prompt
  * bytes. 6-field headers remain valid (gbytes = 0). Fields past the 7th are
- * key=value extension tokens (coli_submit_ext above), only ever sent by a
+ * key=value extension tokens (lma_submit_ext above), only ever sent by a
  * server that knows this engine understands them. */
-static inline int coli_submit_parse(const char *line, ColiSubmit *s)
+static inline int lma_submit_parse(const char *line, LmaSubmit *s)
 {
     char tail;
     int ok = 0, base = 0;
@@ -130,7 +130,7 @@ static inline int coli_submit_parse(const char *line, ColiSubmit *s)
                    &s->slot, &s->bytes, &s->max_tokens, &s->temperature,
                    &s->top_p, &s->gbytes, &base) == 7 && base > 0 &&
             (line[base] == ' ' || line[base] == '\t') &&
-            coli_submit_ext(line + base, s)) ok = 1;
+            lma_submit_ext(line + base, s)) ok = 1;
     }
     if (!ok) return 0;
     return s->id > 0 && s->bytes <= (16u << 20) && s->gbytes <= (1u << 20) &&
@@ -149,7 +149,7 @@ static inline int coli_submit_parse(const char *line, ColiSubmit *s)
  * the id count, or -1 on any malformed or out-of-range id. More than `cap`
  * ids reports `cap`: the caller parses with one spare slot and treats a full
  * buffer as overflow, mirroring tok_encode's stop-at-cap contract (#401). */
-static inline int coli_ids_parse(const char *buf, size_t len, int *out,
+static inline int lma_ids_parse(const char *buf, size_t len, int *out,
                                  int cap, int vocab)
 {
     size_t i = 0;
@@ -173,10 +173,10 @@ static inline int coli_ids_parse(const char *buf, size_t len, int *out,
 }
 
 /* Coda numerica di un token: " <lp> <k> [tid tlp]*k", in log-softmax sul
- * vocabolario intero. Vive qui, accanto a COLI_SUBMIT_TOPK_MAX e al parser
+ * vocabolario intero. Vive qui, accanto a LMA_SUBMIT_TOPK_MAX e al parser
  * delle chiavi, perche e l'altra meta dello stesso canale: chi lo legge e chi
  * lo scrive devono concordare sul formato, e un formato concordato in due
- * copie non e concordato. colibri.c ha la propria logprob_tail dal giorno in
+ * copie non e concordato. glm52.c ha la propria logprob_tail dal giorno in
  * cui il canale e nato; questa ne e la versione condivisa per gli altri motori
  * e produce gli stessi byte.
  *
@@ -184,18 +184,18 @@ static inline int coli_ids_parse(const char *buf, size_t len, int *out,
  * della posizione 0 di un echo, dove non c'e nulla su cui condizionare.
  * Costo: O(V) per la normalizzazione e O(V*k) per la selezione, pagato solo
  * dalle richieste che hanno chiesto il canale. */
-static inline int coli_logprob_tail(char *dst, size_t cap, const float *lo,
+static inline int lma_logprob_tail(char *dst, size_t cap, const float *lo,
                                     int V, int token, int topk)
 {
-    int tk_id[COLI_SUBMIT_TOPK_MAX];
-    float tk_val[COLI_SUBMIT_TOPK_MAX];
+    int tk_id[LMA_SUBMIT_TOPK_MAX];
+    float tk_val[LMA_SUBMIT_TOPK_MAX];
     double se = 0, logZ;
     float mx;
     int w, i, k;
     if (!dst || cap == 0) return 0;
     if (!lo || token < 0 || token >= V || topk <= 0)
         return snprintf(dst, cap, " nan 0");
-    if (topk > COLI_SUBMIT_TOPK_MAX) topk = COLI_SUBMIT_TOPK_MAX;
+    if (topk > LMA_SUBMIT_TOPK_MAX) topk = LMA_SUBMIT_TOPK_MAX;
     if (topk > V) topk = V;
     mx = lo[0];
     for (i = 1; i < V; i++) if (lo[i] > mx) mx = lo[i];

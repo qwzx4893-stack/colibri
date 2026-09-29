@@ -2,7 +2,7 @@
  * che il kernel puo' riprendersi da solo.
  *
  * rss_guard() sfratta esperti quando la misura supera il budget. Leggendo
- * VmRSS, che include le pagine di file mappate, con COLI_MAP_EXPERTS=1 (#1325)
+ * VmRSS, che include le pagine di file mappate, con LMA_MAP_EXPERTS=1 (#1325)
  * la misura sale di gigabyte senza che un byte in piu' sia stato sottratto al
  * sistema: la guardia si metterebbe a sfrattare per liberare memoria che non
  * stava occupando.
@@ -34,8 +34,8 @@ static void check(int ok, const char *what) {
     if (!ok) { printf("  FAIL: %s\n", what); fails++; }
 }
 
-/* La stessa lettura che fa current_rss_gb in colibri.c: RssAnon con VmRSS come
- * ripiego. Duplicata qui e non inclusa perche' colibri.c e' un'unita' enorme e
+/* La stessa lettura che fa current_rss_gb in glm52.c: RssAnon con VmRSS come
+ * ripiego. Duplicata qui e non inclusa perche' glm52.c e' un'unita' enorme e
  * questo test deve restare veloce; il contratto verificato e' identico. */
 static double rss_anon_gb(void) {
     FILE *f = fopen("/proc/self/status", "r");
@@ -67,7 +67,7 @@ int main(void) {
     if (rss_anon_gb() < 0) { printf("test_rss_anon: /proc non leggibile, salto\n"); return 0; }
 
     const size_t MAPPED = 256u << 20;          /* 256 MB: ben oltre il rumore */
-    char path[] = "/tmp/coli_rss_anon_XXXXXX";
+    char path[] = "/tmp/lma_rss_anon_XXXXXX";
     int fd = mkstemp(path);
     if (fd < 0) { perror("mkstemp"); return 1; }
     if (ftruncate(fd, (off_t)MAPPED) != 0) { perror("ftruncate"); return 1; }

@@ -1,6 +1,6 @@
 # Vulkan backend (any GPU with a Vulkan 1.2 driver)
 
-colibrì includes an opt-in Vulkan compute backend that runs the whole GLM
+LM Atomic includes an opt-in Vulkan compute backend that runs the whole GLM
 decode compute path on any GPU a Vulkan driver can see — no CUDA, no ROCm.
 That includes cards the vendor stacks have dropped (ROCm 7 removed Polaris:
 an RX 580 runs here via RADV) and, measured on an RX 9070 (RDNA4), it is
@@ -9,9 +9,9 @@ an RX 580 runs here via RADV) and, measured on an RX 9070 (RDNA4), it is
 ```bash
 cd c
 make glm VK=1                # needs libvulkan + glslc (shaderc) for the shaders
-COLI_VULKAN=1 COLI_VK_DENSE=1 COLI_VK_ATTN=1 \
-PIN=<model>/.coli_usage PIN_GB=0 COLI_NO_OMP_TUNE=1 \
-./coli run "Hello" --topp 0.7
+LMA_VULKAN=1 LMA_VK_DENSE=1 LMA_VK_ATTN=1 \
+PIN=<model>/.lma_usage PIN_GB=0 LMA_NO_OMP_TUNE=1 \
+./lmatomic run "Hello" --topp 0.7
 ```
 
 Requirements: `libvulkan` and a Vulkan **1.2** ICD with
@@ -21,8 +21,8 @@ backend picks the most capable physical device (discrete > integrated) and
 degrades to the CPU path on any failure — a wedged GPU can slow a run, never
 corrupt it.
 
-Set `COLI_NO_OMP_TUNE=1` on multi-core boxes: the engine's OMP self-tune
-(active spin-wait) is skipped under `COLI_CUDA`/`COLI_METAL` but not under
+Set `LMA_NO_OMP_TUNE=1` on multi-core boxes: the engine's OMP self-tune
+(active spin-wait) is skipped under `LMA_CUDA`/`LMA_METAL` but not under
 Vulkan, and spinning worker threads starve the async I/O pool (measured
 CPU expert bandwidth 28 → 5 GB/s without it).
 
@@ -36,7 +36,7 @@ when the host-visible slice of VRAM is small; if you see that warning, enable
 Resizable BAR / Smart Access Memory in the BIOS. Unified-memory APUs are
 unaffected.
 
-The compiled shaders are found via `COLI_VK_SHADERS` (either the
+The compiled shaders are found via `LMA_VK_SHADERS` (either the
 `qmatmul.spv` file or the directory holding the `.spv` set); unset, the
 engine looks in `shaders/` next to the binary, then relative to the CWD.
 
@@ -44,9 +44,9 @@ engine looks in `shaders/` next to the binary, then relative to the CWD.
 
 | Piece | Env | Mechanism |
 |---|---|---|
-| Routed experts (hot set) | `COLI_VK_EXPERTS=N` (default 320) | Top-N experts by `.coli_usage` heat uploaded **once at startup** into a VRAM registry; at decode they are served from VRAM with **no RAM slot, no disk read, no prefetch**, as one async fused batch (gate+up+silu→down, hidden on-device) overlapped with the CPU computing the remaining experts. Shown as the `vk` bucket in the hit-rate line. |
-| Dense projections | `COLI_VK_DENSE=1` | q_a+kv_a fused into one submit, q_b, o; shared expert as a single fused expert-group submit. Resident int4/int8 weights upload once. |
-| MLA attention core | `COLI_VK_ATTN=1` | One dispatch per layer: absorbed query, scores over the KV window, softmax, weighted latent, value rows, **fused with the o-projection** (the context vector never leaves the GPU). The latent/rope KV lives in a persistent per-layer device mirror, appended ~2.3 KB/token/layer with the same invalidation points as the CUDA KV shadow. |
+| Routed experts (hot set) | `LMA_VK_EXPERTS=N` (default 320) | Top-N experts by `.lma_usage` heat uploaded **once at startup** into a VRAM registry; at decode they are served from VRAM with **no RAM slot, no disk read, no prefetch**, as one async fused batch (gate+up+silu→down, hidden on-device) overlapped with the CPU computing the remaining experts. Shown as the `vk` bucket in the hit-rate line. |
+| Dense projections | `LMA_VK_DENSE=1` | q_a+kv_a fused into one submit, q_b, o; shared expert as a single fused expert-group submit. Resident int4/int8 weights upload once. |
+| MLA attention core | `LMA_VK_ATTN=1` | One dispatch per layer: absorbed query, scores over the KV window, softmax, weighted latent, value rows, **fused with the o-projection** (the context vector never leaves the GPU). The latent/rope KV lives in a persistent per-layer device mirror, appended ~2.3 KB/token/layer with the same invalidation points as the CUDA KV shadow. |
 
 The `PIN_GB=0` (with `PIN` still set) in the example is deliberate: the VRAM
 registry holds the same hot experts a RAM pin would, so the pin's RAM is
@@ -94,13 +94,13 @@ everything else lives HOST_VISIBLE|DEVICE_LOCAL.
 Two defaults will silently skew any Vulkan-vs-CUDA/HIP comparison:
 
 - **MTP speculation**: CUDA/HIP builds disable model drafts by default
-  (`DRAFT` auto-resolves to 0 under `COLI_CUDA=1`, see #163), while CPU and
+  (`DRAFT` auto-resolves to 0 under `LMA_CUDA=1`, see #163), while CPU and
   Vulkan runs keep `DRAFT=3`. The arms then execute different decode loops —
   the speculative arm routes ~2× the expert positions per emitted token
   (rejected draft positions still pay their expert I/O), which dominates on
   storage-bound boxes. Output is identical either way (greedy verify is
   lossless), so nothing looks wrong. Pin `DRAFT=0` (or `DRAFT=3
-  COLI_CUDA_MTP=1`) explicitly on **both** arms.
+  LMA_CUDA_MTP=1`) explicitly on **both** arms.
 - **GPU clocks**: decode dispatches are microsecond bursts that never ramp
   DPM on their own; the memory clock can sit parked through an entire run.
   Pin `power_dpm_force_performance_level=high` (both arms) or disclose it.

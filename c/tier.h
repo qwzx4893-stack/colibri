@@ -1,5 +1,5 @@
-#ifndef COLIBRI_TIER_H
-#define COLIBRI_TIER_H
+#ifndef LMA_TIER_H
+#define LMA_TIER_H
 
 #include <stdint.h>
 

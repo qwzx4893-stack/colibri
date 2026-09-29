@@ -2,7 +2,7 @@
 """Golden-fixture invariant harness (U7a acceptance test 1 / packet test-plan I1).
 
 Captures full HTTP responses for a battery of NON-logprobs requests against a
-RUNNING colibri server, normalizes the volatile fields (ids, timestamps), and
+RUNNING lmatomic server, normalizes the volatile fields (ids, timestamps), and
 byte-diffs two capture directories. The engine-channel change (U7a) is opt-in
 and no server request path opts in: for the battery's generation-bearing
 cases, which all run at temperature 0, a capture taken before the change

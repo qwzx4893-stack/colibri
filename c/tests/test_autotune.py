@@ -35,7 +35,7 @@ def plan(cores=8, sockets=1, gpu=True, cold=0):
 class AutotuneUnitTest(unittest.TestCase):
     def test_candidates_are_bounded_and_quality_preserving(self):
         steps = candidate_steps(plan(sockets=2, cold=10), {
-            "OMP_NUM_THREADS": "8", "COLI_CUDA_PIPE": "0",
+            "OMP_NUM_THREADS": "8", "LMA_CUDA_PIPE": "0",
             "DIRECT": "0", "PIPE": "0",
         })
         names = [name for name, _ in steps]
@@ -81,7 +81,7 @@ class AutotuneUnitTest(unittest.TestCase):
         self.assertEqual(result["tok_s"], 1234.56)
 
     def test_accepts_the_common_TUNE_line_from_the_sibling_engines(self):
-        """#898: only colibri emitted a parseable throughput line, so the tuner
+        """#898: only lmatomic emitted a parseable throughput line, so the tuner
         was GLM-only. The four sibling engines now print `TUNE decode: N tokens
         in T.TTTs` at the end of an ordinary greedy run."""
         result = parse_replay("TUNE decode: 16 tokens in 8.000s\n")
@@ -94,8 +94,8 @@ class AutotuneUnitTest(unittest.TestCase):
             parse_replay("no decode line here\n")
 
     def test_glm_only_knobs_are_not_swept_on_other_engines(self):
-        """PIPE and DIRECT are read by colibri alone -- 3 and 1 occurrences in
-        colibri.c, 0 in each of the other four. Sweeping them elsewhere spends
+        """PIPE and DIRECT are read by lmatomic alone -- 3 and 1 occurrences in
+        glm52.c, 0 in each of the other four. Sweeping them elsewhere spends
         the replay budget proving two identical runs are identical, then reports
         the 0% difference as a measurement."""
         plan = {"cpu": {"physical_cores": 8, "sockets": 1},
@@ -113,8 +113,8 @@ class AutotuneUnitTest(unittest.TestCase):
                 self.assertTrue(any(name.startswith("omp-") for name in steps), steps)
 
     def test_cuda_and_numa_knobs_are_not_swept_on_other_engines(self):
-        """COLI_CUDA_PIPE and COLI_NUMA are read by colibri.c alone, and
-        COLI_CUDA_ASYNC only on the grouped-expert CUDA call colibri.c makes.
+        """LMA_CUDA_PIPE and LMA_NUMA are read by glm52.c alone, and
+        LMA_CUDA_ASYNC only on the grouped-expert CUDA call glm52.c makes.
         A GPU or a second socket in the plan offered them to every engine, so
         a sibling tune measured identical runs and could accept timing noise
         as a gain."""
@@ -128,7 +128,7 @@ class AutotuneUnitTest(unittest.TestCase):
                 steps = dict(candidate_steps(gpu_plan, {}, arch))
                 self.assertFalse(any(name.startswith(("cuda-", "numa-"))
                                      for name in steps), steps)
-                self.assertFalse({"COLI_CUDA_PIPE", "COLI_CUDA_ASYNC", "COLI_NUMA"}
+                self.assertFalse({"LMA_CUDA_PIPE", "LMA_CUDA_ASYNC", "LMA_NUMA"}
                                  & {key for change in steps.values() for key in change})
                 self.assertTrue(any(name.startswith("omp-") for name in steps), steps)
 
@@ -146,7 +146,7 @@ class AutotuneUnitTest(unittest.TestCase):
 
     def test_omp_kill_switch_removes_thread_candidates(self):
         steps = candidate_steps(plan(cores=16, gpu=False),
-                                {"COLI_NO_OMP_TUNE": "1"}, "kimi")
+                                {"LMA_NO_OMP_TUNE": "1"}, "kimi")
         self.assertFalse(any(name.startswith("omp-") for name, _ in steps))
 
     def test_resource_candidates_only_shrink_the_safe_expert_cache(self):
@@ -210,17 +210,17 @@ class AutotuneUnitTest(unittest.TestCase):
                 "fingerprint": fingerprint,
                 "accepted": True,
                 "gain": 0.10,
-                "winner": {"env": {"COLI_CUDA_PIPE": "2"}},
+                "winner": {"env": {"LMA_CUDA_PIPE": "2"}},
             }
             save_profile(profile, directory)
             loaded = load_profile(p, directory, str(engine), directory)
             self.assertEqual(loaded["fingerprint"], fingerprint)
             applied = apply_profile(
-                {"COLI_CUDA_PIPE": "0"}, loaded, {"COLI_CUDA_PIPE"}
+                {"LMA_CUDA_PIPE": "0"}, loaded, {"LMA_CUDA_PIPE"}
             )
-            self.assertEqual(applied["COLI_CUDA_PIPE"], "0")
+            self.assertEqual(applied["LMA_CUDA_PIPE"], "0")
             applied = apply_profile({}, loaded)
-            self.assertEqual(applied["COLI_CUDA_PIPE"], "2")
+            self.assertEqual(applied["LMA_CUDA_PIPE"], "2")
 
     def test_profile_rejects_unknown_knobs(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -344,7 +344,7 @@ class ServeTuneTest(unittest.TestCase):
         for launch in FakeServeEngine.launches:
             self.assertEqual(launch["cap"], 16)
             self.assertEqual(launch["family"], "fake-family")
-            self.assertEqual(launch["env"].get("COLI_TEMP"), "0")
+            self.assertEqual(launch["env"].get("LMA_TEMP"), "0")
         # baseline, candidate, confirm-winner, confirm-baseline: one process
         # each, not one process per repeat. Every process sees the same
         # rotating prompt order and therefore retains its expert-cache state.
@@ -361,7 +361,7 @@ class ServeTuneTest(unittest.TestCase):
         names = [candidate["name"] for candidate in profile["candidates"]]
         self.assertEqual(names, ["baseline", "omp-4"])
         for launch in FakeServeEngine.launches:
-            for key in ("COLI_CUDA_PIPE", "COLI_CUDA_ASYNC", "COLI_NUMA"):
+            for key in ("LMA_CUDA_PIPE", "LMA_CUDA_ASYNC", "LMA_NUMA"):
                 self.assertNotIn(key, launch["env"])
         self.assertEqual(len(FakeServeEngine.launches), 4)
 
@@ -401,7 +401,7 @@ class ServeTuneTest(unittest.TestCase):
         }
         profile, _ = self.run_serve_tune(
             arch="inkling", plan=p,
-            base_env={"COLI_NO_OMP_TUNE": "1"},
+            base_env={"LMA_NO_OMP_TUNE": "1"},
             repeats=2, prompts=("prompt-a", "prompt-b"),
         )
         self.assertTrue(profile["accepted"])
@@ -425,7 +425,7 @@ class ServeTuneTest(unittest.TestCase):
                     cap_hits=hits, cap_ttft=ttft)
                 profile, _ = self.run_serve_tune(
                     arch="inkling", plan=p,
-                    base_env={"COLI_NO_OMP_TUNE": "1"},
+                    base_env={"LMA_NO_OMP_TUNE": "1"},
                 )
                 self.assertFalse(profile["accepted"])
                 self.assertEqual(profile["winner"]["cap"], 16)
@@ -481,9 +481,9 @@ class AutotuneIntegrationTest(unittest.TestCase):
                 " print('[PROMPT_TOKENS] 3: 10 11 12')\n"
                 " print('[TOKENS] 4 generated: 20 21 22 23')\n"
                 "else:\n"
-                " pipe=os.environ.get('COLI_CUDA_PIPE','0')\n"
+                " pipe=os.environ.get('LMA_CUDA_PIPE','0')\n"
                 " speed={'0':10.0,'1':12.0,'2':11.0}[pipe]\n"
-                " if os.environ.get('COLI_CUDA_ASYNC') == '0': speed=9.0\n"
+                " if os.environ.get('LMA_CUDA_ASYNC') == '0': speed=9.0\n"
                 " print(f'REPLAY decode: 4 tokens | {speed:.2f} tok/s | expert hit 95.0%')\n"
                 " print('[PROF] decode forwards: 4 | latency p50 80.0 ms | p90 90.0 ms | p99 100.0 ms | max 100.0 ms')\n",
                 encoding="utf-8",
@@ -491,12 +491,12 @@ class AutotuneIntegrationTest(unittest.TestCase):
             engine.chmod(engine.stat().st_mode | stat.S_IXUSR)
             p = plan(cores=1)
             profile, path = run_tune(
-                str(engine), 8, dict(os.environ, COLI_CUDA_PIPE="0"),
+                str(engine), 8, dict(os.environ, LMA_CUDA_PIPE="0"),
                 p, directory, "prompt", tokens=4, repeats=1, timeout=5,
                 min_gain=0.03, profile_dir=directory,
             )
             self.assertTrue(profile["accepted"])
-            self.assertEqual(profile["winner"]["env"], {"COLI_CUDA_PIPE": "1"})
+            self.assertEqual(profile["winner"]["env"], {"LMA_CUDA_PIPE": "1"})
             self.assertAlmostEqual(profile["gain"], 0.20)
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["winner"]["tok_s"], 12.0)
 
@@ -522,7 +522,7 @@ class AutotuneIntegrationTest(unittest.TestCase):
             )
             engine.chmod(engine.stat().st_mode | stat.S_IXUSR)
             profile, _ = run_tune(
-                str(engine), 8, dict(os.environ, COLI_CUDA_PIPE="0"),
+                str(engine), 8, dict(os.environ, LMA_CUDA_PIPE="0"),
                 plan(cores=1), directory, "prompt", tokens=4, repeats=1,
                 timeout=5, min_gain=0.03, profile_dir=directory,
             )

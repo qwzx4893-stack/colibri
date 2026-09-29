@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a .coli_pairs cross-layer coupling table from ROUTE_TRACE dumps.
+"""Build a .lma_pairs cross-layer coupling table from ROUTE_TRACE dumps.
 
 Input: one or more ROUTE_TRACE files ("call pos layer id:gate ...", one line per
 (position, layer)). Output: a text table of the top-M layer-(L+dL) experts most
@@ -14,7 +14,7 @@ that measured +3.6..+9.4pp prefetch recall over marginal heat, in- and
 cross-domain (see docs in the PR). Counts are raw co-occurrences; the consumer
 only needs their ranking, so no normalization is stored.
 
-Usage: python3 tools/route_pairs.py out.coli_pairs trace1.txt [trace2.txt ...]
+Usage: python3 tools/route_pairs.py out.lma_pairs trace1.txt [trace2.txt ...]
 """
 import sys
 from collections import defaultdict

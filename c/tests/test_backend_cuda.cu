@@ -133,7 +133,7 @@ static int test_fmt6(int dev) {
     static uint8_t grid[256][4];
     for (int i = 0; i < 256; i++)
         for (int j = 0; j < 4; j++) grid[i][j] = (uint8_t)((i*4 + j) % 17);
-    if (!coli_cuda_e8_set_grid(grid)) { std::fprintf(stderr,"e8 grid upload failed\n"); return 0; }
+    if (!lma_cuda_e8_set_grid(grid)) { std::fprintf(stderr,"e8 grid upload failed\n"); return 0; }
 
     const int I = 256, O = 128, S = 2;
     int nb = (I + T6_QK - 1) / T6_QK;
@@ -154,8 +154,8 @@ static int test_fmt6(int dev) {
         }
     }
     float *got = (float*)std::malloc((size_t)S*O*sizeof(float));
-    ColiCudaTensor *t6 = nullptr;
-    int ok = coli_cuda_matmul(&t6, got, x, q, nullptr, 6, S, I, O, dev, 0);
+    LmaCudaTensor *t6 = nullptr;
+    int ok = lma_cuda_matmul(&t6, got, x, q, nullptr, 6, S, I, O, dev, 0);
     if (!ok) { std::fprintf(stderr,"fmt=6 matmul rejected\n"); return 0; }
     if (!relative_rms(got, want, S*O, 1e-4f)) { std::fprintf(stderr,"fmt=6 matmul mismatch\n"); return 0; }
 
@@ -194,29 +194,29 @@ static int test_fmt6(int dev) {
             want_e[s*I+o] = (float)acc;
         }
     }
-    ColiCudaTensor *tg6=nullptr,*tu6=nullptr,*td6=nullptr;
-    if (!coli_cuda_tensor_upload(&tg6,q, nullptr,6,I,O,dev) ||
-        !coli_cuda_tensor_upload(&tu6,qu,nullptr,6,I,O,dev) ||
-        !coli_cuda_tensor_upload(&td6,qd,nullptr,6,O,I,dev)) {
+    LmaCudaTensor *tg6=nullptr,*tu6=nullptr,*td6=nullptr;
+    if (!lma_cuda_tensor_upload(&tg6,q, nullptr,6,I,O,dev) ||
+        !lma_cuda_tensor_upload(&tu6,qu,nullptr,6,I,O,dev) ||
+        !lma_cuda_tensor_upload(&td6,qd,nullptr,6,O,I,dev)) {
         std::fprintf(stderr,"fmt=6 expert upload failed\n"); return 0;
     }
     float *got_e = (float*)std::malloc((size_t)S*I*sizeof(float));
-    if (!coli_cuda_expert_mlp(tg6,tu6,td6,got_e,x,S)) {
+    if (!lma_cuda_expert_mlp(tg6,tu6,td6,got_e,x,S)) {
         std::fprintf(stderr,"fmt=6 expert_mlp rejected\n"); return 0;
     }
     if (!relative_rms(got_e, want_e, S*I, 2e-4f)) {
         std::fprintf(stderr,"fmt=6 expert_mlp mismatch (device-side rotation?)\n"); return 0;
     }
-    ColiCudaTensor *eg6[2]={tg6,tg6},*eu6[2]={tu6,tu6},*ed6[2]={td6,td6};
+    LmaCudaTensor *eg6[2]={tg6,tg6},*eu6[2]={tu6,tu6},*ed6[2]={td6,td6};
     int erows[2]={1,1};
     float *group_e=(float*)std::malloc((size_t)S*I*sizeof(float));
-    if (!coli_cuda_expert_group(eg6,eu6,ed6,erows,2,group_e,x) ||
+    if (!lma_cuda_expert_group(eg6,eu6,ed6,erows,2,group_e,x) ||
         !relative_rms(group_e,want_e,S*I,2e-4f)) {
         std::fprintf(stderr,"fmt=6 expert_group mismatch\n"); return 0;
     }
 
-    coli_cuda_tensor_free(t6); coli_cuda_tensor_free(tg6);
-    coli_cuda_tensor_free(tu6); coli_cuda_tensor_free(td6);
+    lma_cuda_tensor_free(t6); lma_cuda_tensor_free(tg6);
+    lma_cuda_tensor_free(tu6); lma_cuda_tensor_free(td6);
     std::free(q); std::free(qu); std::free(qd); std::free(x); std::free(want);
     std::free(got); std::free(wrow); std::free(wr2); std::free(g); std::free(u);
     std::free(want_e); std::free(got_e); std::free(group_e);
@@ -235,7 +235,7 @@ static int test_fmt6(int dev) {
  * branches must index correctly (blkO=row>>7, blkI=k>>7, scale index
  * blkO*nblkI+blkI). The e4m3 reference decoder is arithmetic (sign/exp/mant,
  * OCP E4M3-FN policy), not the engine's c_e4m3 LUT, so it cross-checks
- * coli_cuda_fp8_set_lut's uploaded table rather than assuming it -- same
+ * lma_cuda_fp8_set_lut's uploaded table rather than assuming it -- same
  * independence discipline as t8_e4m3_ref's sibling in tests/test_fp8_cuda.cu. */
 static float t8_e4m3_ref(uint8_t b) {
     int s = b >> 7, e = (b >> 3) & 15, m = b & 7;
@@ -257,7 +257,7 @@ static float t8_dequant(const uint8_t *q, const float *scale, int I, int row, in
 
 static int test_fmt8_absorb(int dev) {
     float lut[256]; for (int i = 0; i < 256; i++) lut[i] = t8_e4m3_ref((uint8_t)i);
-    if (!coli_cuda_fp8_set_lut(lut)) { std::fprintf(stderr,"fmt=8 absorb: set_lut failed\n"); return 0; }
+    if (!lma_cuda_fp8_set_lut(lut)) { std::fprintf(stderr,"fmt=8 absorb: set_lut failed\n"); return 0; }
 
     const int H = 2, Q = 40, V = 40, R = 2, K = 140, T = 3, O = H*(Q+V);
     const int nblkO = (O+127)/128, nblkI = (K+127)/128, nblk = nblkO*nblkI;
@@ -269,8 +269,8 @@ static int test_fmt8_absorb(int dev) {
     /* Refusal must have held BEFORE this test ever ran (fmt=8 was invisible to
      * absorb_fmt_ok on unpatched main) -- upload + launch below is the positive
      * side of the same predicate this PR widened. */
-    ColiCudaTensor *wt = nullptr;
-    if (!coli_cuda_tensor_upload(&wt, w, wscale, 8, K, O, dev)) {
+    LmaCudaTensor *wt = nullptr;
+    if (!lma_cuda_tensor_upload(&wt, w, wscale, 8, K, O, dev)) {
         std::fprintf(stderr,"fmt=8 absorb: weight upload rejected\n"); return 0;
     }
 
@@ -283,7 +283,7 @@ static int test_fmt8_absorb(int dev) {
     float *ctx = (float*)std::malloc((size_t)H*V*sizeof(float));
     float scale = 1.f/std::sqrt((float)K);
 
-    if (!coli_cuda_attention_absorb(wt, ctx, q, latent, rope, H, Q, R, V, K, T, scale)) {
+    if (!lma_cuda_attention_absorb(wt, ctx, q, latent, rope, H, Q, R, V, K, T, scale)) {
         std::fprintf(stderr,"fmt=8 absorb: kernel launch rejected (absorb_fmt_ok gate?)\n"); return 0;
     }
 
@@ -318,20 +318,20 @@ static int test_fmt8_absorb(int dev) {
             }
         }
     }
-    coli_cuda_tensor_free(wt);
+    lma_cuda_tensor_free(wt);
     std::free(w); std::free(wscale); std::free(q); std::free(latent); std::free(rope); std::free(ctx);
     return bad == 0;
 }
 
 int main(int argc, char **argv) {
-    int devices[COLI_CUDA_MAX_DEVICES], ndev = argc > 1 ? argc - 1 : 1;
-    if (ndev > COLI_CUDA_MAX_DEVICES) return 2;
+    int devices[LMA_CUDA_MAX_DEVICES], ndev = argc > 1 ? argc - 1 : 1;
+    if (ndev > LMA_CUDA_MAX_DEVICES) return 2;
     for (int i = 0; i < ndev; i++) devices[i] = argc > 1 ? std::atoi(argv[i + 1]) : 0;
-    if (!coli_cuda_init(devices, ndev)) return 77;
-    if (coli_cuda_device_count() != ndev) return 1;
+    if (!lma_cuda_init(devices, ndev)) return 77;
+    if (lma_cuda_device_count() != ndev) return 1;
     int d0 = devices[0], d1 = devices[ndev > 1 ? 1 : 0];
     size_t count = 99, bytes = 99;
-    coli_cuda_stats(-1, &count, &bytes);
+    lma_cuda_stats(-1, &count, &bytes);
     if (count || bytes) return 1;
     const float x[8] = {1, -2, 3, -4, 2, 1, -1, 0.5f};
     float got[4];
@@ -339,16 +339,16 @@ int main(int argc, char **argv) {
     const int8_t q8[8] = {1, 2, 3, 4, -1, 2, -3, 4};
     const float s8[2] = {0.5f, 2.0f};
     const float want8[4] = {-5.0f, -60.0f, 1.5f, 10.0f};
-    ColiCudaTensor *t8 = nullptr;
-    if (!coli_cuda_tensor_upload(&t8, q8, s8, 1, 4, 2, d0)) return 1;
-    if (coli_cuda_tensor_upload(&t8, q8, s8, 1, 5, 2, d0)) return 1;
-    if (ndev > 1 && coli_cuda_tensor_upload(&t8, q8, s8, 1, 4, 2, d1)) return 1;
-    if (!coli_cuda_matmul(&t8, got, x, q8, s8, 1, 2, 4, 2, d0, 0) || !close_enough(got, want8, 4)) return 1;
+    LmaCudaTensor *t8 = nullptr;
+    if (!lma_cuda_tensor_upload(&t8, q8, s8, 1, 4, 2, d0)) return 1;
+    if (lma_cuda_tensor_upload(&t8, q8, s8, 1, 5, 2, d0)) return 1;
+    if (ndev > 1 && lma_cuda_tensor_upload(&t8, q8, s8, 1, 4, 2, d1)) return 1;
+    if (!lma_cuda_matmul(&t8, got, x, q8, s8, 1, 2, 4, 2, d0, 0) || !close_enough(got, want8, 4)) return 1;
     /* Cached tensor must stay callable without live host pointers
      * (CUDA_RELEASE_HOST slots null theirs after upload) — including
      * SUSTAINED reuse, not just the first call. */
     for (int rep = 0; rep < 64; rep++)
-        if (!coli_cuda_matmul(&t8, got, x, nullptr, nullptr, 1, 2, 4, 2, d0, 0) ||
+        if (!lma_cuda_matmul(&t8, got, x, nullptr, nullptr, 1, 2, 4, 2, d0, 0) ||
             !close_enough(got, want8, 4)) return 1;
     /* A tensor uploaded from a TEMPORARY host buffer must survive the buffer
      * being scribbled and freed (the release-host lifecycle). */
@@ -358,35 +358,35 @@ int main(int argc, char **argv) {
         if (!tmpw || !tmps) return 2;
         for (int i = 0; i < 8; i++) tmpw[i] = q8[i];
         tmps[0] = s8[0]; tmps[1] = s8[1];
-        ColiCudaTensor *tt = nullptr;
-        if (!coli_cuda_tensor_upload(&tt, tmpw, tmps, 1, 4, 2, d0)) return 1;
+        LmaCudaTensor *tt = nullptr;
+        if (!lma_cuda_tensor_upload(&tt, tmpw, tmps, 1, 4, 2, d0)) return 1;
         for (int i = 0; i < 8; i++) tmpw[i] = 99;
         std::free(tmpw); std::free(tmps);
-        if (!coli_cuda_matmul(&tt, got, x, nullptr, nullptr, 1, 2, 4, 2, d0, 0) ||
+        if (!lma_cuda_matmul(&tt, got, x, nullptr, nullptr, 1, 2, 4, 2, d0, 0) ||
             !close_enough(got, want8, 4)) return 1;
-        coli_cuda_tensor_free(tt);
+        lma_cuda_tensor_free(tt);
     }
     /* Upload failures must be graceful and must not corrupt accounting —
      * and must not poison LATER healthy launches (sticky-error regression). */
     {
         size_t c0 = 0, b0 = 0, c1 = 0, b1 = 0;
-        coli_cuda_stats(-1, &c0, &b0);
-        ColiCudaTensor *bad = nullptr;
-        if (coli_cuda_tensor_upload(&bad, q8, s8, 1, 4, 2, 9999)) return 1;
+        lma_cuda_stats(-1, &c0, &b0);
+        LmaCudaTensor *bad = nullptr;
+        if (lma_cuda_tensor_upload(&bad, q8, s8, 1, 4, 2, 9999)) return 1;
         /* 99, not 7: this line asserted "unknown format must fail" with 7 back
          * when 7 WAS unknown. db0c80f made fmt=7 (MXFP4) real for Kimi K3's
          * CUDA tier and the expectation silently inverted -- v1.6.0's first
          * real-GPU run failed exactly here (#971). Unknown must stay unknown. */
-        if (coli_cuda_tensor_upload(&bad, q8, s8, 99, 4, 2, d0)) return 1;
-        if (coli_cuda_tensor_upload(&bad, q8, nullptr, 1, 4, 2, d0)) return 1;
-        if (coli_cuda_tensor_upload(&bad, nullptr, s8, 1, 4, 2, d0)) return 1;
+        if (lma_cuda_tensor_upload(&bad, q8, s8, 99, 4, 2, d0)) return 1;
+        if (lma_cuda_tensor_upload(&bad, q8, nullptr, 1, 4, 2, d0)) return 1;
+        if (lma_cuda_tensor_upload(&bad, nullptr, s8, 1, 4, 2, d0)) return 1;
         /* Deliberate ~16 TB ask: the backend PRINTS its out-of-memory line
          * here and that is the expected outcome, not a swallowed failure --
          * announce it so the stderr does not read like a bug (#971 round 1). */
         std::fprintf(stderr, "expecting one out-of-memory line next (deliberate ~16 TB negative case):\n");
-        if (coli_cuda_tensor_upload(&bad, q8, s8, 1, 1 << 20, 1 << 24, d0)) return 1; /* ~16 TB */
+        if (lma_cuda_tensor_upload(&bad, q8, s8, 1, 1 << 20, 1 << 24, d0)) return 1; /* ~16 TB */
         if (bad) return 1;
-        coli_cuda_stats(-1, &c1, &b1);
+        lma_cuda_stats(-1, &c1, &b1);
         if (c0 != c1 || b0 != b1) return 1;
         /* fmt=7 is REAL now (db0c80f): a valid MXFP4 upload must succeed.
          * Smoke, not correctness -- e2m1 nibbles 2/byte, one ue8m0 exponent
@@ -397,56 +397,56 @@ int main(int argc, char **argv) {
             const int I7 = 64, O7 = 4, NG7 = (I7 + 31) / 32;
             std::vector<uint8_t> w7((size_t)O7 * ((I7 + 1) / 2), 0);
             std::vector<uint8_t> s7((size_t)O7 * NG7, 127); /* e8m0 127 = scale 1.0 */
-            ColiCudaTensor *t7 = nullptr;
-            if (!coli_cuda_tensor_upload(&t7, w7.data(),
+            LmaCudaTensor *t7 = nullptr;
+            if (!lma_cuda_tensor_upload(&t7, w7.data(),
                                          reinterpret_cast<const float *>(s7.data()),
                                          7, I7, O7, d0) || !t7) {
                 std::fprintf(stderr, "fmt=7 (MXFP4) upload rejected -- the format is real since db0c80f\n");
                 return 1;
             }
-            coli_cuda_tensor_free(t7);
+            lma_cuda_tensor_free(t7);
         }
         /* healthy launch immediately after the failed allocation */
-        if (!coli_cuda_matmul(&t8, got, x, nullptr, nullptr, 1, 2, 4, 2, d0, 0) ||
+        if (!lma_cuda_matmul(&t8, got, x, nullptr, nullptr, 1, 2, 4, 2, d0, 0) ||
             !close_enough(got, want8, 4)) return 1;
     }
     /* Fault injection hook: on/off, restores cleanly. */
-    if (setenv("COLI_GPU_FAIL_AFTER", "0", 1)) return 2;
-    if (coli_cuda_matmul(&t8, got, x, nullptr, nullptr, 1, 2, 4, 2, d0, 0)) return 1;
-    if (unsetenv("COLI_GPU_FAIL_AFTER")) return 2;
-    if (!coli_cuda_matmul(&t8, got, x, nullptr, nullptr, 1, 2, 4, 2, d0, 0) ||
+    if (setenv("LMA_GPU_FAIL_AFTER", "0", 1)) return 2;
+    if (lma_cuda_matmul(&t8, got, x, nullptr, nullptr, 1, 2, 4, 2, d0, 0)) return 1;
+    if (unsetenv("LMA_GPU_FAIL_AFTER")) return 2;
+    if (!lma_cuda_matmul(&t8, got, x, nullptr, nullptr, 1, 2, 4, 2, d0, 0) ||
         !close_enough(got, want8, 4)) return 1;
     const int8_t q8b[8]={-1,-2,-3,-4, 1,-2,3,-4};
     const float s8b[2]={1.f,.5f},want8b[4]={10.f,15.f,-3.f,-2.5f};
-    if(!coli_cuda_tensor_update(t8,q8b,s8b)||
-       !coli_cuda_matmul(&t8,got,x,q8b,s8b,1,2,4,2,d0,0)||
+    if(!lma_cuda_tensor_update(t8,q8b,s8b)||
+       !lma_cuda_matmul(&t8,got,x,q8b,s8b,1,2,4,2,d0,0)||
        !close_enough(got,want8b,4))return 1;
 
     /* Rows [-8,-1,0,7] and [1,2,3,4], packed low nibble first. */
     const uint8_t q4[4] = {0x70, 0xf8, 0xa9, 0xcb};
     const float s4[2] = {1.0f, 0.25f};
     const float want4[2] = {-34.0f, -2.5f};
-    ColiCudaTensor *t4 = nullptr;
-    if (!coli_cuda_matmul(&t4, got, x, q4, s4, 2, 1, 4, 2, d1, 0) || !close_enough(got, want4, 2)) return 1;
+    LmaCudaTensor *t4 = nullptr;
+    if (!lma_cuda_matmul(&t4, got, x, q4, s4, 2, 1, 4, 2, d1, 0) || !close_enough(got, want4, 2)) return 1;
 
     const uint8_t q2[2] = {0xe4, 0x1b};
     const float s2[2] = {0.5f, 2.0f};
     const float want2[2] = {-2.0f, 12.0f};
-    ColiCudaTensor *t2 = nullptr;
-    if (!coli_cuda_matmul(&t2, got, x, q2, s2, 3, 1, 4, 2, d1, 0) || !close_enough(got, want2, 2)) return 1;
+    LmaCudaTensor *t2 = nullptr;
+    if (!lma_cuda_matmul(&t2, got, x, q2, s2, 3, 1, 4, 2, d1, 0) || !close_enough(got, want2, 2)) return 1;
 
     const float wf[8] = {1, 0, -1, 2, 0.5f, 0.5f, 0.5f, 0.5f};
     const float wantf[2] = {-10.0f, -1.0f};
-    ColiCudaTensor *tf = nullptr;
-    if (!coli_cuda_matmul(&tf, got, x, wf, nullptr, 0, 1, 4, 2, d0, 0) || !close_enough(got, wantf, 2)) return 1;
+    LmaCudaTensor *tf = nullptr;
+    if (!lma_cuda_matmul(&tf, got, x, wf, nullptr, 0, 1, 4, 2, d0, 0) || !close_enough(got, wantf, 2)) return 1;
 
     const float eg[8] = {1,0,0,0, 0,1,0,0};
     const float eu[8] = {1,0,0,0, 0,1,0,0};
     const float ed[8] = {1,0, 0,1, 1,1, 1,-1};
-    ColiCudaTensor *tg=nullptr,*tu=nullptr,*td=nullptr;
-    if (!coli_cuda_tensor_upload_g(&tg,eg,nullptr,0,4,2,d0,0) ||
-        !coli_cuda_tensor_upload_g(&tu,eu,nullptr,0,4,2,d0,0) ||
-        !coli_cuda_tensor_upload_g(&td,ed,nullptr,0,2,4,d0,0)) return 1;
+    LmaCudaTensor *tg=nullptr,*tu=nullptr,*td=nullptr;
+    if (!lma_cuda_tensor_upload_g(&tg,eg,nullptr,0,4,2,d0,0) ||
+        !lma_cuda_tensor_upload_g(&tu,eu,nullptr,0,4,2,d0,0) ||
+        !lma_cuda_tensor_upload_g(&td,ed,nullptr,0,2,4,d0,0)) return 1;
     float expert[8], want_expert[8];
     for(int s=0;s<2;s++){
         float a=x[s*4], b=x[s*4+1];
@@ -454,24 +454,24 @@ int main(int argc, char **argv) {
         want_expert[s*4]=a; want_expert[s*4+1]=b;
         want_expert[s*4+2]=a+b; want_expert[s*4+3]=a-b;
     }
-    if (!coli_cuda_expert_mlp(tg,tu,td,expert,x,2) ||
+    if (!lma_cuda_expert_mlp(tg,tu,td,expert,x,2) ||
         !close_enough(expert,want_expert,8)) return 1;
-    ColiCudaTensor *gates[2]={tg,tg},*ups[2]={tu,tu},*downs[2]={td,td};
+    LmaCudaTensor *gates[2]={tg,tg},*ups[2]={tu,tu},*downs[2]={td,td};
     int group_rows[2]={1,1}; float grouped[8];
-    if (!coli_cuda_expert_group(gates,ups,downs,group_rows,2,grouped,x) ||
+    if (!lma_cuda_expert_group(gates,ups,downs,group_rows,2,grouped,x) ||
         !close_enough(grouped,want_expert,8)) return 1;
 
     const float aw[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
     const float aq[4]={1,2,.5f,-.5f},al[12]={1,0,0,0, 0,1,0,0, 0,0,1,0};
     const float ar[6]={1,0, 0,1, 1,1};float actx[2],aref[2];
-    ColiCudaTensor *at=nullptr;if(!coli_cuda_tensor_upload_g(&at,aw,nullptr,0,4,4,d0,0))return 1;
+    LmaCudaTensor *at=nullptr;if(!lma_cuda_tensor_upload_g(&at,aw,nullptr,0,4,4,d0,0))return 1;
     float score[3];for(int t=0;t<3;t++)score[t]=aq[0]*al[t*4]+aq[1]*al[t*4+1]+aq[2]*ar[t*2]+aq[3]*ar[t*2+1];
     float mx=score[0],z=0;for(int t=1;t<3;t++)mx=score[t]>mx?score[t]:mx;
     for(int t=0;t<3;t++){score[t]=std::exp(score[t]-mx);z+=score[t];}for(int t=0;t<3;t++)score[t]/=z;
     for(int v=0;v<2;v++){aref[v]=0;for(int t=0;t<3;t++)aref[v]+=score[t]*al[t*4+2+v];}
-    if(!coli_cuda_attention_absorb(at,actx,aq,al,ar,1,2,2,2,4,3,1.f)||
+    if(!lma_cuda_attention_absorb(at,actx,aq,al,ar,1,2,2,2,4,3,1.f)||
        !close_enough(actx,aref,2))return 1;
-    coli_cuda_tensor_free(at);
+    lma_cuda_tensor_free(at);
 
     /* Native s4 WMMA path: compare the quantized-activation result against the
        existing FP32-activation/s4-weight grouped implementation. */
@@ -482,94 +482,94 @@ int main(int argc, char **argv) {
     }
     for(int i=0;i<32;i++)ws4[i]=0.01f+(i%5)*0.002f;
     for(int i=0;i<64;i++)gx4[i]=std::sin((float)(i+1)*0.17f)*2.f;
-    ColiCudaTensor *g4=nullptr,*u4=nullptr,*d4=nullptr;
-    if(!coli_cuda_tensor_upload_g(&g4,w4,ws4,2,32,32,d0,0)||
-       !coli_cuda_tensor_upload_g(&u4,w4,ws4,2,32,32,d0,0)||
-       !coli_cuda_tensor_upload_g(&d4,w4,ws4,2,32,32,d0,0))return 1;
-    ColiCudaTensor *gg4[2]={g4,g4},*ug4[2]={u4,u4},*dg4[2]={d4,d4};
-    if(!coli_cuda_expert_group(gg4,ug4,dg4,group_rows,2,scalar4,gx4))return 1;
-    if(!coli_cuda_expert_group_issue(gg4,ug4,dg4,group_rows,2,gx4))return 1;
-    const float *async_result=coli_cuda_expert_group_take(d0);
+    LmaCudaTensor *g4=nullptr,*u4=nullptr,*d4=nullptr;
+    if(!lma_cuda_tensor_upload_g(&g4,w4,ws4,2,32,32,d0,0)||
+       !lma_cuda_tensor_upload_g(&u4,w4,ws4,2,32,32,d0,0)||
+       !lma_cuda_tensor_upload_g(&d4,w4,ws4,2,32,32,d0,0))return 1;
+    LmaCudaTensor *gg4[2]={g4,g4},*ug4[2]={u4,u4},*dg4[2]={d4,d4};
+    if(!lma_cuda_expert_group(gg4,ug4,dg4,group_rows,2,scalar4,gx4))return 1;
+    if(!lma_cuda_expert_group_issue(gg4,ug4,dg4,group_rows,2,gx4))return 1;
+    const float *async_result=lma_cuda_expert_group_take(d0);
     if(!async_result)return 1;
     std::memcpy(async4,async_result,sizeof(async4));
     if(std::memcmp(async4,scalar4,sizeof(async4))){
         std::fprintf(stderr,"async packed-s4 group differs from sync path\n");
         return 1;
     }
-    setenv("COLI_CUDA_TC_INT4","1",1);
-    setenv("COLI_CUDA_TC_MIN_ROWS","1",1);
+    setenv("LMA_CUDA_TC_INT4","1",1);
+    setenv("LMA_CUDA_TC_MIN_ROWS","1",1);
     /* #1499: poison the destination first. The device buffer this call writes
      * still held scalar4 from the call above, so an EMPTY tensor-core kernel
      * (rocWMMA, or a card below sm_75 with the body compiled out) left it
      * untouched and the comparison below passed against itself. */
     for(int i=0;i<64;i++)tensor4[i]=-12345.f;
-    if(!coli_cuda_expert_group(gg4,ug4,dg4,group_rows,2,tensor4,gx4)||
+    if(!lma_cuda_expert_group(gg4,ug4,dg4,group_rows,2,tensor4,gx4)||
        !relative_rms(tensor4,scalar4,64,0.30f))return 1;
-    if(!coli_cuda_expert_group_pinned(gg4,ug4,dg4,group_rows,2,pinned4,gx4,1)||
+    if(!lma_cuda_expert_group_pinned(gg4,ug4,dg4,group_rows,2,pinned4,gx4,1)||
        std::memcmp(pinned4,scalar4,sizeof(pinned4))){
         std::fprintf(stderr,"pinned CUDA group did not bypass W4A4 Tensor Cores\n");
         return 1;
     }
-    unsetenv("COLI_CUDA_TC_INT4");
-    unsetenv("COLI_CUDA_TC_MIN_ROWS");
-    setenv("COLI_CUDA_TC_W4A16","1",1);
-    setenv("COLI_CUDA_TC_W4A16_MIN","1",1);
-    if(!coli_cuda_expert_group_pinned(gg4,ug4,dg4,group_rows,2,pinned4,gx4,1)||
+    unsetenv("LMA_CUDA_TC_INT4");
+    unsetenv("LMA_CUDA_TC_MIN_ROWS");
+    setenv("LMA_CUDA_TC_W4A16","1",1);
+    setenv("LMA_CUDA_TC_W4A16_MIN","1",1);
+    if(!lma_cuda_expert_group_pinned(gg4,ug4,dg4,group_rows,2,pinned4,gx4,1)||
        std::memcmp(pinned4,scalar4,sizeof(pinned4))){
         std::fprintf(stderr,"pinned CUDA group did not bypass W4A16 Tensor Cores\n");
         return 1;
     }
-    unsetenv("COLI_CUDA_TC_W4A16");
-    unsetenv("COLI_CUDA_TC_W4A16_MIN");
-    coli_cuda_tensor_free(g4);coli_cuda_tensor_free(u4);coli_cuda_tensor_free(d4);
+    unsetenv("LMA_CUDA_TC_W4A16");
+    unsetenv("LMA_CUDA_TC_W4A16_MIN");
+    lma_cuda_tensor_free(g4);lma_cuda_tensor_free(u4);lma_cuda_tensor_free(d4);
     uint64_t group_calls=0,group_experts=0,group_total_rows=0;
-    coli_cuda_group_stats(&group_calls,&group_experts,&group_total_rows,nullptr,nullptr,nullptr);
+    lma_cuda_group_stats(&group_calls,&group_experts,&group_total_rows,nullptr,nullptr,nullptr);
     if(group_calls!=6||group_experts!=12||group_total_rows!=12) return 1;
 
-    coli_cuda_stats(-1, &count, &bytes);
+    lma_cuda_stats(-1, &count, &bytes);
     if (count != 7 || bytes != 166) {
         std::fprintf(stderr, "unexpected CUDA stats: %zu tensors, %zu bytes\n", count, bytes);
         return 1;
     }
-    if (coli_cuda_tensor_device(t8) != d0 || coli_cuda_tensor_device(tf) != d0 ||
-        coli_cuda_tensor_device(t4) != d1 || coli_cuda_tensor_device(t2) != d1) return 1;
-    coli_cuda_stats(d0, &count, &bytes);
+    if (lma_cuda_tensor_device(t8) != d0 || lma_cuda_tensor_device(tf) != d0 ||
+        lma_cuda_tensor_device(t4) != d1 || lma_cuda_tensor_device(t2) != d1) return 1;
+    lma_cuda_stats(d0, &count, &bytes);
     if (ndev > 1) {
         if (count != 5 || bytes != 144) return 1;
-        coli_cuda_stats(d1, &count, &bytes);
+        lma_cuda_stats(d1, &count, &bytes);
         if (count != 2 || bytes != 22) return 1;
     } else if (count != 7 || bytes != 166) return 1;
 
-    coli_cuda_tensor_free(t8);
-    coli_cuda_tensor_free(t4);
-    coli_cuda_tensor_free(t2);
-    coli_cuda_tensor_free(tf);
-    coli_cuda_tensor_free(tg);
-    coli_cuda_tensor_free(tu);
-    coli_cuda_tensor_free(td);
-    coli_cuda_stats(-1, &count, &bytes);
+    lma_cuda_tensor_free(t8);
+    lma_cuda_tensor_free(t4);
+    lma_cuda_tensor_free(t2);
+    lma_cuda_tensor_free(tf);
+    lma_cuda_tensor_free(tg);
+    lma_cuda_tensor_free(tu);
+    lma_cuda_tensor_free(td);
+    lma_cuda_stats(-1, &count, &bytes);
     if (count || bytes) return 1;
 
     /* fmt=6 runs after the stats assertions above, which pin exact tensor counts. */
     if (!test_fmt6(d0)) return 1;
-    coli_cuda_stats(-1, &count, &bytes);
+    lma_cuda_stats(-1, &count, &bytes);
     if (count || bytes) { std::fprintf(stderr,"fmt=6 leaked tensors\n"); return 1; }
 
     /* fmt=8 absorb: same self-contained lifecycle discipline as fmt=6 above,
      * BOTH halves. The byte half is load-bearing history: an earlier vintage of
-     * this feature found coli_cuda_tensor_free subtracting per-row scale bytes
+     * this feature found lma_cuda_tensor_free subtracting per-row scale bytes
      * for a per-block-scaled fmt=8 tensor (upload charged scale_count =
      * ceil(O/128)*ng, free subtracted O*ng), so the `tensor_bytes >= bytes`
      * guard silently declined the subtraction and the diagnostic VRAM counter
      * stuck non-zero forever after freeing ANY fmt=8 tensor. free's accounting
      * now mirrors upload's charge expression exactly (see the comment in
-     * coli_cuda_tensor_free), and this is the assertion that keeps the two
+     * lma_cuda_tensor_free), and this is the assertion that keeps the two
      * from drifting apart again for a tracked fmt=8 tensor. */
     if (!test_fmt8_absorb(d0)) return 1;
-    coli_cuda_stats(-1, &count, &bytes);
+    lma_cuda_stats(-1, &count, &bytes);
     if (count || bytes) { std::fprintf(stderr,"fmt=8 absorb leaked tensors\n"); return 1; }
 
-    coli_cuda_shutdown();
+    lma_cuda_shutdown();
     std::printf("cuda backend: q8/q4/q2/f32/e8 correctness ok on %d device(s)\n", ndev);
     return 0;
 }

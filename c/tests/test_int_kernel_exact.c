@@ -123,11 +123,11 @@ int main(void){
      * lascia un resto O%16 cosi' il ramo AMX consegna anche la coda di
      * output al path vettoriale. */
     {
-#ifdef COLI_HAVE_AMX_I4P
+#ifdef LMA_HAVE_AMX_I4P
         /* Emulator runs (Intel SDE) cannot take the OS tile-arming path; the
          * arming is engine POLICY, the tile math is what this gate proves, so
          * the test may force the state to reach the AMX kernel under SDE. */
-        if(getenv("COLI_TEST_FORCE_AMX")){ coli_amx_state=1; }
+        if(getenv("LMA_TEST_FORCE_AMX")){ lma_amx_state=1; }
 #endif
         int cases[][3]={{64,2048,3},{64,2048,9},{128,2048,18},{64,2000,6},{64,128,18}};
         for(int t=0;t<5;t++){

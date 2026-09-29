@@ -22,7 +22,7 @@ class Glm53MetalStatsSourceTest(unittest.TestCase):
 
     def test_attempt_counted_at_routed_dispatch(self):
         self.assertIn("g_metal_moe_attempt++;", self.src)
-        self.assertIn("metal_done = coli_metal_moe_block_clamped(", self.src)
+        self.assertIn("metal_done = lma_metal_moe_block_clamped(", self.src)
 
     def test_success_and_fallback_counted(self):
         self.assertIn("g_metal_moe_ok++;", self.src)

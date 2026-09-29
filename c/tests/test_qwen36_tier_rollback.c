@@ -1,34 +1,34 @@
 /* Fail each matrix upload in turn: unpublished handles must be reclaimed. */
 #include <stdio.h>
 #include "../compat.h"
-#define coli_cuda_tensor_upload fixture_upload
-#define coli_cuda_tensor_upload_g fixture_upload_g
-#define coli_cuda_tensor_free fixture_free
+#define lma_cuda_tensor_upload fixture_upload
+#define lma_cuda_tensor_upload_g fixture_upload_g
+#define lma_cuda_tensor_free fixture_free
 #include "qwen36_fake_cuda.h"
-#undef coli_cuda_tensor_upload
-#undef coli_cuda_tensor_upload_g
-#undef coli_cuda_tensor_free
+#undef lma_cuda_tensor_upload
+#undef lma_cuda_tensor_upload_g
+#undef lma_cuda_tensor_free
 static int attempt, fail_at, freed, expected_fmt, unexpected_fmt;
-int coli_cuda_tensor_upload(ColiCudaTensor **t,const void *w,const float *s,
+int lma_cuda_tensor_upload(LmaCudaTensor **t,const void *w,const float *s,
                            int fmt,int I,int O,int dev) {
     if(fmt!=expected_fmt) unexpected_fmt=1;
     if(++attempt==fail_at) return 0;
     return fixture_upload(t,w,s,fmt,I,O,dev);
 }
-int coli_cuda_tensor_upload_g(ColiCudaTensor **t,const void *w,const float *s,
+int lma_cuda_tensor_upload_g(LmaCudaTensor **t,const void *w,const float *s,
                              int fmt,int I,int O,int dev,int gs) {
     if(fmt!=expected_fmt) unexpected_fmt=1;
     if(++attempt==fail_at) return 0;
     return fixture_upload_g(t,w,s,fmt,I,O,dev,gs);
 }
-void coli_cuda_tensor_free(ColiCudaTensor *t) { if(t) freed++; fixture_free(t); }
+void lma_cuda_tensor_free(LmaCudaTensor *t) { if(t) freed++; fixture_free(t); }
 #include "../qwen36_tier.c"
 int main(void) {
     enum { D=64 };
     unsigned char w[D*D]={0}; float sc[D], lut[256]={0};
     const int formats[]={1,2,4,8};
     for(int i=0;i<D;i++) sc[i]=1;
-    setenv("COLI_CUDA","1",1); setenv("COLI_GPUS","0",1);
+    setenv("LMA_CUDA","1",1); setenv("LMA_GPUS","0",1);
     setenv("QT_NO_WARMSTART","1",1); setenv("HEAT_FILE","",1);
     setenv("CUDA_EXPERT_GB","0.0625",1);
     for(int mode=0;mode<4;mode++) for(fail_at=1;fail_at<=3;fail_at++) {

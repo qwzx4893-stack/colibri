@@ -1,7 +1,7 @@
 """Inkling auto-sized its expert cache from mem_avail_bytes().
 
 On Windows that function took the #else return 0 branch, so every
-`coli serve --model <inkling>` with no --cap used 16 experts/layer
+`lmatomic serve --model <inkling>` with no --cap used 16 experts/layer
 regardless of installed RAM, and /health reported ram_total_gb 0.0.
 """
 import ctypes

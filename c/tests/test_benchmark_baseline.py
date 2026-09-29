@@ -54,7 +54,7 @@ class BaselineTest(unittest.TestCase):
                 baseline.collect(self.spec, self.workload, self.sha, item['engine'], item['round'], self.results)
 
     def change_report(self, change):
-        path = self.results / 'colibri-r1-c1.json'
+        path = self.results / 'lmatomic-r1-c1.json'
         data = json.loads(path.read_text(encoding="utf-8"))
         change(data)
         path.write_text(json.dumps(data))
@@ -66,7 +66,7 @@ class BaselineTest(unittest.TestCase):
         spec, workload, sha = baseline.load_manifest(self.manifest)
         self.assertEqual((sha, workload), (self.sha, self.workload))
         self.assertEqual([x['engine'] for x in baseline.plan(spec)],
-                         ['colibri', 'sglang', 'vllm', 'sglang', 'vllm', 'colibri'])
+                         ['lmatomic', 'sglang', 'vllm', 'sglang', 'vllm', 'lmatomic'])
 
     def test_artifact_mismatch_requires_deployment_mode(self):
         self.spec['engines']['vllm']['quantization'] = 'int4'
@@ -104,9 +104,9 @@ class BaselineTest(unittest.TestCase):
 
     def test_missing_cell_is_not_dropped(self):
         self.collect_all()
-        (self.results / 'colibri-r1-c1.json').unlink()
+        (self.results / 'lmatomic-r1-c1.json').unlink()
         report = self.compare()
-        self.assertIn('missing colibri-r1-c1', report['issues'])
+        self.assertIn('missing lmatomic-r1-c1', report['issues'])
         self.assertIsNone(report['cells'][0]['aggregate_completion_tokens_per_second']['median'])
         self.assertEqual(report['cells'][0]['rounds_measured'], 1)
 
@@ -117,7 +117,7 @@ class BaselineTest(unittest.TestCase):
                      lambda d: d['summary'].update(successful_completion_tokens_per_second=999),
                      lambda d: d['requests'].pop()]
         self.collect_all()
-        path = self.results / 'colibri-r1-c1.json'
+        path = self.results / 'lmatomic-r1-c1.json'
         original = path.read_text(encoding="utf-8")
         for mutate in mutations:
             path.write_text(original)
@@ -143,11 +143,11 @@ class BaselineTest(unittest.TestCase):
             return rows, http.summarize(rows, 1)
         with patch.object(http, 'run', side_effect=fail) as run, contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(baseline.collect(self.spec, self.workload, self.sha,
-                                              'colibri', 1, self.results), 1)
+                                              'lmatomic', 1, self.results), 1)
             self.assertEqual(run.call_count, 1)
             with self.assertRaisesRegex(ValueError, 'already'):
-                baseline.collect(self.spec, self.workload, self.sha, 'colibri', 1, self.results)
-        data = json.loads((self.results / 'colibri-r1-c1.json').read_text(encoding="utf-8"))
+                baseline.collect(self.spec, self.workload, self.sha, 'lmatomic', 1, self.results)
+        data = json.loads((self.results / 'lmatomic-r1-c1.json').read_text(encoding="utf-8"))
         self.assertEqual(data['status'], 'warmup_failed')
         self.assertEqual(data['requests'], [])
 
@@ -155,7 +155,7 @@ class BaselineTest(unittest.TestCase):
         with patch.dict('os.environ', {'OPENAI_API_KEY': 'fixture-secret'}), \
                 patch.object(http, 'run', side_effect=self.fake_run) as run, \
                 contextlib.redirect_stdout(io.StringIO()):
-            baseline.collect(self.spec, self.workload, self.sha, 'colibri', 1, self.results)
+            baseline.collect(self.spec, self.workload, self.sha, 'lmatomic', 1, self.results)
         self.assertEqual(run.call_args.kwargs['key'], 'fixture-secret')
         for path in self.results.glob('*.json'):
             self.assertNotIn('fixture-secret', path.read_text(encoding="utf-8"))

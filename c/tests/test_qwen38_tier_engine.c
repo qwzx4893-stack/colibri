@@ -41,15 +41,15 @@ int main(void) {
     setenv("OMP_NUM_THREADS", "2", 1);
     setenv("NOSTREAM", "1", 1);
     setenv("USAGE_SAVE", "0", 1);               /* leave the fixture directory alone */
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", "0", 1);
     setenv("QT_NO_WARMSTART", "1", 1);
     /* Deterministic residency: the uploader is a thread, and on a two-vCPU
      * runner it did not run once during the eight tokens (queue of six,
      * 0 uploads, 0 hits, then five FAILs). With QT_UPLOAD_SYNC every
      * promotion is resident before the next group is issued. */
     setenv("QT_UPLOAD_SYNC", "1", 1);
-    setenv("COLI_PLACE", "off", 1);
+    setenv("LMA_PLACE", "off", 1);
     setenv("HEAT_FILE", "", 1);
     /* the fake backend counts matmuls but computes nothing, so a trunk matrix
      * placed on it would answer garbage; keep the trunk on the CPU here (the
@@ -103,7 +103,7 @@ int main(void) {
     printf(" trunk on the fake tier\n");
     setenv("Q38_TRUNK_GPU", "1", 1);
     setenv("Q38_TRUNK_MIN_KB", "0", 1);
-    setenv("COLI_PLACE", "auto", 1);             /* the placer decides per offer */
+    setenv("LMA_PLACE", "auto", 1);             /* the placer decides per offer */
     setenv("CUDA_EXPERT_GB", "0.5", 1);          /* room for the trunk and every expert */
     fake_dense_compute = 1; fake_uploads = 0;
     rc = qwen38_main_unused(4, argv);

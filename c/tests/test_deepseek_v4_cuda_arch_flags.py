@@ -2,7 +2,7 @@
 
 The object is named after its source, but its contents come from
 $(NVCC) $(V4_NVCCFLAGS): ``-arch=$(CUDA_ARCH)`` (or the -gencode preset), the
--DCOLI_DSV4_NO_TC guard and the DeepGEMM defines. Timestamps cannot tell those
+-DLMA_DSV4_NO_TC guard and the DeepGEMM defines. Timestamps cannot tell those
 apart, so without a record of the command make reports "is up to date" and
 reuses the previous object (#1702 is the C-side case; #1707 fixed the units,
 this is the nvcc side):
@@ -114,7 +114,7 @@ class DeepseekV4CudaArchFlagsTest(unittest.TestCase):
                          f"{OBJ} was reused after the gencode preset changed")
 
     def test_changed_no_tc_rebuilds(self):
-        """NO_TC adds -DCOLI_DSV4_NO_TC to the nvcc line, same object name."""
+        """NO_TC adds -DLMA_DSV4_NO_TC to the nvcc line, same object name."""
         self.assertEqual(self.build("CUDA=1", "CUDA_ARCH=sm_86", "NO_TC=0"), 1)
         self.assertEqual(self.build("CUDA=1", "CUDA_ARCH=sm_86", "NO_TC=1"), 1,
                          f"{OBJ} was reused after NO_TC changed")

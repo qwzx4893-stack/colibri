@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manual end-to-end tool-calling probe against a running colibri server (#401).
+"""Manual end-to-end tool-calling probe against a running lmatomic server (#401).
 
 Runs a real two-turn loop against the OpenAI-compatible endpoint: declare a tool, let the
 model call it, execute it locally, feed the result back, and check the model uses it.

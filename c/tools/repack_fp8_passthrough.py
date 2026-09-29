@@ -3,9 +3,9 @@ container (byte-preserved, no dequant/requant).
 
 fmt=8 is a PUBLIC ordinal. This tool's output format was minted fmt=6 during
 this branch's original development, before dev's own #465 (E8/IQ3) claimed
-that ordinal upstream and merged it into dev as a REAL fmt=6 (colibri.c's
+that ordinal upstream and merged it into dev as a REAL fmt=6 (glm52.c's
 qt_resolve_fmt, quant.h's E8 constants); re-tagged fmt=100 (PRIVATE ORDINAL
-BLOCK, see colibri.c's QT struct comment) from that point forward -- this
+BLOCK, see glm52.c's QT struct comment) from that point forward -- this
 tool has never emitted a container claiming ordinal 6 -- graduated to fmt=7
 when the maintainer assigned that ordinal on #524, and renumbered to fmt=8
 after #705 merged MXFP4 as fmt=7 while this PR was open. Nothing this tool
@@ -16,7 +16,7 @@ different, lossy format), this tool copies the fp8 weight bytes AS-IS and only
 renames/reshapes the scale sidecar to the engine's `.qs` convention. Same 8
 bits/weight streaming cost as the source, zero additional quantization loss.
 
-THE DESIGN LANDMINE (see qt_resolve_fmt in colibri.c, c/quant.h's E4M3_LUT
+THE DESIGN LANDMINE (see qt_resolve_fmt in glm52.c, c/quant.h's E4M3_LUT
 comment): the engine tells fmt=8 (this tool's output) apart from fmt=1 (plain
 int8) ONLY by scale-array geometry -- per-row for fmt=1, per-128x128-block for
 fmt=8. This tool must therefore emit .qs sidecars whose byte count is EXACTLY
@@ -51,7 +51,7 @@ STAMPABLE_KINDS instead.
 
 WHICH TENSORS ARE STAMPABLE is a READER-side fact, not a writer's choice. Only
 qt_from_disk consults the stamp map; the three routed-expert load sites
-(expert_load_impl and friends, colibri.c) call qt_resolve_fmt with
+(expert_load_impl and friends, glm52.c) call qt_resolve_fmt with
 stamped_name=NULL, so a stamp on a routed expert would be written and never
 read. docs/FORMATS.md states the same thing from the registry's side ("the
 routed-expert load sites ... pass stamped_name=NULL, so the MANDATORY stamp is
@@ -97,7 +97,7 @@ exactly one respect this tool has to honour: they are never stamped (see WHICH
 TENSORS ARE STAMPABLE above), so their format is decided by byte arithmetic
 alone and _check_geometry keeps the unconditional collision refusal for them.
 The engine's CPU routed-expert path dispatches them correctly -- expert_ffn ->
-expert_gate_up/matmul_qt (colibri.c), whose fmt==8 branch calls matmul_fp8;
+expert_gate_up/matmul_qt (glm52.c), whose fmt==8 branch calls matmul_fp8;
 the CUDA grouped-expert path refuses fmt>3 host-side and falls back to that CPU
 path rather than mis-decoding them.
 
@@ -108,8 +108,8 @@ and PASSTHROUGH_KINDS below. This is a pure pass-through, not a repack: no
 `.qs` sidecar, no stamp, no `_check_geometry` involvement, dtype unchanged. It
 is exactly the code path the engine already runs today against a raw,
 unrepacked source directory (`ld`/`qt_from_disk`'s fallback to `st_read_f32`
-when no `.qs` sidecar exists, colibri.c) -- nothing new is exercised on the
-read side. `main()` also copies `config.json` (mandatory, colibri.c's
+when no `.qs` sidecar exists, glm52.c) -- nothing new is exercised on the
+read side. `main()` also copies `config.json` (mandatory, glm52.c's
 load_cfg) and `generation_config.json` (best-effort) from --indir into
 --outdir. Together with kv_b_proj emission below, this makes the tool's
 output a standalone-loadable model directory on its own: both halves of the
@@ -120,21 +120,21 @@ preserved fp8 weight + renamed `.qs` scale sidecar, stamped (it clears the
 collision shape the same way o_proj does -- M1 audit, GLM-5.2's kv_b_proj is
 never at the ambiguous [O,I] this tool's `_check_geometry` guards). The
 engine side of this two-sided integration now exists on both backends:
-colibri.c's MLA-absorption path (qt_addrow/qt_matvec_rows, called only on
+glm52.c's MLA-absorption path (qt_addrow/qt_matvec_rows, called only on
 l->kv_b) carries explicit fmt==8 decode arms, and the CUDA absorb kernels
 decode fmt=8 through weight_at/absorb_scale (admitted by
-coli_cuda_weight_at_supported, uploads gated on the published e4m3 LUT).
+lma_cuda_weight_at_supported, uploads gated on the published e4m3 LUT).
 A container minted here loads clean (qt_from_disk resolves the stamp
 exactly like o_proj's) and decodes correctly through the batched
 (`kvs`-nonNULL) serving path, where absorb cannot be bypassed.
 
 METADATA STAMP (reference implementation of the FORMATS-registry FR -- see
 docs/FORMATS.md): every output shard's safetensors `__metadata__` carries a
-`colibri.fmt` key whose VALUE is itself a JSON-encoded object mapping each
+`lma.fmt` key whose VALUE is itself a JSON-encoded object mapping each
 stamped tensor's exact name to its format NAME string (FORMAT_NAME below,
 "fp8-e4m3-b128" -- never the internal fmt=8 ordinal, which the container must
-never depend on, see colibri.c's QT struct comment). The reader
-(qt_from_disk's qt_verify_fmt_stamp, colibri.c) is TRUST-VERIFY-REFUSE: a
+never depend on, see glm52.c's QT struct comment). The reader
+(qt_from_disk's qt_verify_fmt_stamp, glm52.c) is TRUST-VERIFY-REFUSE: a
 stamp that agrees with the byte-arithmetic inference is a no-op (the tensor
 loads exactly as it would unstamped); a stamp that disagrees, or names a
 format this build doesn't recognize, is refused loudly (same "untrusted
@@ -155,7 +155,7 @@ are otherwise unaffected: no stamp means byte-arithmetic inference alone
 decides, exactly as it always has.
 
 CONTAINER-LEVEL FORMAT DECLARATION: every output shard's `__metadata__` also
-carries a `colibri.container.formats` key whose VALUE is JSON text -- a sorted
+carries a `lma.container.formats` key whose VALUE is JSON text -- a sorted
 array of the format NAME strings this container declares it carries residents
 in (today: exactly ["fp8-e4m3-b128"]). It is a CONTAINER-wide statement, not a
 per-tensor one, and it is deliberately INERT in this revision: no engine reads
@@ -168,17 +168,17 @@ inside it as an ERROR instead of an int8 default, which converts a procedural
 guarantee back into a structural one. The engine-side check is separate work;
 containers minted now carry the declaration so that check has data to act on
 from the day it lands. Unknown `__metadata__` keys are ignored by the existing
-reader (st_fmt_stamp_ingest looks up "colibri.fmt" alone, and st_init_multi
+reader (st_fmt_stamp_ingest looks up "lma.fmt" alone, and st_init_multi
 skips the whole "__metadata__" entry when indexing tensors), so an engine that
 does not know this key loads such a container exactly as it does today --
 verified by tests/test_fp8_e2e_repack_load.py.
 
 HEADER METADATA ORDER (fixed 2026-08-18, see
-colibri_lab/reports/D1_MINT_DIVERGENCE_2026-08-18.md and
-colibri_lab/reports/F2_MINT_DETERMINISM_FIX_2026-08-18.md): shards this tool
+lmatomic_lab/reports/D1_MINT_DIVERGENCE_2026-08-18.md and
+lmatomic_lab/reports/F2_MINT_DETERMINISM_FIX_2026-08-18.md): shards this tool
 emitted BEFORE this fix can differ from a re-mint of the same checkpoint in
-the byte order of the two keys inside `__metadata__` ("colibri.fmt" vs
-"colibri.container.formats") -- a property of the underlying safetensors
+the byte order of the two keys inside `__metadata__` ("lma.fmt" vs
+"lma.container.formats") -- a property of the underlying safetensors
 `save_file` extension, which does not preserve Python-side dict order when
 serializing its `metadata=` argument. This affects ONLY those two header
 bytes' relative position; every tensor payload byte, every `data_offsets`
@@ -243,7 +243,7 @@ PASSTHROUGH_KINDS = frozenset({"io", "f32"})
 # STAMPABILITY is NARROWER than residency, and deliberately so. Being resident is
 # necessary for the engine to consult a stamp, but the claim a stamp underwrites --
 # "this exact name loads through qt_from_disk, which looks it up in st_fmt_stamp" --
-# was verified name by name against colibri.c's load sites ("sh" -> :1997-1999,
+# was verified name by name against glm52.c's load sites ("sh" -> :1997-1999,
 # "o" -> :1979, "attn" -> :1975-1978, "dmlp" -> the same dense-MLP qt_load calls,
 # "kvb" -> :1707 (qt_load call for l->kv_b -- see M1 audit; the stamp is
 # consulted the same generic way for every qt_load call site, kv_b included),
@@ -259,25 +259,25 @@ PASSTHROUGH_KINDS = frozenset({"io", "f32"})
 STAMPABLE_KINDS = frozenset({"sh", "o", "attn", "dmlp", "kvb"})
 
 # The format's PUBLIC identity (what containers/FRs advertise) -- the internal
-# fmt=8 ordinal is a colibri.c-only enum value, never itself persisted (see
+# fmt=8 ordinal is a glm52.c-only enum value, never itself persisted (see
 # that file's QT struct comment). Must match the reader's FMT_NAMES table
-# (colibri.c, near qt_resolve_fmt) or every stamp this tool writes will be
+# (glm52.c, near qt_resolve_fmt) or every stamp this tool writes will be
 # refused as "unrecognized format name" on load.
 FORMAT_NAME = "fp8-e4m3-b128"
 
 # safetensors __metadata__ key this tool stamps: JSON-encoded {tensor_name:
 # format_name}. Kept as a module constant so the reader-side doc and any
 # future tooling can cite the exact string instead of re-typing it.
-METADATA_KEY = "colibri.fmt"
+METADATA_KEY = "lma.fmt"
 
 # safetensors __metadata__ key carrying the CONTAINER-level format declaration:
 # JSON-encoded array of format NAME strings (never ordinals -- same rule as the
 # per-tensor stamp). See the module docstring's CONTAINER-LEVEL FORMAT
 # DECLARATION section. Inert in this revision: nothing reads it yet.
-CONTAINER_FORMATS_KEY = "colibri.container.formats"
+CONTAINER_FORMATS_KEY = "lma.container.formats"
 
 # Mirror of c/st.h's ST_FMT_STAMP_MAX. st_fmt_stamp_ingest refuses a container
-# whose combined colibri.fmt entries exceed this, so a writer that can exceed it
+# whose combined lma.fmt entries exceed this, so a writer that can exceed it
 # writes a container the engine will refuse at discovery time. GLM-5.2 stamps
 # ~7 residents x 79 layers, an order of magnitude under -- but this tool now also
 # selects routed experts (tens of thousands of tensors), and the ONLY thing
@@ -320,7 +320,7 @@ def is_passthrough_target(name, n_layers, keep_mtp=False):
     (`knowledge/decisions/2026-08-16-fp8-faithful-container.md`) confirms these
     families are BF16 or F32 in the real GLM-5.2-FP8 checkpoint, never FP8 --
     but the copy itself is dtype-agnostic by design: the engine's raw-tensor
-    read path (`ld`'s `st_read_f32[_cap]`, colibri.c) already accepts
+    read path (`ld`'s `st_read_f32[_cap]`, glm52.c) already accepts
     BF16/F16/F32 and converts to f32 output, the same fallback it takes today
     against an unrepacked source directory, so there is no dtype this tool
     needs to special-case here. `_scale_inv`-suffixed names are excluded the
@@ -388,7 +388,7 @@ def _repack_defect(name, dtype, keys, n_layers, keep_mtp=False):
 
 
 def _stampable(kind):
-    """Will the ENGINE consult a `colibri.fmt` stamp for a tensor of this kind?
+    """Will the ENGINE consult a `lma.fmt` stamp for a tensor of this kind?
 
     Resident kinds load through qt_from_disk, which looks the name up via
     st_fmt_stamp and hands the result to qt_resolve_fmt -- so a stamp on them is
@@ -414,7 +414,7 @@ def _check_geometry(name, O, I, nblkO, nblkI, stampable):
 
     WRITER-SIDE REFUSAL (maintainer review, #528), stated at the precision the
     read side actually has: at the AMBIGUOUS shape THE DESIGN LANDMINE describes
-    (qt_resolve_fmt in colibri.c) -- where O == ceil(O/128)*ceil(I/128), i.e. this
+    (qt_resolve_fmt in glm52.c) -- where O == ceil(O/128)*ceil(I/128), i.e. this
     tensor's block-scale byte count (nblkO*nblkI*4) exactly equals a per-row int8
     scale byte count (O*4) -- an UNSTAMPED fmt=8 tensor is silently read back as
     fmt=1, because the reader's INVERSION resolves an unstamped collision to the
@@ -448,14 +448,14 @@ def _check_geometry(name, O, I, nblkO, nblkI, stampable):
             f"engine's routed-expert load sites pass stamped_name=NULL, so nothing "
             f"can resolve it; refusing to emit an fmt=8 container the engine's "
             f"qt_resolve_fmt collision policy would resolve to fmt=1 (int8-row), "
-            f"not fmt=8 (THE DESIGN LANDMINE, colibri.c)")
+            f"not fmt=8 (THE DESIGN LANDMINE, glm52.c)")
     if I == 98 and nblkO * nblkI == 1 and not stampable:
         raise ValueError(
             f"{name}: [{O},{I}] is a single-block fp8-e4m3-b128 shape whose weight "
             f"bytes (O*I={O * I}) and 4-byte scale array also match an E8/IQ3 "
             f"(fmt=6) tensor's byte signature, and this tensor is NOT "
             f"stamp-resolvable on read -- refusing to emit a container the engine's "
-            f"qt_resolve_fmt would abort on (SECOND DESIGN LANDMINE, colibri.c)")
+            f"qt_resolve_fmt would abort on (SECOND DESIGN LANDMINE, glm52.c)")
 
 
 def _reader_consults_a_stamp(name):
@@ -465,7 +465,7 @@ def _reader_consults_a_stamp(name):
     so no dependency on the selection-side predicate whose mistakes this gate
     exists to catch. classify() returns "x" (routed expert) for exactly the names
     carrying ".mlp.experts." and ending ".weight" (convert_fp8_to_int4.py), and
-    ROUTED_KINDS is exactly {"x"}; colibri.c's three routed-expert load sites
+    ROUTED_KINDS is exactly {"x"}; glm52.c's three routed-expert load sites
     (:2414, :2612, :2811) each call qt_resolve_fmt with stamped_name=NULL. So a
     stamp on such a name is written into __metadata__ and never consulted.
 
@@ -549,7 +549,7 @@ def _emission_stamp_gate(out, fmt_map):
         # on _nblk(O)*_nblk(I), so they do not inherit _check_geometry's pinning of
         # (nblkO,nblkI) -- that pinning is a selection-side fact and this gate must
         # not depend on it (it is the one this gate would have to catch if the
-        # scale-writing path ever changed). Read side: colibri.c's ns == O*4 is
+        # scale-writing path ever changed). Read side: glm52.c's ns == O*4 is
         # len(.qs) == O; the second landmine's ns == 4 is len(.qs) == 1.
         unreadable = not _reader_consults_a_stamp(name)
         unstamped = fmt_map.get(name) != FORMAT_NAME
@@ -565,7 +565,7 @@ def _emission_stamp_gate(out, fmt_map):
                     f"coincides with a per-row int8 scale array) that nothing can "
                     f"resolve on read -- {why}; the engine would resolve it to "
                     f"fmt=1 (int8-row) and silently misread every weight; refusing "
-                    f"(THE DESIGN LANDMINE, colibri.c qt_resolve_fmt)")
+                    f"(THE DESIGN LANDMINE, glm52.c qt_resolve_fmt)")
             if I == 98 and nsc == 1:
                 raise ValueError(
                     f"{name}: about to emit an fmt=8 tensor at the single-block "
@@ -573,14 +573,14 @@ def _emission_stamp_gate(out, fmt_map):
                     f"whose byte signature also matches an E8/IQ3 (fmt=6) tensor, "
                     f"and nothing can resolve it on read -- {why}; the engine "
                     f"aborts the whole model load on this; refusing "
-                    f"(SECOND DESIGN LANDMINE, colibri.c qt_resolve_fmt)")
+                    f"(SECOND DESIGN LANDMINE, glm52.c qt_resolve_fmt)")
 
 
 def _canonicalize_metadata_order(path):
     """Rewrite `path`'s safetensors header IN PLACE so `__metadata__`'s KEY
     ORDER is deterministic, regardless of what save_file just wrote.
 
-    Diagnosis (colibri_lab/reports/D1_MINT_DIVERGENCE_2026-08-18.md,
+    Diagnosis (lmatomic_lab/reports/D1_MINT_DIVERGENCE_2026-08-18.md,
     reproduced locally on this Mac against the installed safetensors build):
     `save_file`'s Rust extension serializes the `metadata=` argument through
     an unordered map -- every VALUE and every tensor payload byte is always
@@ -916,7 +916,7 @@ def _print_inventory_summary(all_inv, dry_run):
           f"total (st.h ST_FMT_STAMP_MAX={ST_FMT_STAMP_MAX})")
 
 
-# M1 audit, section 3 (standalone-load checklist): colibri.c's st_init_multi
+# M1 audit, section 3 (standalone-load checklist): glm52.c's st_init_multi
 # globs *.safetensors directly and builds its own tensor index -- no
 # HuggingFace-style model.safetensors.index.json is required or consulted
 # (and copying it byte-identical from --indir would be actively WRONG here:
@@ -929,27 +929,27 @@ def _print_inventory_summary(all_inv, dry_run):
 # model dir at runtime. Cited by SYMBOL, not line number: the previous table
 # carried line anchors that rotted twice, and a stale number is worse than no
 # number because it reads as a verification that was not performed.
-#   - config.json          colibri.c, cfg_root() -- fopen(...); if(!f){
+#   - config.json          glm52.c, cfg_root() -- fopen(...); if(!f){
 #     perror(p); exit(1); } -- MANDATORY, the run aborts without it. Also
 #     read by openai_server.py's Engine.__init__ for arch detection.
-#   - generation_config.json  colibri.c, cfg_root() -- fopen, comment "assente
+#   - generation_config.json  glm52.c, cfg_root() -- fopen, comment "assente
 #     = nessun problema: e' opzionale" -- best-effort; HF's authority for
 #     generation defaults (extra EOS stop ids) when present.
 #   - tokenizer.json        c/tok.h, tk_read_file() (called from tok_load)
 #     -- fopen(...); if(!f){ perror(path); exit(1); } -- MANDATORY. Called
 #     from every serve/generate entry point that needs a tokenizer
-#     (colibri.c: run_text, run_serve_mux, and the main serve loop).
+#     (glm52.c: run_text, run_serve_mux, and the main serve loop).
 #     Before this fix main() never copied it into --outdir, so a minted
 #     directory was not standalone-loadable for THIS reason alone (confirmed
 #     by V2's end-to-end smoke test, 2026-08-18: load only succeeded via a
 #     hand-symlinked tokenizer.json borrowed from the sibling source dir).
 #
-# Files confirmed NOT read anywhere in colibri.c / c/*.h / openai_server.py
+# Files confirmed NOT read anywhere in glm52.c / c/*.h / openai_server.py
 # (grepped this worktree; only docstrings/comments reference them, never an
 # fopen/Path().open against a model dir) and therefore excluded:
 #   - tokenizer_config.json, chat_template.jinja -- the GLM-5.2 chat template
 #     is reimplemented natively in code, not read from the .jinja file
-#     (colibri.c, comment: "template UFFICIALE GLM-5.2 (chat_template
+#     (glm52.c, comment: "template UFFICIALE GLM-5.2 (chat_template
 #     .jinja): niente \n dopo i ruoli..."; openai_server.py: "AUTHORITATIVE
 #     GLM-5.2 tool-declaration block (byte-matches chat_template.jinja)" --
 #     both hardcoded to match the file's behavior, not sourced from it).
@@ -998,7 +998,7 @@ def main():
     # --indir selecting ONLY layer n_layers (the multi-token-prediction head), into
     # out-mtp-fp8pass-*.safetensors alongside the main pass's shards in the same
     # --outdir. The engine detects MTP purely by tensor NAME presence
-    # (model.layers.<n_layers>.*, colibri.c's has_mtp probe) -- the "out-mtp-"
+    # (model.layers.<n_layers>.*, glm52.c's has_mtp probe) -- the "out-mtp-"
     # prefix is a human/tooling convention (convert_fmt4_to_fmt2.py keys off it),
     # not something the loader parses. Two passes rather than one flag on the main
     # pass because the resume manifest and the #383-class params guard are both
@@ -1125,10 +1125,10 @@ def main():
             prog["stamped"] += len(fmt_map)
             _check_stamp_budget(prog["stamped"] + other_stamped)
             # METADATA STAMP: __metadata__ values must be strings (safetensors
-            # constraint) -- colibri.fmt's VALUE is itself JSON text (a map of
+            # constraint) -- lma.fmt's VALUE is itself JSON text (a map of
             # tensor name -> format NAME), not a nested object, for exactly
             # that reason. sort_keys for a deterministic, diffable stamp.
-            # colibri.container.formats is the CONTAINER-level declaration (see
+            # lma.container.formats is the CONTAINER-level declaration (see
             # the module docstring): written on every emitted shard, including
             # shards that carry only unstamped routed experts -- it is a claim
             # about the container, not about this shard's contents.
@@ -1136,7 +1136,7 @@ def main():
                     CONTAINER_FORMATS_KEY: json.dumps([FORMAT_NAME])}
             out_path = os.path.join(a.outdir, name)
             save_file(out, out_path, metadata=meta)
-            # DETERMINISM FIX (D1, colibri_lab/reports/D1_MINT_DIVERGENCE_2026-08-18.md):
+            # DETERMINISM FIX (D1, lmatomic_lab/reports/D1_MINT_DIVERGENCE_2026-08-18.md):
             # save_file's Rust extension does not preserve `meta`'s key order into
             # the written header -- see _canonicalize_metadata_order's docstring.
             # Fix up the two bytes that can vary, in place, right after the file

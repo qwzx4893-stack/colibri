@@ -4,8 +4,8 @@
 #undef main
 
 static int fused_ok, legacy_ok, fused_calls, legacy_calls;
-int coli_cuda_init(const int *devices, int n) { return 1; }
-int coli_cuda_expert_mxfp4(float *y, const float *x,
+int lma_cuda_init(const int *devices, int n) { return 1; }
+int lma_cuda_expert_mxfp4(float *y, const float *x,
         const unsigned char *gw, const unsigned char *gs,
         const unsigned char *uw, const unsigned char *us,
         const unsigned char *dw, const unsigned char *ds,
@@ -14,7 +14,7 @@ int coli_cuda_expert_mxfp4(float *y, const float *x,
     for (int i = 0; i < D; i++) y[i] = fused_ok ? 2.f : -999.f;
     return fused_ok;
 }
-int coli_cuda_matmul_mxfp4(float *y, const float *x, const unsigned char *q,
+int lma_cuda_matmul_mxfp4(float *y, const float *x, const unsigned char *q,
         const unsigned char *sc, int S, int I, int O) {
     legacy_calls++;
     for (int i = 0; i < O; i++) y[i] = 3.f;

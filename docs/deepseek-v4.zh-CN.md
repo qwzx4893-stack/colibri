@@ -14,7 +14,7 @@
   `c/deepseek_v4.h`。
 - 官方分片 safetensors checkpoint 通过共享 `st.h` 加载。
 - 标准 MXFP4 矩阵乘法使用共享 `quant.h`。
-- 统一入口 `c/coli` 会把 `run`、`chat`、`serve`、`web` 路由到 V4，
+- 统一入口 `c/lmatomic` 会把 `run`、`chat`、`serve`、`web` 路由到 V4，
   服务模式会跨请求保留引擎和缓存。
 - `--no-dspark` 只是兼容性空操作。本 PR 没有 DSpark 模型、内存层级或推测循环。
 - 支持 x86-64、aarch64 Linux 和 Windows/MSYS2。
@@ -61,11 +61,11 @@ hf download deepseek-ai/DeepSeek-V4-Flash-0731 \
 ```bash
 cd c
 make deepseek-v4
-python ./coli run --model /path/to/DeepSeek-V4-Flash --ram 32 \
+python ./lmatomic run --model /path/to/DeepSeek-V4-Flash --ram 32 \
   "What is the capital of France?"
-python ./coli chat --model /path/to/DeepSeek-V4-Flash --ram 32
-python ./coli serve --model /path/to/DeepSeek-V4-Flash --ram 32
-python ./coli web --model /path/to/DeepSeek-V4-Flash --ram 32
+python ./lmatomic chat --model /path/to/DeepSeek-V4-Flash --ram 32
+python ./lmatomic serve --model /path/to/DeepSeek-V4-Flash --ram 32
+python ./lmatomic web --model /path/to/DeepSeek-V4-Flash --ram 32
 ```
 
 V4 chat 使用模型原生标记。原生服务当前支持 greedy 和一个活动 KV slot。

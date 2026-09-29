@@ -45,23 +45,23 @@
 #include "pin_pool.h"                          /* KV prefix reuse (shared) */                          /* shared routing telemetry (#700) */
 #include "serve_codec.h"
 #include "serve_budget.h"
-#ifdef COLI_SEGMENT_ADAPTER
+#ifdef LMA_SEGMENT_ADAPTER
 #include "segment_runtime.h"
 #include "segment_adapters.h"
 #include "segment_adapter_internal.h"
 #endif
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 #include "edge_runtime.h"
 #include "edge_adapters.h"
 #include "edge_tok_internal.h"
 #endif
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
 #include "backend_cuda_ink.h"
 static int g_cuda = 0;
 #endif
-#ifdef COLI_METAL
-/* Apple-GPU expert MoE (opt-in, COLI_METAL=1). Reuses colibri's batched
- * coli_metal_moe_block: inkling's container int4 (nibble-packed, -8 offset,
+#ifdef LMA_METAL
+/* Apple-GPU expert MoE (opt-in, LMA_METAL=1). Reuses lmatomic's batched
+ * lma_metal_moe_block: inkling's container int4 (nibble-packed, -8 offset,
  * per-row scales) is bit-identical to the Metal fmt=2 kernel, and int8 to
  * fmt=1. Expert slots live in page-aligned per-layer slabs registered once
  * for zero-copy resolve — unified memory, no upload. Attention and the dense
@@ -152,7 +152,7 @@ typedef struct {
     int has_q, q_loaded;                  /* has_q: container presente; q_loaded: tensori presi da li */
     int64_t q_bytes;
     int quant_bits;                       /* 0 = f32 experts (oracle mode) */
-    int xq;                               /* experts on disk are a colibri container (U8 + .qs) */
+    int xq;                               /* experts on disk are a lmatomic container (U8 + .qs) */
     Wt embed, lm_head;
     float *embed_norm, *final_norm;
     Wt audio_enc;                         /* [mel_bins*mel_vocab, D] embedding table */
@@ -414,14 +414,14 @@ static void matmul_i8r(float *y, const float *x, const int8_t *q, const float *s
     }
 }
 
-#ifdef COLI_INKLING_SHARED_BATCH_TEST
+#ifdef LMA_INKLING_SHARED_BATCH_TEST
 static uint64_t g_matmul_w_calls;
 #endif
 static void matmul_w(float *y, const float *x, Wt W, int S, int I, int O) {
-#ifdef COLI_INKLING_SHARED_BATCH_TEST
+#ifdef LMA_INKLING_SHARED_BATCH_TEST
     g_matmul_w_calls++;
 #endif
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
     if (W.dev) {
         if (ink_cuda_matmul_bf16(y, x, W.dev, S, I, O) == 0) return;
         fprintf(stderr, "cuda matmul failed and host copy was freed\n"); exit(1);
@@ -802,7 +802,7 @@ static Wt load_w(Model *m, const char *name, int gpu_ok) {
     if (t->dtype == 0) {
         w.h = malloc(t->nbytes); if (!w.h) { fprintf(stderr,"OOM %s\n",name); exit(1); }
         pread_all(t->fd, w.h, t->nbytes, t->off);
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
         /* keep 3 GB VRAM headroom for the activation buffers + future tiers */
         if (g_cuda && gpu_ok && ink_cuda_free_bytes() > (size_t)t->nbytes + (3ULL<<30)) {
             w.dev = ink_cuda_upload(w.h, t->nbytes);
@@ -927,7 +927,7 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
     }
     int D = c->hidden, K = c->conv_k;
     double t0 = now_s();
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
     if (!getenv("NOGPU")) {
         int dev = getenv("GPU_DEV") ? atoi(getenv("GPU_DEV")) : 0;
         if (ink_cuda_init(dev) == 0) {
@@ -937,14 +937,14 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
         } else fprintf(stderr, "[cuda] init failed, running on CPU\n");
     }
 #endif
-#ifdef COLI_METAL
-    {   const char *me = getenv("COLI_METAL");
+#ifdef LMA_METAL
+    {   const char *me = getenv("LMA_METAL");
         if (me && *me == '1' && !getenv("NOGPU")) {
             /* Residency set ON by default for inkling: without it every MoE
              * block pays per-buffer useResource churn — measured 0.17 vs 1.76
-             * tok/s decode on Inkling-Small. COLI_METAL_RESSET=0 opts out. */
-            setenv("COLI_METAL_RESSET", "1", 0);
-            if (coli_metal_init()) {
+             * tok/s decode on Inkling-Small. LMA_METAL_RESSET=0 opts out. */
+            setenv("LMA_METAL_RESSET", "1", 0);
+            if (lma_metal_init()) {
                 g_metal = 1;
                 fprintf(stderr, "[metal] ready — batched expert MoE on the Apple GPU\n");
             } else fprintf(stderr, "[metal] init failed, running on CPU\n");
@@ -1011,7 +1011,7 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
             LDW(sh_g, "mlp.shared_experts.gate_proj");
             LDW(sh_u, "mlp.shared_experts.up_proj");
             LDW(sh_d, "mlp.shared_experts.down_proj");
-#ifdef COLI_METAL
+#ifdef LMA_METAL
             /* Move the bf16 shared-expert weights into one page-aligned slab
              * (gates, then ups, then downs) and repoint the Wt handles into
              * it: the CPU path reads the same bytes it always did, and the
@@ -1029,7 +1029,7 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
                     l->sh_g.h = (uint16_t*)sl;
                     l->sh_u.h = (uint16_t*)((char*)sl + one);
                     l->sh_d.h = (uint16_t*)((char*)sl + 2*one);
-                    coli_metal_register(sl, len);
+                    lma_metal_register(sl, len);
                 }
             }
 #endif
@@ -1103,8 +1103,8 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
                 s->s13 = (float*)ssl + (int64_t)k*(2*I+D);
                 s->s2  = s->s13 + 2*I;
             }
-#ifdef COLI_METAL
-            if (g_metal) { coli_metal_register(wsl, wlen); coli_metal_register(ssl, slen); }
+#ifdef LMA_METAL
+            if (g_metal) { lma_metal_register(wsl, wlen); lma_metal_register(ssl, slen); }
 #endif
         }
     }
@@ -1138,7 +1138,7 @@ static double mem_avail_bytes(void) {
 }
 
 /* ---------- routed-expert slots: serial bookkeeping, parallel fills ---------- */
-#ifdef COLI_CACHE_INDEX_TEST
+#ifdef LMA_CACHE_INDEX_TEST
 static uint64_t g_slot_index_probes;
 #define SLOT_INDEX_PROBE() (g_slot_index_probes++)
 #else
@@ -1238,8 +1238,8 @@ static void slot_fill(Model *m, int layer, Slot *s) {
     s->filled = 1;
 }
 
-/* pin the top-N experts per sparse layer from a usage-history file (colibri
- * .coli_usage convention: one uint32 count per expert per layer). Pins are
+/* pin the top-N experts per sparse layer from a usage-history file (lmatomic
+ * .lma_usage convention: one uint32 count per expert per layer). Pins are
  * regular cache slots flagged non-evictable, filled in parallel at startup.
  * Toggles: PIN=off (or PIN=0) skips cache warming entirely (no seeding, no
  * pins, cold LRU start); PIN_N=0 seeds the ranking from the history but pins
@@ -1253,7 +1253,7 @@ static void pins_load(Model *m, const char *snap) {
         return;
     }
     if (env) snprintf(up, sizeof(up), "%s", env);
-    else snprintf(up, sizeof(up), "%s/.coli_usage", snap);
+    else snprintf(up, sizeof(up), "%s/.lma_usage", snap);
     /* Reads both layouts: the IKU1 block every previous inkling wrote, and the shared
      * text format. Dimension and identity checks moved into the reader, which refuses
      * by name instead of with a generic 'ignoring'. Counts land straight in eusage. */
@@ -1294,7 +1294,7 @@ static void pins_load(Model *m, const char *snap) {
 }
 
 /* usage snapshot: rewritten after every generation run (same contract as
- * glm's .coli_usage — copy it aside if you need a stable ranking).
+ * glm's .lma_usage — copy it aside if you need a stable ranking).
  * USAGE_SAVE=0 skips the rewrite (e.g. benchmark loops that would skew the
  * ranking); PIN=off also implies no save (that run never seeded counts). */
 static int usage_save(Model *m, const char *snap) {
@@ -1304,7 +1304,7 @@ static int usage_save(Model *m, const char *snap) {
     /* USAGE_SAVE=0 is honoured inside rt_save itself (#1039) */
     if (env && (!strcmp(env, "off") || !strcmp(env, "0"))) return 0;
     if (env) snprintf(up, sizeof(up), "%s", env);
-    else snprintf(up, sizeof(up), "%s/.coli_usage", snap);
+    else snprintf(up, sizeof(up), "%s/.lma_usage", snap);
     /* One format for every engine now: sparse text with the dimension and identity
      * header. The IKU1 block this replaced is still readable on load, so a history
      * written by an older inkling keeps working and is rewritten in the new form. */
@@ -1522,7 +1522,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
         /* selection: sigmoid(routed) + correction bias, top-K (shared: moe_router.h,
          * whose non-finite policy keeps lg[si[kk]] / eusage[si[kk]] in range) */
         for (int e = 0; e < E; e++) rsc[e] = sigmoidf(lg[e]);
-        coli_router_topk(rsc, l->rbias, NULL, E, K, si, NULL, layer, 1);
+        lma_router_topk(rsc, l->rbias, NULL, E, K, si, NULL, layer, 1);
         /* combine weights: sigmoids of the raw logits of (topK routed + shared),
          * normalized to sum 1 over all K+ns, x route_scale x gate.global_scale */
         float *w = wgt + (int64_t)s*(K+ns); float sum = 0.f;
@@ -1530,7 +1530,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
         for (int j = 0; j < ns; j++)    { w[K+j]  = sigmoidf(lg[E+j]);    sum += w[K+j]; }
         for (int kk = 0; kk < K+ns; kk++) w[kk] *= c->route_scale * l->rgs / sum;
         /* TOPP: tieni i routed fino al peso cumulato p, scarta la coda. Stessa
-         * semantica di colibri.c (g_topp) e kimi_k3.c (K3_TOPP): NON rinormalizza,
+         * semantica di glm52.c (g_topp) e kimi_k3.c (K3_TOPP): NON rinormalizza,
          * il peso scartato semplicemente non contribuisce. E' una leva di QUALITA'
          * — cambia il calcolo — quindi opt-in e annunciata all'avvio.
          * Su questo motore vale piu' che sugli altri: Inkling e' limitato dal disco
@@ -1538,7 +1538,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
          * esperto scartato e' un esperto NON letto.
          * L'ordine di si[] segue sigmoid(logit)+bias mentre il peso e' sigmoid(logit)
          * senza bias, quindi i pesi non sono garantiti decrescenti: si riordina la
-         * coppia (peso, id) prima di tagliare, come fa colibri.c. */
+         * coppia (peso, id) prima di tagliare, come fa glm52.c. */
         keff[s] = K;
         m->ereq += K;
         if (g_topp > 0.f && g_topp < 1.f) {
@@ -1570,7 +1570,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
     int q4 = m->xq && m->rb13*2 == D;   /* packed int4 vs int8 container */
     int shared_done = 0;                /* set when overlapped with the last GPU round */
     int64_t npair = (int64_t)S*K;
-#ifdef COLI_METAL
+#ifdef LMA_METAL
     /* per-round scratch for the batched GPU submit: pairs grouped by expert,
      * activations packed in group order. Allocated once per moe() call. */
     float *mxg = NULL, *mrw = NULL; const void **mgp = NULL, **mup = NULL, **mdp = NULL;
@@ -1594,7 +1594,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
      * rounds so it rides the GPU while the CPU routes, fills, and packs.
      * Every token uses every shared expert, so group j is simply all S rows
      * with weight w[K+j]. Falls back to the CPU loop if begin refuses. */
-    ColiMetalMoeHandle *sh_h = NULL;
+    LmaMetalMoeHandle *sh_h = NULL;
     float *sxg = NULL, *srw = NULL;
     if (mxg && ns > 0 && ns <= 8 && l->sh_g.h && l->sh_u.h && l->sh_d.h &&
         !(getenv("INK_METAL_SHARED") && *getenv("INK_METAL_SHARED") == '0')) {
@@ -1617,7 +1617,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
             }
         }
         sxoff[ns] = ns*S;
-        sh_h = coli_metal_moe_block_begin(ns, D, I, 5, 0, sgp, sup, sdp,
+        sh_h = lma_metal_moe_block_begin(ns, D, I, 5, 0, sgp, sup, sdp,
                                           sscale, sscale, sscale,
                                           sxg, sxoff, snr, srows, srw);
         free(srows);
@@ -1661,7 +1661,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
             }
         }
         double te = now_s();
-#ifdef COLI_METAL
+#ifdef LMA_METAL
         if (mxg) {
             /* group this round's (token, expert) pairs by expert and submit ONE
              * command buffer; the kernel scatter-adds rw*hh into out with the
@@ -1700,7 +1700,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
                  * On a GPU fault _end returns 0 and the CPU loop below redoes
                  * the round; shared_done stays set either way. */
                 if (base + cap >= npair && !sh_h) {
-                    ColiMetalMoeHandle *h = coli_metal_moe_block_begin(
+                    LmaMetalMoeHandle *h = lma_metal_moe_block_begin(
                         nb, D, I, q4 ? 2 : 1, 0, mgp, mup, mdp, mgs, mus, mds,
                         mxg, mxoff, mnr, mrows, mrw);
                     if (h) {
@@ -1709,13 +1709,13 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
                         double sh = now_s() - ts;
                         m->t_shared += sh;
                         shared_done = 1;
-                        int ok = coli_metal_moe_block_end(h, out);
+                        int ok = lma_metal_moe_block_end(h, out);
                         m->t_expert += (now_s() - te) - sh;
                         if (ok) continue;                  /* round done on the GPU */
                         te = now_s();                      /* fault: CPU redo below */
                     }
                 }
-                if (coli_metal_moe_block(nb, D, I, q4 ? 2 : 1, 0, mgp, mup, mdp, mgs, mus, mds,
+                if (lma_metal_moe_block(nb, D, I, q4 ? 2 : 1, 0, mgp, mup, mdp, mgs, mus, mds,
                                          mxg, mxoff, mnr, mrows, mrw, out, S)) {
                     m->t_expert += now_s() - te;
                     continue;                              /* round done on the GPU */
@@ -1753,11 +1753,11 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
         }
         m->t_expert += now_s() - te;
     }
-#ifdef COLI_METAL
+#ifdef LMA_METAL
     /* GPU shared block: wait + scatter-add. A fault falls through to CPU. */
     if (sh_h) {
         double ts = now_s();
-        if (coli_metal_moe_block_end(sh_h, out)) shared_done = 1;
+        if (lma_metal_moe_block_end(sh_h, out)) shared_done = 1;
         m->t_shared += now_s() - ts;
     }
 #endif
@@ -1772,7 +1772,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
     }
     free(logits); free(idx); free(keff); free(wgt); free(use); free(fill); free(fl); free(rsc);
     free(g); free(hh);              /* u aliases g+I */
-#ifdef COLI_METAL
+#ifdef LMA_METAL
     if (mxg) {
         free(mxg); free(mrw); free(mgp); free(mup); free(mdp);
         free(mgs); free(mus); free(mds); free(mslot);
@@ -1848,7 +1848,7 @@ static void inkling_layers_forward_range(Model *m, float *x, int S, int pos0,
  * poco. */
 static int    g_echo_k = 0;
 static const char *g_echo_id = NULL;
-static ColiPinPool g_pins;               /* piu scatti annidati, vedi pin_pool.h */
+static LmaPinPool g_pins;               /* piu scatti annidati, vedi pin_pool.h */
 static const float *g_pin_logit = NULL;
 static int    g_pin_use_logit = 0;
 static Tok   *g_echo_tok = NULL;
@@ -1860,7 +1860,7 @@ static Tok   *g_echo_tok = NULL;
 typedef struct { float **cs[4]; int n_layers; } InkPinState;
 
 static void ink_echo(const char *id, int pos, int token, const float *lo, int V, int k){
-    char tail[1024]; coli_logprob_tail(tail, sizeof tail, lo, V, token, k);
+    char tail[1024]; lma_logprob_tail(tail, sizeof tail, lo, V, token, k);
     char piece[512]; int n = g_echo_tok ? tok_decode(g_echo_tok, &token, 1, piece, (int)sizeof piece) : 0;
     if (n < 0) n = 0;
     printf("ECHO %s %d %d%s\n", id, n, pos, tail);
@@ -2110,8 +2110,8 @@ static void generate_stream(Model *m, Tok *T, const char *prompt, int n_new,
     int gen = len - np;
     printf("\n[prefill %.1fs | %d tokens in %.1fs = %.2f tok/s | RSS %.1f GB]\n",
            t1 - t0, gen, dt, gen > 1 ? (gen-1)/dt : 0.0, rss_gb());
-    /* One line, every engine, one format: `coli tune` sweeps scheduling knobs and
-     * needs tokens-and-elapsed to compare candidates. Before this only colibri
+    /* One line, every engine, one format: `lmatomic tune` sweeps scheduling knobs and
+     * needs tokens-and-elapsed to compare candidates. Before this only lmatomic
      * emitted a parseable throughput line (REPLAY decode), so the tuner was
      * GLM-only and bannered the right model while launching the wrong engine
      * (#898). Printed to stdout, which is what autotune captures.
@@ -2120,10 +2120,10 @@ static void generate_stream(Model *m, Tok *T, const char *prompt, int n_new,
      * rates this engine runs at). */
     printf("TUNE decode: %d tokens in %.3fs\n", gen > 1 ? gen - 1 : gen, dt);
     double wall = now_s() - t0;
-#ifdef COLI_METAL
+#ifdef LMA_METAL
     if (g_metal) {
         uint64_t mok = 0, mfb = 0, mex = 0;
-        coli_metal_moe_counts(&mok, &mfb, &mex);
+        lma_metal_moe_counts(&mok, &mfb, &mex);
         printf("[metal] %llu MoE blocks on GPU, %llu CPU fallbacks, %llu experts\n",
                (unsigned long long)mok, (unsigned long long)mfb, (unsigned long long)mex);
     }
@@ -2140,7 +2140,7 @@ static void generate_stream(Model *m, Tok *T, const char *prompt, int n_new,
  * stdout: READY sentinel once loaded, then per request a stream of
  *         DATA <id> <size>\n<bytes>\n frames and a final
  *         DONE <id> STAT <tok> <tps> <hit%> <rss> <prompt_tok> <len_limited>\n
- * Byte-identical to colibri.c's serve protocol so the shared openai_server.py
+ * Byte-identical to glm52.c's serve protocol so the shared openai_server.py
  * gateway drives inkling unchanged (v1: one request at a time; the KV slot arg
  * is accepted but every request re-prefills). */
 
@@ -2188,7 +2188,7 @@ static void apply_rep_penalty(float *logit, int n, const int *hist, int nhist, f
 }
 
 /* Refuse only a prompt that does not fit the served KV bound (CTX_MAX,
- * default 8192). max_tokens is a ceiling: coli chat's interactive default
+ * default 8192). max_tokens is a ceiling: lmatomic chat's interactive default
  * (16384) used to 400 every turn because 2 + 16384 > 8192. The refusal is
  * the frame the gateway turns into a 400 context_length_exceeded (#506,
  * #1381); free text here reached the client as a 500. One request is served
@@ -2200,7 +2200,7 @@ static int ink_ctx_max(void) {
 static const char *prompt_reject(int np, int want) {
     static char message[96];
     int ctx_max = ink_ctx_max();
-    if (coli_serve_budget(np, want, ctx_max, 0) >= 0) return NULL;
+    if (lma_serve_budget(np, want, ctx_max, 0) >= 0) return NULL;
     snprintf(message, sizeof(message),
              "CONTEXT_EXCEEDED prompt_tokens=%d requested=%d capacity=%d",
              np, want, ctx_max);
@@ -2212,7 +2212,7 @@ typedef struct { char id[64]; int max_tok; float temp, top_p; char *payload; int
                  int logprobs, pin; } SReq;   /* raw DMel bytes after the payload; SUBMIT logprobs=k / pin=1 */
 #define SRV_QMAX 16
 static SReq g_q[SRV_QMAX]; static int g_qn = 0;
-static const ColiServeWireProfile inkling_wire = {
+static const LmaServeWireProfile inkling_wire = {
     .max_header_bytes = 511,
     .max_payload_bytes = 1u << 22,
     .max_extension_bytes = 1u << 26,
@@ -2232,21 +2232,21 @@ static void serve_request_dispose(SReq *request) {
 static int stdin_readable(void) {
     /* Windows non ha fd_set/select in questa forma: la build falliva del tutto.
      * La versione portabile (con i fix #139/#195) vive in compat.h, incluso via st.h. */
-    return coli_stdin_readable();
+    return lma_stdin_readable();
 }
 
 /* read one control line (+ payload for SUBMIT). cur_id: request in flight;
  * returns 1 if that request was cancelled, 0 otherwise, -1 on stdin EOF. */
 static int serve_read_cmd(FILE *input, FILE *output, const char *cur_id) {
-    ColiServeCommand command;
-    ColiServeReadResult result=coli_serve_read_command(input,&inkling_wire,&command);
-    if(result==COLI_SERVE_READ_EOF) return -1;
-    if(result==COLI_SERVE_READ_BAD_FRAME) return -2;
-    if(result==COLI_SERVE_READ_NOMEM){
-        coli_serve_write_error(output,command.id,"out of memory"); return -2;
+    LmaServeCommand command;
+    LmaServeReadResult result=lma_serve_read_command(input,&inkling_wire,&command);
+    if(result==LMA_SERVE_READ_EOF) return -1;
+    if(result==LMA_SERVE_READ_BAD_FRAME) return -2;
+    if(result==LMA_SERVE_READ_NOMEM){
+        lma_serve_write_error(output,command.id,"out of memory"); return -2;
     }
-    if(result==COLI_SERVE_READ_BAD_REQUEST&&
-       command.kind==COLI_SERVE_COMMAND_SUBMIT){
+    if(result==LMA_SERVE_READ_BAD_REQUEST&&
+       command.kind==LMA_SERVE_COMMAND_SUBMIT){
         /* 6th field (optional, backward compatible): DMel byte count appended
          * verbatim after the text payload — frames x mel_bins u8 levels */
         /* SEC: max_tok was the one field nobody validated, and it is the one
@@ -2262,17 +2262,17 @@ static int serve_read_cmd(FILE *input, FILE *output, const char *cur_id) {
          * anything bridging it (socat, a custom gateway, a sidecar) exposes it
          * directly, so the check belongs here, next to the one plen already
          * has, rather than in one of its callers. */
-        coli_serve_write_error(output,command.id,"bad submit header"); return -2;
+        lma_serve_write_error(output,command.id,"bad submit header"); return -2;
     }
-    if(result!=COLI_SERVE_READ_OK) return 0;
-    if(command.kind==COLI_SERVE_COMMAND_CANCEL){
+    if(result!=LMA_SERVE_READ_OK) return 0;
+    if(command.kind==LMA_SERVE_COMMAND_CANCEL){
         int matched=cur_id&&!strcmp(command.id,cur_id);
-        coli_serve_command_dispose(&command); return matched;
+        lma_serve_command_dispose(&command); return matched;
     }
-    if(command.kind==COLI_SERVE_COMMAND_STOP){
-        coli_serve_command_dispose(&command); return 0;
+    if(command.kind==LMA_SERVE_COMMAND_STOP){
+        lma_serve_command_dispose(&command); return 0;
     }
-    if(command.kind==COLI_SERVE_COMMAND_SUBMIT){
+    if(command.kind==LMA_SERVE_COMMAND_SUBMIT){
         if (g_qn < SRV_QMAX) {
             SReq *q = &g_q[g_qn++];
             snprintf(q->id, sizeof(q->id), "%s", command.id);
@@ -2280,17 +2280,17 @@ static int serve_read_cmd(FILE *input, FILE *output, const char *cur_id) {
             q->logprobs=command.logprobs; q->pin=command.pin;
             q->top_p=command.top_p; q->plen=(int)command.payload_bytes;
             q->alen=(int)command.extension_bytes;
-            q->audio=coli_serve_command_extension(&command);
-            q->payload=(char*)coli_serve_command_take_payload(&command);
-        } else coli_serve_write_error(output,command.id,"queue full");
+            q->audio=lma_serve_command_extension(&command);
+            q->payload=(char*)lma_serve_command_take_payload(&command);
+        } else lma_serve_write_error(output,command.id,"queue full");
     }
-    coli_serve_command_dispose(&command);
+    lma_serve_command_dispose(&command);
     return 0;
 }
 
 /* HITS rows cols hex: which experts this turn routed, one bit each over the
  * sparse layers (same rows and columns as EMAP), packed 8 per hex pair. Same
- * line colibri.c emits; the Brain tab lights up from it. A turn that routed
+ * line glm52.c emits; the Brain tab lights up from it. A turn that routed
  * nothing still reports a bitmap, all zero, so the tab shows THIS turn. */
 static void serve_hits(Model *m) {
     Cfg *c = &m->c; int E = c->n_experts;
@@ -2316,12 +2316,12 @@ static int serve_one(Model *m, Tok *T, SReq *q) {
     int cap = q->plen + 16;
     int *ids = malloc((size_t)cap * sizeof(int));
     int np = tok_encode(T, q->payload, q->plen, ids, cap);
-    if (np <= 0) { coli_serve_write_error(stdout,q->id,"empty prompt"); free(ids); return 0; }
+    if (np <= 0) { lma_serve_write_error(stdout,q->id,"empty prompt"); free(ids); return 0; }
     int ctx_max = ink_ctx_max();
-    int budget = coli_serve_budget(np, q->max_tok, ctx_max, q->logprobs > 0);
+    int budget = lma_serve_budget(np, q->max_tok, ctx_max, q->logprobs > 0);
     if (budget < 0) {
         const char *bad = prompt_reject(np, q->max_tok);
-        coli_serve_write_error(stdout,q->id,bad ? bad : "CONTEXT_EXCEEDED");
+        lma_serve_write_error(stdout,q->id,bad ? bad : "CONTEXT_EXCEEDED");
         free(ids); return 0;
     }
     if (budget < q->max_tok) {
@@ -2338,7 +2338,7 @@ static int serve_one(Model *m, Tok *T, SReq *q) {
                  "audio frames (%d) do not match <|audio|> placeholders (%d)%s",
                  naud,audio_tok_count(m,ids,np),
                  m->audio_norm?"":" — snapshot has no audio tensors");
-        coli_serve_write_error(stdout,q->id,message); free(ids); return 0;
+        lma_serve_write_error(stdout,q->id,message); free(ids); return 0;
     }
     /* KV PREFIX REUSE (#639 for GLM; this engine re-prefilled every turn).
      * A chat client resends the whole transcript each turn, so turn N used to
@@ -2369,9 +2369,9 @@ static int serve_one(Model *m, Tok *T, SReq *q) {
         /* Il piu profondo degli scatti valido per questo prompt. Uno scatto le
          * cui righe K/V non ci sono piu si butta e si riprova col precedente,
          * invece di rinunciare e rifare tutto da zero. */
-        int s = coli_pin_best(&g_pins, ids, np);
+        int s = lma_pin_best(&g_pins, ids, np);
         while (s >= 0) {
-            ColiPin *k = &g_pins.slot[s];
+            LmaPin *k = &g_pins.slot[s];
             if (kv_prefix_holds(&m->kvp, k->ids, k->len)) {
                 ink_pin_state_restore(m, (const InkPinState *)k->state);
                 kv_prefix_clear(&m->kvp);
@@ -2379,11 +2379,11 @@ static int serve_one(Model *m, Tok *T, SReq *q) {
                 m->kv_len = k->len;
                 reuse = k->len;
                 g_pin_logit = k->logit; g_pin_use_logit = k->logit != NULL;
-                coli_pin_touch(&g_pins, s);
+                lma_pin_touch(&g_pins, s);
                 break;
             }
             k->len = 0;
-            s = coli_pin_best(&g_pins, ids, np);
+            s = lma_pin_best(&g_pins, ids, np);
         }
     }
     g_echo_k = q->logprobs; g_echo_id = q->id; g_echo_tok = T;
@@ -2410,8 +2410,8 @@ static int serve_one(Model *m, Tok *T, SReq *q) {
      * the KV slots are position-indexed, so this has to be the real offset. */
     float *logit = step_mm(m, ids + reuse, np - reuse, reuse, NULL, q->audio, naud);
     if (q->pin && logit && naud == 0) {
-        coli_pin_pool_init(&g_pins, c->unpad_vocab);
-        ColiPin *k = coli_pin_store(&g_pins, ids, np, logit);
+        lma_pin_pool_init(&g_pins, c->unpad_vocab);
+        LmaPin *k = lma_pin_store(&g_pins, ids, np, logit);
         if (k) {
             InkPinState *st = ink_pin_state_save(m, (InkPinState *)k->state);
             if (st) { k->state = st; fprintf(stderr, "[PIN] scatto a %d token\n", np); }
@@ -2431,14 +2431,14 @@ static int serve_one(Model *m, Tok *T, SReq *q) {
         apply_rep_penalty(logit, c->unpad_vocab, hist, nhist, rep);
         int tk = sample_logits(logit, c->unpad_vocab, q->temp, q->top_p);
         char lptail[1024]; lptail[0] = 0;
-        if (q->logprobs > 0) coli_logprob_tail(lptail, sizeof lptail, logit, c->unpad_vocab, tk, q->logprobs);
+        if (q->logprobs > 0) lma_logprob_tail(lptail, sizeof lptail, logit, c->unpad_vocab, tk, q->logprobs);
         free(logit); logit = NULL;
         if (tk == c->eos) { limited = 0; break; }
         if (nhist < 128) hist[nhist++] = tk;
         else { memmove(hist, hist+1, 127*sizeof(int)); hist[127] = tk; }
         int nb = tok_decode(T, &tk, 1, buf, sizeof(buf)-1);
-        if (q->logprobs > 0) coli_serve_write_data_lp(stdout,q->id,buf,(size_t)nb,lptail);
-        else coli_serve_write_data(stdout,q->id,buf,(size_t)nb);
+        if (q->logprobs > 0) lma_serve_write_data_lp(stdout,q->id,buf,(size_t)nb,lptail);
+        else lma_serve_write_data(stdout,q->id,buf,(size_t)nb);
         gen++; len++;
         while (stdin_readable()) {
             int r = serve_read_cmd(stdin, stdout, q->id);
@@ -2451,10 +2451,10 @@ static int serve_one(Model *m, Tok *T, SReq *q) {
     free(logit);
     double dt = now_s() - t0;
     double tot = (double)(m->hits - h0 + m->miss - m0);
-    ColiServeDone done={gen,dt>0?gen/dt:0.0,
+    LmaServeDone done={gen,dt>0?gen/dt:0.0,
                         tot?100.0*(m->hits-h0)/tot:0.0,rss_gb(),np,limited};
     char done_line[256];
-    int done_bytes=coli_serve_format_done(done_line,sizeof(done_line),q->id,&done);
+    int done_bytes=lma_serve_format_done(done_line,sizeof(done_line),q->id,&done);
     if(done_bytes>0) fwrite(done_line,1,(size_t)done_bytes,stdout);
     /* PROF: per-turn phase timings for the dashboard (gateway schema — we map
      * expert_wait -> shared-expert compute, lm_head folded into 0). */
@@ -2467,7 +2467,7 @@ static int serve_one(Model *m, Tok *T, SReq *q) {
 }
 
 /* ---------- dashboard protocol (HWINFO / TIERS / EMAP) ----------
- * Same stdout lines colibri.c emits for the web dashboard; the gateway parses
+ * Same stdout lines glm52.c emits for the web dashboard; the gateway parses
  * them and the Brain/Profiling pages render live expert-tier state. */
 static void serve_hwinfo(Model *m) {
     char cpu[256] = ""; int cores = 0; double rt = 0, ra = 0;
@@ -2508,7 +2508,7 @@ static void serve_hwinfo(Model *m) {
 #endif
     int ngpu = 0; double vram = 0;
     const char *gpu = "";
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
     if (g_cuda) { ngpu = 1; vram = ink_cuda_free_bytes()/1e9; gpu = "CUDA device"; }
 #endif
     (void)m;
@@ -2546,15 +2546,15 @@ static void serve_tiers_emap(Model *m) {
 static void serve_loop(Model *m, Tok *T) {
     /* Before the sentinel: on Windows a TEXT-mode stdout rewrites the trailing \n
      * as \r\n, the gateway never matches it and waits forever (#748). Lives in
-     * compat.h because colibri.c has had it since #195 and this engine was
+     * compat.h because glm52.c has had it since #195 and this engine was
      * written without it. */
-    coli_serve_stdio_init();
+    lma_serve_stdio_init();
     const char *sd = getenv("SEED");
     if (sd) g_rng ^= (uint64_t)strtoull(sd, NULL, 10);
     else g_rng ^= (uint64_t)time(NULL) * 2654435761u;
-    /* the gateway reads a STAT line right after the READY sentinel (colibri
+    /* the gateway reads a STAT line right after the READY sentinel (lmatomic
      * reports its load stats there) — match the handshake */
-    coli_serve_write_ready(stdout,rss_gb());
+    lma_serve_write_ready(stdout,rss_gb());
     serve_hwinfo(m);
     serve_tiers_emap(m);
     for (;;) {
@@ -2583,29 +2583,29 @@ int main(int argc, char **argv) {
      * per-expert matmul regions are tiny and back-to-back; the default passive
      * wait policy parks the team between regions and re-wake latency dominates.
      * libgomp reads OMP_/GOMP_ vars before main(), so seed them and re-exec
-     * once (COLI_OMP_TUNED guards the exec; COLI_NO_OMP_TUNE=1 disables).
+     * once (LMA_OMP_TUNED guards the exec; LMA_NO_OMP_TUNE=1 disables).
      * NOT under CUDA — same exception glm.c makes: a spinning 24-thread team
      * starves the CUDA driver during every stream sync. */
-#if !defined(COLI_CUDA) && !defined(__APPLE__)
+#if !defined(LMA_CUDA) && !defined(__APPLE__)
     /* NOT on Apple Silicon: the active-spin team steals the shared SoC power
      * budget (same mechanism as the M5 Max Metal report) and measured strictly
      * worse on Inkling-Small even for pure-CPU decode — 0.50 vs 0.84 tok/s,
-     * and 2x the prefill. Opt back in with COLI_OMP_TUNED=0 unset + Linux. */
-    if (!getenv("COLI_OMP_TUNED") && !getenv("COLI_NO_OMP_TUNE")) {
+     * and 2x the prefill. Opt back in with LMA_OMP_TUNED=0 unset + Linux. */
+    if (!getenv("LMA_OMP_TUNED") && !getenv("LMA_NO_OMP_TUNE")) {
         setenv("OMP_WAIT_POLICY","active",0);
         setenv("GOMP_SPINCOUNT","200000",0);
         setenv("OMP_PROC_BIND","close",0);
         setenv("OMP_DYNAMIC","FALSE",0);
-        setenv("COLI_OMP_TUNED","1",1);
+        setenv("LMA_OMP_TUNED","1",1);
 #ifdef __linux__
         execv("/proc/self/exe", argv);
         perror("[OMP] execv self-reexec failed, running untuned");
 #endif
     }
-#endif  /* !COLI_CUDA && !__APPLE__ */
-    coli_omp_tune_threads("inkling");
+#endif  /* !LMA_CUDA && !__APPLE__ */
+    lma_omp_tune_threads("inkling");
     const char *snap = getenv("SNAP");
-    if (!snap) { coli_print_launcher_help("Inkling"); return 1; }
+    if (!snap) { lma_print_launcher_help("Inkling"); return 1; }
     g_topp = getenv("TOPP") ? (float)atof(getenv("TOPP")) : 0.f;
     if (g_topp > 0.f && g_topp < 1.f)
         fprintf(stderr, "[TOPP] %.2f: routed experts kept to cumulative weight — "
@@ -2621,11 +2621,11 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-p") && i+1 < argc) prompt = argv[++i];
         else if (!strcmp(argv[i], "-f") && i+1 < argc) pfile = argv[++i];
-        else if (!strcmp(argv[i], "-n") && i+1 < argc) n_new = coli_arg_int(argv[++i], "-n");
+        else if (!strcmp(argv[i], "-n") && i+1 < argc) n_new = lma_arg_int(argv[++i], "-n");
         else if (!strcmp(argv[i], "--chat")) chat = 1;
         else if (!strcmp(argv[i], "--audio") && i+1 < argc) audiopath = argv[++i];
-        else if (npos == 0) { cap = coli_arg_int(argv[i], "cache/layer"); npos++; }
-        else if (npos == 1) { bits = coli_arg_int(argv[i], "expert bits"); npos++; }
+        else if (npos == 0) { cap = lma_arg_int(argv[i], "cache/layer"); npos++; }
+        else if (npos == 1) { bits = lma_arg_int(argv[i], "expert bits"); npos++; }
         else refpath = argv[i];
     }
     /* --audio <file>: raw u8 DMel frames, [n_frames, mel_bins] row-major —
@@ -2685,13 +2685,13 @@ int main(int argc, char **argv) {
     if (bits && (bits < 2 || bits > 8)) { fprintf(stderr, "quant_bits must be 0 (f32) or 2..8\n"); return 1; }
 
     /* SERVE=1: the openai_server.py gateway drives the engine over stdin/stdout
-     * (READY handshake, SUBMIT/CANCEL, DATA/DONE frames) — same protocol colibri. */
+     * (READY handshake, SUBMIT/CANCEL, DATA/DONE frames) — same protocol lmatomic. */
     if (getenv("SERVE") && getenv("SERVE")[0] == '1') {
         Model m; model_init(&m, snap, cap, bits);
         pins_load(&m, snap);
         char tkp[2048]; snprintf(tkp, sizeof(tkp), "%s/tokenizer.json", snap);
         Tok T; tok_load(&T, tkp);
-        coli_rt_term_arm();   /* SIGTERM must reach the save below (#1629) */
+        lma_rt_term_arm();   /* SIGTERM must reach the save below (#1629) */
         serve_loop(&m, &T);
         usage_save(&m, snap);
         return 0;
@@ -2791,10 +2791,10 @@ int main(int argc, char **argv) {
     printf("\nC engine : "); for (int i=np;i<nfull;i++) { printf("%d ", out[i]); if (out[i]==full[i]) match++; }
     printf("\nMatching tokens: %d/%d\n", match, ngen);
     double tot = m.hits + m.miss;
-#ifdef COLI_METAL
+#ifdef LMA_METAL
     if (g_metal) {
         uint64_t mok = 0, mfb = 0, mex = 0;
-        coli_metal_moe_counts(&mok, &mfb, &mex);
+        lma_metal_moe_counts(&mok, &mfb, &mex);
         printf("[metal] %llu MoE blocks on GPU, %llu CPU fallbacks, %llu experts\n",
                (unsigned long long)mok, (unsigned long long)mfb, (unsigned long long)mex);
     }
@@ -2806,7 +2806,7 @@ int main(int argc, char **argv) {
 }
 #endif /* INKLING_NO_MAIN */
 
-#ifdef COLI_SEGMENT_ADAPTER
+#ifdef LMA_SEGMENT_ADAPTER
 /* ---------- engine-owned Segment adapter ------------------------------ */
 
 typedef struct {
@@ -2880,27 +2880,27 @@ static void inkling_segment_model_destroy(InklingSegmentEngine *engine) {
 }
 
 static int inkling_segment_engine_open(
-    void **engine_impl, ColiSegmentCapabilities *capabilities,
-    const ColiSegmentEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaSegmentCapabilities *capabilities,
+    const LmaSegmentEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "invalid Inkling Segment open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_SEGMENT_CAP_CPU))
-        return coli_segment_adapter_error(error, error_size,
+        (options->backend_mask & ~LMA_SEGMENT_CAP_CPU))
+        return lma_segment_adapter_error(error, error_size,
                                            "Inkling Segment currently supports CPU");
 
     Cfg config;
     memset(&config, 0, sizeof(config));
     load_cfg(&config, options->model_dir);
     if (options->layer_end > (uint32_t)config.n_layers)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Inkling Segment range exceeds model");
     int bits = getenv("INK_SEGMENT_BITS")
         ? atoi(getenv("INK_SEGMENT_BITS")) : 0;
     if (bits && (bits < 2 || bits > 8))
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "INK_SEGMENT_BITS must be 0 or 2..8");
     int sparse_layers = 0;
     for (uint32_t layer = options->layer_begin; layer < options->layer_end;
@@ -2921,14 +2921,14 @@ static int inkling_segment_engine_open(
 
     InklingSegmentEngine *engine = calloc(1, sizeof(*engine));
     if (!engine)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory opening Inkling Segment");
     engine->layer_begin = options->layer_begin;
     engine->layer_end = options->layer_end;
     engine->context_tokens = options->context_tokens;
     if (pthread_mutex_init(&engine->run_lock, NULL)) {
         free(engine);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "cannot initialize Inkling Segment lock");
     }
     model_init_range(&engine->model, options->model_dir, cap, bits,
@@ -2941,20 +2941,20 @@ static int inkling_segment_engine_open(
 
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_SEGMENT_ABI_VERSION;
-    capabilities->flags = COLI_SEGMENT_CAP_SNAPSHOT |
-                          COLI_SEGMENT_CAP_RANGE_NATIVE |
-                          COLI_SEGMENT_CAP_MULTI_SESSION |
-                          COLI_SEGMENT_CAP_CPU;
-    coli_segment_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_SEGMENT_ABI_VERSION;
+    capabilities->flags = LMA_SEGMENT_CAP_SNAPSHOT |
+                          LMA_SEGMENT_CAP_RANGE_NATIVE |
+                          LMA_SEGMENT_CAP_MULTI_SESSION |
+                          LMA_SEGMENT_CAP_CPU;
+    lma_segment_capability_string(capabilities->engine_id,
                                    sizeof(capabilities->engine_id), "inkling");
-    coli_segment_capability_string(capabilities->state_schema,
+    lma_segment_capability_string(capabilities->state_schema,
                                    sizeof(capabilities->state_schema),
                                    "inkling/kv-ring-conv-f32-v1");
     snprintf(capabilities->numeric_class,
              sizeof(capabilities->numeric_class),
              "inkling/expert-q%d/f32/cpu-v1", bits);
-    capabilities->state_dtype = COLI_SEGMENT_DTYPE_F32;
+    capabilities->state_dtype = LMA_SEGMENT_DTYPE_F32;
     capabilities->state_width = (uint32_t)config.hidden;
     capabilities->max_batch_rows = 128;
     capabilities->max_context_tokens = options->context_tokens;
@@ -2989,15 +2989,15 @@ static void inkling_segment_session_free(InklingSegmentSession *session) {
 
 static int inkling_segment_session_create(
     void *engine_impl, void **session_impl,
-    const ColiSegmentSessionOptions *options, char *error, size_t error_size) {
+    const LmaSegmentSessionOptions *options, char *error, size_t error_size) {
     InklingSegmentEngine *engine = (InklingSegmentEngine *)engine_impl;
     if (!engine || !session_impl || !options)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "invalid Inkling Segment session");
     *session_impl = NULL;
     InklingSegmentSession *session = calloc(1, sizeof(*session));
     if (!session)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory creating Inkling session");
     session->engine = engine;
     session->context_tokens = options->context_tokens;
@@ -3017,16 +3017,16 @@ static int inkling_segment_session_create(
         int kvdim = L_KV(config, layer) * L_HD(config, layer);
         int rows = kv_ring_rows(config, (int)layer,
                                 (int)options->context_tokens);
-        if (coli_segment_size_mul((size_t)L_KV(config, layer),
+        if (lma_segment_size_mul((size_t)L_KV(config, layer),
                                   (size_t)rows, &cells) ||
-            coli_segment_size_mul(cells, (size_t)L_HD(config, layer),
+            lma_segment_size_mul(cells, (size_t)L_HD(config, layer),
                                   &cells)) goto oom;
         session->K[layer] = calloc(cells, sizeof(float));
         session->V[layer] = calloc(cells, sizeof(float));
         state_bytes += 2u * (uint64_t)cells * sizeof(float);
         for (int state = 0; state < 4; state++) {
             int width = state < 2 ? kvdim : config->hidden;
-            if (coli_segment_size_mul((size_t)width,
+            if (lma_segment_size_mul((size_t)width,
                                       (size_t)(config->conv_k - 1),
                                       &cells)) goto oom;
             session->cs[state][layer] = calloc(cells, sizeof(float));
@@ -3039,7 +3039,7 @@ static int inkling_segment_session_create(
     if (options->memory_limit_bytes &&
         state_bytes > options->memory_limit_bytes) {
         inkling_segment_session_free(session);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Inkling session state exceeds memory limit");
     }
     *session_impl = session;
@@ -3047,7 +3047,7 @@ static int inkling_segment_session_create(
 
 oom:
     inkling_segment_session_free(session);
-    return coli_segment_adapter_error(error, error_size,
+    return lma_segment_adapter_error(error, error_size,
                                        "out of memory allocating Inkling state");
 }
 
@@ -3056,15 +3056,15 @@ static void inkling_segment_session_destroy(void *session_impl) {
 }
 
 static int inkling_segment_session_run(void *session_impl,
-                                       const ColiSegmentRunRequest *request,
+                                       const LmaSegmentRunRequest *request,
                                        char *error, size_t error_size) {
     InklingSegmentSession *session = (InklingSegmentSession *)session_impl;
     if (!session || !request || request->position != session->position)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "Inkling Segment requires contiguous positions");
     if (request->should_cancel &&
         request->should_cancel(request->cancel_user_data))
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Inkling Segment run cancelled");
     InklingSegmentEngine *engine = session->engine;
     if (request->output != request->input)
@@ -3089,17 +3089,17 @@ static int inkling_segment_session_run(void *session_impl,
 
 static int inkling_segment_spans(
     InklingSegmentSession *session, uint32_t position,
-    ColiSegmentStateSpan **spans_output, size_t *count_output,
+    LmaSegmentStateSpan **spans_output, size_t *count_output,
     char *error, size_t error_size) {
     Cfg *config = &session->engine->model.c;
     size_t capacity = 0;
     for (uint32_t layer = session->engine->layer_begin;
          layer < session->engine->layer_end; layer++)
         capacity += (size_t)(2 * L_KV(config, layer) + 4);
-    ColiSegmentStateSpan *spans = capacity
+    LmaSegmentStateSpan *spans = capacity
         ? calloc(capacity, sizeof(*spans)) : NULL;
     if (capacity && !spans)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory describing Inkling state");
     size_t count = 0;
     for (uint32_t layer = session->engine->layer_begin;
@@ -3113,13 +3113,13 @@ static int inkling_segment_spans(
         for (int which = 0; which < 2; which++) {
             float *state = which ? session->V[layer] : session->K[layer];
             for (int head = 0; head < kv; head++)
-                spans[count++] = (ColiSegmentStateSpan){
+                spans[count++] = (LmaSegmentStateSpan){
                     state + (size_t)head * stride, row_bytes};
         }
         int kvdim = kv * hd;
         for (int state = 0; state < 4; state++) {
             int width = state < 2 ? kvdim : config->hidden;
-            spans[count++] = (ColiSegmentStateSpan){
+            spans[count++] = (LmaSegmentStateSpan){
                 session->cs[state][layer],
                 (size_t)width * (config->conv_k - 1) * sizeof(float)};
         }
@@ -3129,53 +3129,53 @@ static int inkling_segment_spans(
 }
 
 static int inkling_segment_session_snapshot(
-    void *session_impl, ColiSegmentWriteFn write_fn, void *write_user_data,
+    void *session_impl, LmaSegmentWriteFn write_fn, void *write_user_data,
     char *error, size_t error_size) {
     InklingSegmentSession *session = (InklingSegmentSession *)session_impl;
-    ColiSegmentStateSpan *spans = NULL;
+    LmaSegmentStateSpan *spans = NULL;
     size_t count = 0, payload_bytes;
     if (!session || inkling_segment_spans(session, session->position, &spans,
                                           &count, error, error_size))
         return -1;
-    if (coli_segment_spans_size(spans, count, &payload_bytes)) {
+    if (lma_segment_spans_size(spans, count, &payload_bytes)) {
         free(spans);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Inkling snapshot size overflow");
     }
-    ColiSegmentSnapshotHeader header;
-    coli_segment_snapshot_header_init(
+    LmaSegmentSnapshotHeader header;
+    lma_segment_snapshot_header_init(
         &header, "inkling", session->engine->layer_begin,
         session->engine->layer_end, session->context_tokens, session->position,
-        payload_bytes, coli_segment_spans_hash(spans, count));
-    int result = coli_segment_stream_write(
+        payload_bytes, lma_segment_spans_hash(spans, count));
+    int result = lma_segment_stream_write(
         write_fn, write_user_data, &header, sizeof(header), error, error_size);
     if (!result)
-        result = coli_segment_spans_write(spans, count, write_fn,
+        result = lma_segment_spans_write(spans, count, write_fn,
                                           write_user_data, error, error_size);
     free(spans);
     return result;
 }
 
 static int inkling_segment_session_restore(
-    void *session_impl, ColiSegmentReadFn read_fn, void *read_user_data,
+    void *session_impl, LmaSegmentReadFn read_fn, void *read_user_data,
     char *error, size_t error_size) {
     InklingSegmentSession *session = (InklingSegmentSession *)session_impl;
-    ColiSegmentSnapshotHeader header;
-    if (!session || coli_segment_stream_read(read_fn, read_user_data, &header,
+    LmaSegmentSnapshotHeader header;
+    if (!session || lma_segment_stream_read(read_fn, read_user_data, &header,
                                              sizeof(header), error, error_size))
         return -1;
-    ColiSegmentStateSpan *spans = NULL;
+    LmaSegmentStateSpan *spans = NULL;
     size_t count = 0, payload_bytes;
     if (inkling_segment_spans(session, header.position, &spans, &count,
                               error, error_size)) return -1;
-    if (coli_segment_spans_size(spans, count, &payload_bytes) ||
-        coli_segment_snapshot_header_valid(
+    if (lma_segment_spans_size(spans, count, &payload_bytes) ||
+        lma_segment_snapshot_header_valid(
             &header, "inkling", session->engine->layer_begin,
             session->engine->layer_end, session->context_tokens,
             payload_bytes, error, error_size)) {
         free(spans); return -1;
     }
-    int result = coli_segment_spans_restore(
+    int result = lma_segment_spans_restore(
         spans, count, header.payload_hash, read_fn, read_user_data,
         error, error_size);
     free(spans);
@@ -3183,20 +3183,20 @@ static int inkling_segment_session_restore(
     return result;
 }
 
-static const ColiSegmentAdapter inkling_segment_adapter = {
-    sizeof(ColiSegmentAdapter), COLI_SEGMENT_ABI_VERSION, "inkling",
+static const LmaSegmentAdapter inkling_segment_adapter = {
+    sizeof(LmaSegmentAdapter), LMA_SEGMENT_ABI_VERSION, "inkling",
     inkling_segment_engine_open, inkling_segment_engine_destroy,
     inkling_segment_session_create, inkling_segment_session_destroy,
     inkling_segment_session_run, inkling_segment_session_snapshot,
     inkling_segment_session_restore, {0}
 };
 
-int coli_inkling_segment_adapter_register(void) {
-    return coli_segment_adapter_register(&inkling_segment_adapter);
+int lma_inkling_segment_adapter_register(void) {
+    return lma_segment_adapter_register(&inkling_segment_adapter);
 }
-#endif /* COLI_SEGMENT_ADAPTER */
+#endif /* LMA_SEGMENT_ADAPTER */
 
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 /* ---------- engine-owned model Edge adapter --------------------------- */
 
 typedef struct {
@@ -3234,19 +3234,19 @@ static void inkling_edge_engine_destroy(void *engine_impl) {
 }
 
 static int inkling_edge_engine_open(
-    void **engine_impl, ColiEdgeCapabilities *capabilities,
-    const ColiEdgeEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaEdgeCapabilities *capabilities,
+    const LmaEdgeEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "invalid Inkling Edge open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_EDGE_CAP_CPU))
-        return coli_edge_adapter_error(error, error_size,
+        (options->backend_mask & ~LMA_EDGE_CAP_CPU))
+        return lma_edge_adapter_error(error, error_size,
                                        "Inkling Edge supports CPU only");
     InklingEdgeEngine *engine = calloc(1, sizeof(*engine));
     if (!engine)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "out of memory opening Inkling Edge");
     Model *model = &engine->model;
     load_cfg(&model->c, options->model_dir);
@@ -3282,30 +3282,30 @@ static int inkling_edge_engine_open(
         resident += (uint64_t)config->hidden * sizeof(float);
     if (options->memory_limit_bytes && resident > options->memory_limit_bytes) {
         inkling_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "Inkling Edge exceeds memory limit");
     }
     int bits = getenv("INK_SEGMENT_BITS")
         ? atoi(getenv("INK_SEGMENT_BITS")) : 0;
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_EDGE_ABI_VERSION;
-    capabilities->flags = COLI_EDGE_CAP_TOKENIZE |
-                          COLI_EDGE_CAP_DETOKENIZE |
-                          COLI_EDGE_CAP_GREEDY | COLI_EDGE_CAP_LOGITS |
-                          COLI_EDGE_CAP_CPU;
-    coli_edge_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_EDGE_ABI_VERSION;
+    capabilities->flags = LMA_EDGE_CAP_TOKENIZE |
+                          LMA_EDGE_CAP_DETOKENIZE |
+                          LMA_EDGE_CAP_GREEDY | LMA_EDGE_CAP_LOGITS |
+                          LMA_EDGE_CAP_CPU;
+    lma_edge_capability_string(capabilities->engine_id,
                                 sizeof(capabilities->engine_id), "inkling");
-    coli_edge_capability_string(capabilities->state_schema,
+    lma_edge_capability_string(capabilities->state_schema,
                                 sizeof(capabilities->state_schema),
                                 "inkling/kv-ring-conv-f32-v1");
     snprintf(capabilities->numeric_class,
              sizeof(capabilities->numeric_class),
              "inkling/expert-q%d/f32/cpu-v1", bits);
-    coli_edge_capability_string(capabilities->tokenizer_class,
+    lma_edge_capability_string(capabilities->tokenizer_class,
                                 sizeof(capabilities->tokenizer_class),
                                 "inkling/o200k-byte-bpe-v1");
-    capabilities->state_dtype = COLI_EDGE_DTYPE_F32;
+    capabilities->state_dtype = LMA_EDGE_DTYPE_F32;
     capabilities->state_width = (uint32_t)config->hidden;
     capabilities->vocab_size = (uint32_t)config->unpad_vocab;
     capabilities->max_batch_rows = 128;
@@ -3323,7 +3323,7 @@ static int inkling_edge_tokenize(
     int32_t *token_ids, size_t token_capacity, size_t *token_count,
     char *error, size_t error_size) {
     InklingEdgeEngine *engine = (InklingEdgeEngine *)engine_impl;
-    return coli_edge_tok_tokenize(&engine->tokenizer, text, text_bytes,
+    return lma_edge_tok_tokenize(&engine->tokenizer, text, text_bytes,
                                   token_ids, token_capacity, token_count,
                                   error, error_size);
 }
@@ -3333,13 +3333,13 @@ static int inkling_edge_detokenize(
     char *text, size_t text_capacity, size_t *text_bytes,
     char *error, size_t error_size) {
     InklingEdgeEngine *engine = (InklingEdgeEngine *)engine_impl;
-    return coli_edge_tok_detokenize(&engine->tokenizer, token_ids, token_count,
+    return lma_edge_tok_detokenize(&engine->tokenizer, token_ids, token_count,
                                     text, text_capacity, text_bytes,
                                     error, error_size);
 }
 
 static int inkling_edge_embed(void *engine_impl,
-                              const ColiEdgeEmbedRequest *request,
+                              const LmaEdgeEmbedRequest *request,
                               char *error, size_t error_size) {
     InklingEdgeEngine *engine = (InklingEdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -3347,7 +3347,7 @@ static int inkling_edge_embed(void *engine_impl,
     for (uint32_t row = 0; row < request->rows; row++) {
         int token = request->token_ids[row];
         if (token < 0 || token >= config->vocab)
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Inkling token ID is out of range");
         float *state = output + (size_t)row * config->hidden;
         wt_row_f32(engine->model.embed, (int64_t)token * config->hidden,
@@ -3360,7 +3360,7 @@ static int inkling_edge_embed(void *engine_impl,
 }
 
 static int inkling_edge_select(void *engine_impl,
-                               const ColiEdgeSelectRequest *request,
+                               const LmaEdgeSelectRequest *request,
                                char *error, size_t error_size) {
     InklingEdgeEngine *engine = (InklingEdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -3371,7 +3371,7 @@ static int inkling_edge_select(void *engine_impl,
         if (request->should_cancel &&
             request->should_cancel(request->cancel_user_data)) {
             free(logits); free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Inkling Edge selection cancelled");
         }
         rmsnorm_row(normalized, input + (size_t)row * config->hidden,
@@ -3380,11 +3380,11 @@ static int inkling_edge_select(void *engine_impl,
             normalized[item] /= config->mup;
         matmul_w(logits, normalized, engine->model.lm_head,
                  1, config->hidden, config->unpad_vocab);
-        if (coli_edge_argmax(logits, (uint32_t)config->unpad_vocab,
+        if (lma_edge_argmax(logits, (uint32_t)config->unpad_vocab,
                             &request->token_ids[row],
                             request->scores ? &request->scores[row] : NULL)) {
             free(logits); free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Inkling Edge head failed");
         }
     }
@@ -3393,7 +3393,7 @@ static int inkling_edge_select(void *engine_impl,
 }
 
 static int inkling_edge_logits(void *engine_impl,
-                               const ColiEdgeLogitsRequest *request,
+                               const LmaEdgeLogitsRequest *request,
                                char *error, size_t error_size) {
     InklingEdgeEngine *engine = (InklingEdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -3403,7 +3403,7 @@ static int inkling_edge_logits(void *engine_impl,
         if (request->should_cancel &&
             request->should_cancel(request->cancel_user_data)) {
             free(normalized);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Inkling Edge logits cancelled");
         }
         rmsnorm_row(normalized, input + (size_t)row * config->hidden,
@@ -3418,14 +3418,14 @@ static int inkling_edge_logits(void *engine_impl,
     return 0;
 }
 
-static const ColiEdgeAdapter inkling_edge_adapter = {
-    sizeof(ColiEdgeAdapter), COLI_EDGE_ABI_VERSION, "inkling",
+static const LmaEdgeAdapter inkling_edge_adapter = {
+    sizeof(LmaEdgeAdapter), LMA_EDGE_ABI_VERSION, "inkling",
     inkling_edge_engine_open, inkling_edge_engine_destroy,
     inkling_edge_tokenize, inkling_edge_detokenize,
     inkling_edge_embed, inkling_edge_select, inkling_edge_logits, {0}
 };
 
-int coli_inkling_edge_adapter_register(void) {
-    return coli_edge_adapter_register(&inkling_edge_adapter);
+int lma_inkling_edge_adapter_register(void) {
+    return lma_edge_adapter_register(&inkling_edge_adapter);
 }
-#endif /* COLI_EDGE_ADAPTER */
+#endif /* LMA_EDGE_ADAPTER */

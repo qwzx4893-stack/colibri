@@ -42,8 +42,8 @@ static int record_issue(int device, int count, const float *x) {
 
 int main(void) {
     enum { NL = 1, NE = 64, D = 64, IH = 32, TOPK = 32 };
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", "0,1", 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", "0,1", 1);
     setenv("QT_NO_WARMSTART", "1", 1);
     fake_ndev = 2;
 

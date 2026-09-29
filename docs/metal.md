@@ -1,7 +1,7 @@
 # Metal backend (Apple Silicon, experimental)
 
 On Apple Silicon the decode profile is matmul-bound, and unified memory removes
-the PCIe copy tax that keeps CUDA's streaming experts on the CPU — so colibrì
+the PCIe copy tax that keeps CUDA's streaming experts on the CPU — so LM Atomic
 has an opt-in Metal backend that runs the **routed-expert SwiGLU (batched,
 zero-copy from the RAM slabs)**, the **fused decode attention** (full MLA layer
 in one command buffer, S≤4), and **prefill's large GEMMs** on the GPU.
@@ -11,11 +11,11 @@ different top token than the CPU — a floating-point ordering difference, not a
 bug (`make metal-test` passes the GEMM at ~3e-6 against a 1e-4 tolerance; see
 [#622](https://github.com/JustVugg/colibri/issues/622)). It is invisible in normal use
 but can surface in teacher-forced oracle comparisons on pathological 4-bit toy
-containers. Set `COLI_METAL_GEMM_MIN=100000` to keep every GEMM on the CPU for
+containers. Set `LMA_METAL_GEMM_MIN=100000` to keep every GEMM on the CPU for
 bit-exact prefill (`DEBUG_LOGITS=1` on a `TF=1` run dumps the top-5 logits and the
 top1–top2 margin at each mismatch, so you can see how close the tie was).
 
-`COLI_METAL_PREFILL=1` extends the fused attention to **prefill** (S>4): the whole
+`LMA_METAL_PREFILL=1` extends the fused attention to **prefill** (S>4): the whole
 attention — projections, scores, softmax, value, output — runs on the GPU in one
 command buffer instead of the CPU. On a 544-token prompt this cuts prefill attention
 ~4x (35.9 s → 9.0 s). It is **off by default**: like the prefill GEMM above, the GPU
@@ -28,11 +28,11 @@ back to the CPU automatically.
 
 ```bash
 cd c
-make colibri METAL=1          # macOS only; no Xcode needed (shader compiles at runtime)
-                              # any macOS SDK builds; the COLI_METAL_RESSET residency-set
+make glm52 METAL=1          # macOS only; no Xcode needed (shader compiles at runtime)
+                              # any macOS SDK builds; the LMA_METAL_RESSET residency-set
                               # path needs the macOS 15 SDK and is compiled out below it
 make metal-test           # standalone kernel/attention correctness vs CPU reference
-COLI_METAL=1 COLI_MODEL=/path/glm52_i4 ./coli chat --ram 96
+LMA_METAL=1 LMA_MODEL=/path/glm52_i4 ./lmatomic chat --ram 96
 ```
 
 Measured on an M4 Max (128 GB, warm cache, MTP on): CPU 0.30 → Metal
@@ -44,7 +44,7 @@ first cold run). An M5 Max with a 46.9 GB learned pin reached **2.06 tok/s**
 Key design points: Metal's ~5 ms submit latency makes per-matmul dispatch a
 loss — everything is batched into few command buffers per layer, and the
 resident experts' GPU work is submitted *before* the missed experts' disk reads
-so I/O and compute overlap. `COLI_METAL_GEMM_MIN` tunes the prefill GEMM row
+so I/O and compute overlap. `LMA_METAL_GEMM_MIN` tunes the prefill GEMM row
 threshold (default 16). Streaming, cache, MTP, DSA and the persistence formats
 are unchanged; every GPU path falls back to the CPU per-block on any fault.
 Numerics are dequant→f32-MAC (same as the CUDA tier); greedy outputs are

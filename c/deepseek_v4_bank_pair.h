@@ -1,5 +1,5 @@
 /* deepseek_v4_bank_pair.h — decision logic for the double-buffered prefill
- * expert bank (COLI_CUDA_MOE_DOUBLE=1).
+ * expert bank (LMA_CUDA_MOE_DOUBLE=1).
  *
  * While the GPU computes layer L's chunks from the active bank, a worker
  * thread loads layer L+1's COMPLETE expert set into the other bank over the
@@ -27,7 +27,7 @@ typedef enum {
  * once the caller has JOINED the prefetch worker — deciding on a bank whose
  * upload is still in flight is the classic double-buffer bug, so the caller
  * must join first and only then consult this. */
-static inline V4BankPairAction coli_v4_bank_pair_decide(int double_on,
+static inline V4BankPairAction lma_v4_bank_pair_decide(int double_on,
                                                         int other_layer,
                                                         int incoming_layer) {
     if (!double_on) return V4_BANK_LEGACY;
@@ -41,7 +41,7 @@ static inline V4BankPairAction coli_v4_bank_pair_decide(int double_on,
  * anything OTHER than current+1 is never right: target_batch walks layers in
  * ascending order and a segment restart goes back to 0, which the mismatch
  * path above absorbs. */
-static inline int coli_v4_bank_pair_prefetch_target(int double_on,
+static inline int lma_v4_bank_pair_prefetch_target(int double_on,
                                                     int current_layer,
                                                     int num_layers) {
     if (!double_on || current_layer < 0) return -1;

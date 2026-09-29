@@ -1,13 +1,13 @@
 [package]
-name = "colibri-desktop"
+name = "lmatomic-desktop"
 version = "0.1.0"
-description = "Native desktop shell for the colibri inference engine"
-authors = ["colibri contributors"]
+description = "Native desktop shell for the lmatomic inference engine"
+authors = ["lmatomic contributors"]
 edition = "2024"
 rust-version = "1.85"
 
 [lib]
-name = "colibri_desktop_lib"
+name = "lmatomic_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -13,7 +13,7 @@
  *   B. window >= max_t transition  — linear sliding buffer grows INTO a ring
  *   C. keep == 0                   — grow with nothing to preserve
  */
-#define main coli_inkling_main_unused
+#define main lma_inkling_main_unused
 #include "../inkling.c"
 #undef main
 

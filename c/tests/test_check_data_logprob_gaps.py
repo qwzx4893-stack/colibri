@@ -717,7 +717,7 @@ class FrameOrderLifecycleGateTests(_GapFixture):
     contains) plus per-ordinal coverage (one test per entry, each proving
     that ENTRY's own specific "expected ... as frame N" message -- unique
     text per kind, so only that entry's check can produce it -- actually
-    fires). `c/colibri.c`'s own emission order is NOT consulted here: that
+    fires). `c/glm52.c`'s own emission order is NOT consulted here: that
     cross-check (transcribed wire format vs C source) is a separate,
     cross-cutting, pre-existing gap (flagged elsewhere) affecting every
     literal in both new Python modules, not something to fix piecemeal in

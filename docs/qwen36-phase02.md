@@ -1,4 +1,4 @@
-# Qwen3.6-35B-A3B in colibri — Phase 2: Gated DeltaNet in C
+# Qwen3.6-35B-A3B in LM Atomic — Phase 2: Gated DeltaNet in C
 
 Phase 1 跑通了 25% 的 Gated Attention 层 + 流式 MoE,把 DeltaNet 层当恒等跳过。
 **Phase 2 把 75% 的 Gated DeltaNet 层(线性回归注意力)也在 `c/qwen36.c` 里实现了**,

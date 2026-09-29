@@ -9,7 +9,7 @@
 #define FIXTURE_SNAPSHOT_VERSION 1u
 
 typedef struct {
-    const ColiSegmentConformanceFixture *fixture;
+    const LmaSegmentConformanceFixture *fixture;
     uint32_t layer_begin;
     uint32_t layer_end;
     uint32_t context_tokens;
@@ -34,14 +34,14 @@ typedef struct {
  * has a real-checkpoint oracle rather than a generated miniature; keeping that
  * fact explicit is preferable to silently labelling a synthetic checkpoint as
  * model coverage. */
-static const ColiSegmentConformanceFixture g_fixtures[] = {
+static const LmaSegmentConformanceFixture g_fixtures[] = {
     {
         "glm", "GLM-5.2", "fixture/glm-mla-dsa-v1",
         "MLA latent cache + RoPE + DSA indexer + device cache",
         "tools/make_glm_oracle.py",
-        COLI_SEGMENT_FIXTURE_MLA_LATENT |
-            COLI_SEGMENT_FIXTURE_DSA_INDEXER |
-            COLI_SEGMENT_FIXTURE_DEVICE_CACHE,
+        LMA_SEGMENT_FIXTURE_MLA_LATENT |
+            LMA_SEGMENT_FIXTURE_DSA_INDEXER |
+            LMA_SEGMENT_FIXTURE_DEVICE_CACHE,
         4, 8, 5, 64, UINT32_C(0x474c4d35),
     },
     {
@@ -49,82 +49,82 @@ static const ColiSegmentConformanceFixture g_fixtures[] = {
         "absorbed MLA latent + KDA recurrent state + convolution windows + "
         "DSA indexer + hyper-connection streams",
         "tools/make_glm53_multimodal_tiny.py",
-        COLI_SEGMENT_FIXTURE_MLA_LATENT |
-            COLI_SEGMENT_FIXTURE_RECURRENT |
-            COLI_SEGMENT_FIXTURE_CONVOLUTION |
-            COLI_SEGMENT_FIXTURE_DSA_INDEXER |
-            COLI_SEGMENT_FIXTURE_MHC,
+        LMA_SEGMENT_FIXTURE_MLA_LATENT |
+            LMA_SEGMENT_FIXTURE_RECURRENT |
+            LMA_SEGMENT_FIXTURE_CONVOLUTION |
+            LMA_SEGMENT_FIXTURE_DSA_INDEXER |
+            LMA_SEGMENT_FIXTURE_MHC,
         4, 10, 4, 64, UINT32_C(0x474c3533),
     },
     {
         "inkling", "Inkling", "fixture/inkling-kv-ring-conv-v1",
         "global KV + sliding KV ring + convolutional state",
         "tools/make_tiny_inkling.py",
-        COLI_SEGMENT_FIXTURE_KV |
-            COLI_SEGMENT_FIXTURE_SLIDING_RING |
-            COLI_SEGMENT_FIXTURE_CONVOLUTION,
+        LMA_SEGMENT_FIXTURE_KV |
+            LMA_SEGMENT_FIXTURE_SLIDING_RING |
+            LMA_SEGMENT_FIXTURE_CONVOLUTION,
         3, 7, 8, 64, UINT32_C(0x494e4b4c),
     },
     {
         "kimi", "Kimi K3", "fixture/kimi-mla-kda-conv-attnres-v1",
         "MLA + KDA recurrent state + convolution windows + AttnRes",
         "tools/make_kimi_k3_tiny.py",
-        COLI_SEGMENT_FIXTURE_MLA_LATENT |
-            COLI_SEGMENT_FIXTURE_RECURRENT |
-            COLI_SEGMENT_FIXTURE_CONVOLUTION |
-            COLI_SEGMENT_FIXTURE_ATTN_RESIDUAL,
+        LMA_SEGMENT_FIXTURE_MLA_LATENT |
+            LMA_SEGMENT_FIXTURE_RECURRENT |
+            LMA_SEGMENT_FIXTURE_CONVOLUTION |
+            LMA_SEGMENT_FIXTURE_ATTN_RESIDUAL,
         4, 9, 4, 64, UINT32_C(0x4b494d49),
     },
     {
         "olmoe", "OLMoE", "fixture/olmoe-kv-v1",
         "conventional key/value attention cache",
         "tools/make_olmoe_real_oracle.py",
-        COLI_SEGMENT_FIXTURE_KV,
+        LMA_SEGMENT_FIXTURE_KV,
         1, 6, 4, 32, UINT32_C(0x4f4c4d4f),
     },
     {
         "qwen36", "Qwen3.6", "fixture/qwen36-kv-deltanet-conv-v1",
         "attention KV + DeltaNet recurrent state + convolution ring",
         "tools/make_qwen36_tiny.py",
-        COLI_SEGMENT_FIXTURE_KV |
-            COLI_SEGMENT_FIXTURE_RECURRENT |
-            COLI_SEGMENT_FIXTURE_CONVOLUTION |
-            COLI_SEGMENT_FIXTURE_SLIDING_RING,
+        LMA_SEGMENT_FIXTURE_KV |
+            LMA_SEGMENT_FIXTURE_RECURRENT |
+            LMA_SEGMENT_FIXTURE_CONVOLUTION |
+            LMA_SEGMENT_FIXTURE_SLIDING_RING,
         4, 8, 8, 64, UINT32_C(0x5157454e),
     },
     {
         "qwen38", "Qwen3.8-Flash-Next", "fixture/qwen38-hyper-qsa-ple-v1",
         "four-stream hyper-residual + GDN recurrent/conv + QSA sparse indexer + PLE",
         "tools/make_qwen38_tiny.py",
-        COLI_SEGMENT_FIXTURE_HYPER_RESIDUAL |
-            COLI_SEGMENT_FIXTURE_RECURRENT |
-            COLI_SEGMENT_FIXTURE_CONVOLUTION |
-            COLI_SEGMENT_FIXTURE_KV |
-            COLI_SEGMENT_FIXTURE_SPARSE_ATTN |
-            COLI_SEGMENT_FIXTURE_PLE,
+        LMA_SEGMENT_FIXTURE_HYPER_RESIDUAL |
+            LMA_SEGMENT_FIXTURE_RECURRENT |
+            LMA_SEGMENT_FIXTURE_CONVOLUTION |
+            LMA_SEGMENT_FIXTURE_KV |
+            LMA_SEGMENT_FIXTURE_SPARSE_ATTN |
+            LMA_SEGMENT_FIXTURE_PLE,
         8, 64, 4, 128, UINT32_C(0x51333838),
     },
     {
         "deepseek_v4", "DeepSeek V4", "fixture/dsv4-mhc-compressed-v1",
         "mHC + window/compressed attention + compressor + indexer",
         "tools/make_deepseek_v4_tiny.py",
-        COLI_SEGMENT_FIXTURE_MHC |
-            COLI_SEGMENT_FIXTURE_SLIDING_RING |
-            COLI_SEGMENT_FIXTURE_COMPRESSOR |
-            COLI_SEGMENT_FIXTURE_DSA_INDEXER |
-            COLI_SEGMENT_FIXTURE_DEVICE_CACHE,
+        LMA_SEGMENT_FIXTURE_MHC |
+            LMA_SEGMENT_FIXTURE_SLIDING_RING |
+            LMA_SEGMENT_FIXTURE_COMPRESSOR |
+            LMA_SEGMENT_FIXTURE_DSA_INDEXER |
+            LMA_SEGMENT_FIXTURE_DEVICE_CACHE,
         5, 10, 4, 64, UINT32_C(0x44535634),
     },
     {
         "deepseek_v41", "DeepSeek V4.1", "fixture/dsv41-engram-compressed-v1",
         "mHC + window/compressed attention + compressor + indexer + engram + vision",
         "tools/make_dsv41_tiny.py",
-        COLI_SEGMENT_FIXTURE_MHC |
-            COLI_SEGMENT_FIXTURE_SLIDING_RING |
-            COLI_SEGMENT_FIXTURE_COMPRESSOR |
-            COLI_SEGMENT_FIXTURE_DSA_INDEXER |
-            COLI_SEGMENT_FIXTURE_ENGRAM |
-            COLI_SEGMENT_FIXTURE_VISION_TOWER,
+        LMA_SEGMENT_FIXTURE_MHC |
+            LMA_SEGMENT_FIXTURE_SLIDING_RING |
+            LMA_SEGMENT_FIXTURE_COMPRESSOR |
+            LMA_SEGMENT_FIXTURE_DSA_INDEXER |
+            LMA_SEGMENT_FIXTURE_ENGRAM |
+            LMA_SEGMENT_FIXTURE_VISION_TOWER,
         6, 8, 4, 64, UINT32_C(0x44533431),
     },
 };
@@ -134,19 +134,19 @@ static int fail(char *error, size_t error_size, const char *message) {
     return -1;
 }
 
-static int fixture_index(const ColiSegmentConformanceFixture *fixture) {
+static int fixture_index(const LmaSegmentConformanceFixture *fixture) {
     for (size_t i = 0; i < sizeof(g_fixtures) / sizeof(g_fixtures[0]); i++)
         if (fixture == &g_fixtures[i]) return (int)i;
     return -1;
 }
 
-size_t coli_segment_conformance_fixture_count(void) {
+size_t lma_segment_conformance_fixture_count(void) {
     return sizeof(g_fixtures) / sizeof(g_fixtures[0]);
 }
 
-const ColiSegmentConformanceFixture *
-coli_segment_conformance_fixture_at(size_t index) {
-    if (index >= coli_segment_conformance_fixture_count()) return NULL;
+const LmaSegmentConformanceFixture *
+lma_segment_conformance_fixture_at(size_t index) {
+    if (index >= lma_segment_conformance_fixture_count()) return NULL;
     return &g_fixtures[index];
 }
 
@@ -185,10 +185,10 @@ static uint32_t float_bits(float value) {
     return bits;
 }
 
-static int open_fixture(const ColiSegmentConformanceFixture *fixture,
+static int open_fixture(const LmaSegmentConformanceFixture *fixture,
                         void **engine_impl,
-                        ColiSegmentCapabilities *capabilities,
-                        const ColiSegmentEngineOptions *options,
+                        LmaSegmentCapabilities *capabilities,
+                        const LmaSegmentEngineOptions *options,
                         char *error, size_t error_size) {
     if (!fixture || fixture_index(fixture) < 0 ||
         options->layer_end > fixture->num_layers)
@@ -200,12 +200,12 @@ static int open_fixture(const ColiSegmentConformanceFixture *fixture,
     engine->layer_end = options->layer_end;
     engine->context_tokens = options->context_tokens;
 
-    capabilities->abi_version = COLI_SEGMENT_ABI_VERSION;
-    capabilities->flags = COLI_SEGMENT_CAP_TOKEN_IDS |
-                          COLI_SEGMENT_CAP_SNAPSHOT |
-                          COLI_SEGMENT_CAP_RANGE_NATIVE |
-                          COLI_SEGMENT_CAP_MULTI_SESSION |
-                          COLI_SEGMENT_CAP_CPU;
+    capabilities->abi_version = LMA_SEGMENT_ABI_VERSION;
+    capabilities->flags = LMA_SEGMENT_CAP_TOKEN_IDS |
+                          LMA_SEGMENT_CAP_SNAPSHOT |
+                          LMA_SEGMENT_CAP_RANGE_NATIVE |
+                          LMA_SEGMENT_CAP_MULTI_SESSION |
+                          LMA_SEGMENT_CAP_CPU;
     snprintf(capabilities->engine_id, sizeof(capabilities->engine_id), "%s",
              fixture->family_id);
     snprintf(capabilities->state_schema, sizeof(capabilities->state_schema),
@@ -213,7 +213,7 @@ static int open_fixture(const ColiSegmentConformanceFixture *fixture,
     snprintf(capabilities->numeric_class,
              sizeof(capabilities->numeric_class),
              "fixture-f32-deterministic-v1");
-    capabilities->state_dtype = COLI_SEGMENT_DTYPE_F32;
+    capabilities->state_dtype = LMA_SEGMENT_DTYPE_F32;
     capabilities->state_width = fixture->state_width;
     capabilities->max_batch_rows = 4;
     capabilities->max_context_tokens = fixture->max_context_tokens;
@@ -225,7 +225,7 @@ static int open_fixture(const ColiSegmentConformanceFixture *fixture,
 static void fixture_engine_destroy(void *engine_impl) { free(engine_impl); }
 
 static int fixture_session_create(void *engine_impl, void **session_impl,
-                                  const ColiSegmentSessionOptions *options,
+                                  const LmaSegmentSessionOptions *options,
                                   char *error, size_t error_size) {
     FixtureEngine *engine = (FixtureEngine *)engine_impl;
     if (!engine || options->context_tokens > engine->context_tokens)
@@ -253,10 +253,10 @@ static uint32_t mix_state(uint32_t old, uint32_t input, uint32_t token,
 }
 
 static int fixture_session_run(void *session_impl,
-                               const ColiSegmentRunRequest *request,
+                               const LmaSegmentRunRequest *request,
                                char *error, size_t error_size) {
     FixtureSession *session = (FixtureSession *)session_impl;
-    const ColiSegmentConformanceFixture *fixture = session->engine->fixture;
+    const LmaSegmentConformanceFixture *fixture = session->engine->fixture;
     if (request->position != session->position)
         return fail(error, error_size, "fixture run position is not contiguous");
 
@@ -308,7 +308,7 @@ static int decode_snapshot(FixtureSession *session,
                            const unsigned char bytes[FIXTURE_SNAPSHOT_SIZE],
                            char *error, size_t error_size) {
     FixtureEngine *engine = session->engine;
-    const ColiSegmentConformanceFixture *fixture = engine->fixture;
+    const LmaSegmentConformanceFixture *fixture = engine->fixture;
     uint64_t position = get_u64le(bytes + 32);
     if (memcmp(bytes, "CSFX", 4) != 0 ||
         get_u32le(bytes + 4) != FIXTURE_SNAPSHOT_VERSION ||
@@ -333,7 +333,7 @@ static int decode_snapshot(FixtureSession *session,
     return 0;
 }
 
-static int fixture_snapshot(void *session_impl, ColiSegmentWriteFn write_fn,
+static int fixture_snapshot(void *session_impl, LmaSegmentWriteFn write_fn,
                             void *write_user_data,
                             char *error, size_t error_size) {
     FixtureSession *session = (FixtureSession *)session_impl;
@@ -348,7 +348,7 @@ static int fixture_snapshot(void *session_impl, ColiSegmentWriteFn write_fn,
     return 0;
 }
 
-static int fixture_restore(void *session_impl, ColiSegmentReadFn read_fn,
+static int fixture_restore(void *session_impl, LmaSegmentReadFn read_fn,
                            void *read_user_data,
                            char *error, size_t error_size) {
     FixtureSession *session = (FixtureSession *)session_impl;
@@ -362,8 +362,8 @@ static int fixture_restore(void *session_impl, ColiSegmentReadFn read_fn,
 
 #define DECLARE_OPEN_WRAPPER(name, index)                                      \
     static int name##_open(void **engine_impl,                                 \
-                           ColiSegmentCapabilities *capabilities,              \
-                           const ColiSegmentEngineOptions *options,            \
+                           LmaSegmentCapabilities *capabilities,              \
+                           const LmaSegmentEngineOptions *options,            \
                            char *error, size_t error_size) {                    \
         return open_fixture(&g_fixtures[index], engine_impl, capabilities,      \
                             options, error, error_size);                        \
@@ -381,8 +381,8 @@ DECLARE_OPEN_WRAPPER(deepseek_v41, 8)
 
 #define FIXTURE_ADAPTER(name)                                                  \
     {                                                                          \
-        .struct_size = sizeof(ColiSegmentAdapter),                             \
-        .abi_version = COLI_SEGMENT_ABI_VERSION,                               \
+        .struct_size = sizeof(LmaSegmentAdapter),                             \
+        .abi_version = LMA_SEGMENT_ABI_VERSION,                               \
         .engine_id = #name,                                                    \
         .engine_open = name##_open,                                            \
         .engine_destroy = fixture_engine_destroy,                              \
@@ -394,7 +394,7 @@ DECLARE_OPEN_WRAPPER(deepseek_v41, 8)
         .reserved_fn = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL},       \
     }
 
-static const ColiSegmentAdapter g_adapters[] = {
+static const LmaSegmentAdapter g_adapters[] = {
     FIXTURE_ADAPTER(glm),
     FIXTURE_ADAPTER(glm53),
     FIXTURE_ADAPTER(inkling),
@@ -406,13 +406,13 @@ static const ColiSegmentAdapter g_adapters[] = {
     FIXTURE_ADAPTER(deepseek_v41),
 };
 
-int coli_segment_conformance_register_fixtures(void) {
+int lma_segment_conformance_register_fixtures(void) {
     if (sizeof(g_adapters) / sizeof(g_adapters[0]) !=
-        coli_segment_conformance_fixture_count())
+        lma_segment_conformance_fixture_count())
         return -1;
-    for (size_t i = 0; i < coli_segment_conformance_fixture_count(); i++) {
+    for (size_t i = 0; i < lma_segment_conformance_fixture_count(); i++) {
         if (strcmp(g_adapters[i].engine_id, g_fixtures[i].family_id) != 0 ||
-            coli_segment_adapter_register(&g_adapters[i]) != 0)
+            lma_segment_adapter_register(&g_adapters[i]) != 0)
             return -1;
     }
     return 0;
@@ -452,31 +452,31 @@ static int floats_equal(const float *a, const float *b, size_t count) {
         }                                                                      \
     } while (0)
 
-int coli_segment_conformance_run_fixture(
-    const ColiSegmentConformanceFixture *fixture,
+int lma_segment_conformance_run_fixture(
+    const LmaSegmentConformanceFixture *fixture,
     char *error, size_t error_size) {
     int result = -1;
     int index = fixture_index(fixture);
-    ColiSegmentEngine *engine = NULL, *other_range = NULL;
-    ColiSegmentSession *first = NULL, *second = NULL, *clean = NULL;
-    ColiSegmentSession *wrong_range = NULL;
+    LmaSegmentEngine *engine = NULL, *other_range = NULL;
+    LmaSegmentSession *first = NULL, *second = NULL, *clean = NULL;
+    LmaSegmentSession *wrong_range = NULL;
     float *input = NULL, *out_first = NULL, *out_second = NULL, *out_clean = NULL;
     FixtureStream checkpoint = {{0}, 0, 0};
     if (index < 0) return fail(error, error_size, "unknown conformance fixture");
 
-    ColiSegmentEngineOptions open_options = {
+    LmaSegmentEngineOptions open_options = {
         .struct_size = sizeof(open_options),
         .model_dir = fixture->tiny_generator,
         .layer_begin = 1,
         .layer_end = fixture->num_layers - 1,
         .context_tokens = fixture->max_context_tokens / 2,
     };
-    REQUIRE(coli_segment_engine_open(fixture->family_id, &open_options, &engine,
+    REQUIRE(lma_segment_engine_open(fixture->family_id, &open_options, &engine,
                                      error, error_size) == 0,
             "cannot open fixture segment engine");
 
-    ColiSegmentCapabilities capabilities = {.struct_size = sizeof(capabilities)};
-    REQUIRE(coli_segment_engine_capabilities(engine, &capabilities,
+    LmaSegmentCapabilities capabilities = {.struct_size = sizeof(capabilities)};
+    REQUIRE(lma_segment_engine_capabilities(engine, &capabilities,
                                              error, error_size) == 0,
             "cannot read fixture capabilities");
     REQUIRE(strcmp(capabilities.engine_id, fixture->family_id) == 0,
@@ -486,33 +486,33 @@ int coli_segment_conformance_run_fixture(
     REQUIRE(capabilities.state_width == fixture->state_width &&
                 capabilities.num_layers == fixture->num_layers,
             "fixture geometry changed");
-    REQUIRE((capabilities.flags & (COLI_SEGMENT_CAP_TOKEN_IDS |
-                                   COLI_SEGMENT_CAP_SNAPSHOT |
-                                   COLI_SEGMENT_CAP_RANGE_NATIVE |
-                                   COLI_SEGMENT_CAP_MULTI_SESSION |
-                                   COLI_SEGMENT_CAP_CPU)) ==
-                (COLI_SEGMENT_CAP_TOKEN_IDS | COLI_SEGMENT_CAP_SNAPSHOT |
-                 COLI_SEGMENT_CAP_RANGE_NATIVE |
-                 COLI_SEGMENT_CAP_MULTI_SESSION | COLI_SEGMENT_CAP_CPU),
+    REQUIRE((capabilities.flags & (LMA_SEGMENT_CAP_TOKEN_IDS |
+                                   LMA_SEGMENT_CAP_SNAPSHOT |
+                                   LMA_SEGMENT_CAP_RANGE_NATIVE |
+                                   LMA_SEGMENT_CAP_MULTI_SESSION |
+                                   LMA_SEGMENT_CAP_CPU)) ==
+                (LMA_SEGMENT_CAP_TOKEN_IDS | LMA_SEGMENT_CAP_SNAPSHOT |
+                 LMA_SEGMENT_CAP_RANGE_NATIVE |
+                 LMA_SEGMENT_CAP_MULTI_SESSION | LMA_SEGMENT_CAP_CPU),
             "fixture is missing mandatory Segment capabilities");
-    REQUIRE((capabilities.flags & (COLI_SEGMENT_CAP_CUDA |
-                                   COLI_SEGMENT_CAP_HIP |
-                                   COLI_SEGMENT_CAP_METAL |
-                                   COLI_SEGMENT_CAP_VULKAN)) == 0,
+    REQUIRE((capabilities.flags & (LMA_SEGMENT_CAP_CUDA |
+                                   LMA_SEGMENT_CAP_HIP |
+                                   LMA_SEGMENT_CAP_METAL |
+                                   LMA_SEGMENT_CAP_VULKAN)) == 0,
             "contract fixture must not claim a real GPU backend");
 
-    ColiSegmentSessionOptions session_options = {
+    LmaSegmentSessionOptions session_options = {
         .struct_size = sizeof(session_options),
         .context_tokens = open_options.context_tokens,
     };
-    REQUIRE(coli_segment_session_create(engine, &session_options, &first,
+    REQUIRE(lma_segment_session_create(engine, &session_options, &first,
                                         error, error_size) == 0 &&
-                coli_segment_session_create(engine, &session_options, &second,
+                lma_segment_session_create(engine, &session_options, &second,
                                             error, error_size) == 0 &&
-                coli_segment_session_create(engine, &session_options, &clean,
+                lma_segment_session_create(engine, &session_options, &clean,
                                             error, error_size) == 0,
             "cannot create isolated fixture sessions");
-    if (coli_segment_engine_close(engine, error, error_size) == 0) {
+    if (lma_segment_engine_close(engine, error, error_size) == 0) {
         /* A broken runtime may have freed it despite the live sessions. Avoid
          * turning the conformance diagnostic into a cleanup use-after-free. */
         engine = NULL;
@@ -530,7 +530,7 @@ int coli_segment_conformance_run_fixture(
             "fixture activation allocation failed");
     fill_input(input, values, fixture->fixture_tag);
     int32_t tokens[2] = {17 + index, 29 + index};
-    ColiSegmentRunRequest run = {
+    LmaSegmentRunRequest run = {
         .struct_size = sizeof(run),
         .rows = 2,
         .position = 0,
@@ -541,11 +541,11 @@ int coli_segment_conformance_run_fixture(
         .output = out_first,
         .output_bytes = values * sizeof(*out_first),
     };
-    REQUIRE(coli_segment_run(first, &run, error, error_size) == 0,
+    REQUIRE(lma_segment_run(first, &run, error, error_size) == 0,
             "first fixture run failed");
 
     run.output = out_second;
-    REQUIRE(coli_segment_run(second, &run, error, error_size) == 0 &&
+    REQUIRE(lma_segment_run(second, &run, error, error_size) == 0 &&
                 floats_equal(out_first, out_second, values),
             "fresh fixture sessions are not deterministic and isolated");
 
@@ -553,30 +553,30 @@ int coli_segment_conformance_run_fixture(
      * untouched clean session. */
     run.position = 2;
     run.output = out_first;
-    REQUIRE(coli_segment_run(first, &run, error, error_size) == 0,
+    REQUIRE(lma_segment_run(first, &run, error, error_size) == 0,
             "fixture continuation failed");
     run.position = 0;
     run.output = out_clean;
-    REQUIRE(coli_segment_run(clean, &run, error, error_size) == 0 &&
+    REQUIRE(lma_segment_run(clean, &run, error, error_size) == 0 &&
                 floats_equal(out_second, out_clean, values),
             "fixture session state leaked across conversations");
 
-    REQUIRE(coli_segment_snapshot(first, stream_write, &checkpoint,
+    REQUIRE(lma_segment_snapshot(first, stream_write, &checkpoint,
                                   error, error_size) == 0 &&
                 checkpoint.length == FIXTURE_SNAPSHOT_SIZE,
             "fixture snapshot stream failed");
     checkpoint.offset = 0;
-    REQUIRE(coli_segment_restore(second, stream_read, &checkpoint,
+    REQUIRE(lma_segment_restore(second, stream_read, &checkpoint,
                                  error, error_size) == 0 &&
                 checkpoint.offset == checkpoint.length,
             "fixture restore stream failed");
 
     run.position = 4;
     run.output = out_first;
-    REQUIRE(coli_segment_run(first, &run, error, error_size) == 0,
+    REQUIRE(lma_segment_run(first, &run, error, error_size) == 0,
             "source run after checkpoint failed");
     run.output = out_second;
-    REQUIRE(coli_segment_run(second, &run, error, error_size) == 0 &&
+    REQUIRE(lma_segment_run(second, &run, error, error_size) == 0 &&
                 floats_equal(out_first, out_second, values),
             "restored fixture did not reproduce exact continuation");
 
@@ -584,16 +584,16 @@ int coli_segment_conformance_run_fixture(
      * reject it, then prove the live state remained byte-identical. */
     FixtureStream before_bad = {{0}, 0, 0};
     FixtureStream after_bad = {{0}, 0, 0};
-    REQUIRE(coli_segment_snapshot(second, stream_write, &before_bad,
+    REQUIRE(lma_segment_snapshot(second, stream_write, &before_bad,
                                   error, error_size) == 0,
             "cannot snapshot before corruption check");
     FixtureStream corrupt = before_bad;
     corrupt.bytes[41] ^= 0x80u;
     corrupt.offset = 0;
-    REQUIRE(coli_segment_restore(second, stream_read, &corrupt,
+    REQUIRE(lma_segment_restore(second, stream_read, &corrupt,
                                  error, error_size) != 0,
             "corrupt fixture snapshot was accepted");
-    REQUIRE(coli_segment_snapshot(second, stream_write, &after_bad,
+    REQUIRE(lma_segment_snapshot(second, stream_write, &after_bad,
                                   error, error_size) == 0 &&
                 before_bad.length == after_bad.length &&
                 memcmp(before_bad.bytes, after_bad.bytes,
@@ -601,31 +601,31 @@ int coli_segment_conformance_run_fixture(
             "failed restore mutated the live fixture session");
 
     /* The private snapshot identity includes the half-open layer range. */
-    ColiSegmentEngineOptions other_options = open_options;
+    LmaSegmentEngineOptions other_options = open_options;
     other_options.layer_begin = 0;
     other_options.layer_end = fixture->num_layers;
-    REQUIRE(coli_segment_engine_open(fixture->family_id, &other_options,
+    REQUIRE(lma_segment_engine_open(fixture->family_id, &other_options,
                                      &other_range, error, error_size) == 0 &&
-                coli_segment_session_create(other_range, &session_options,
+                lma_segment_session_create(other_range, &session_options,
                                             &wrong_range,
                                             error, error_size) == 0,
             "cannot open alternate fixture range");
     before_bad.offset = 0;
-    REQUIRE(coli_segment_restore(wrong_range, stream_read, &before_bad,
+    REQUIRE(lma_segment_restore(wrong_range, stream_read, &before_bad,
                                  error, error_size) != 0,
             "snapshot crossed incompatible fixture ranges");
 
     /* Ordering is adapter-owned: reject a gap and preserve state. */
     FixtureStream before_gap = {{0}, 0, 0};
     FixtureStream after_gap = {{0}, 0, 0};
-    REQUIRE(coli_segment_snapshot(first, stream_write, &before_gap,
+    REQUIRE(lma_segment_snapshot(first, stream_write, &before_gap,
                                   error, error_size) == 0,
             "cannot snapshot before ordering check");
     run.position = 9;
     run.output = out_first;
-    REQUIRE(coli_segment_run(first, &run, error, error_size) != 0,
+    REQUIRE(lma_segment_run(first, &run, error, error_size) != 0,
             "fixture accepted a non-contiguous position");
-    REQUIRE(coli_segment_snapshot(first, stream_write, &after_gap,
+    REQUIRE(lma_segment_snapshot(first, stream_write, &after_gap,
                                   error, error_size) == 0 &&
                 before_gap.length == after_gap.length &&
                 memcmp(before_gap.bytes, after_gap.bytes,
@@ -638,11 +638,11 @@ cleanup:
     free(out_first);
     free(out_second);
     free(out_clean);
-    coli_segment_session_destroy(wrong_range);
-    if (other_range) (void)coli_segment_engine_close(other_range, NULL, 0);
-    coli_segment_session_destroy(clean);
-    coli_segment_session_destroy(second);
-    coli_segment_session_destroy(first);
-    if (engine) (void)coli_segment_engine_close(engine, NULL, 0);
+    lma_segment_session_destroy(wrong_range);
+    if (other_range) (void)lma_segment_engine_close(other_range, NULL, 0);
+    lma_segment_session_destroy(clean);
+    lma_segment_session_destroy(second);
+    lma_segment_session_destroy(first);
+    if (engine) (void)lma_segment_engine_close(engine, NULL, 0);
     return result;
 }

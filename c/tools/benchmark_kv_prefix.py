@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure cross-slot KV prefix adoption through Colibri's mux protocol."""
+"""Measure cross-slot KV prefix adoption through LM Atomic's mux protocol."""
 
 import argparse
 import json
@@ -86,9 +86,9 @@ def main():
         SERVE="1",
         SERVE_BATCH="1",
         KV_SLOTS="2",
-        COLI_KV_SHARE=str(args.share),
+        LMA_KV_SHARE=str(args.share),
         DRAFT="0",
-        COLI_TEMP="0",
+        LMA_TEMP="0",
     )
     proc = subprocess.Popen(
         [args.engine, "8", "4", "4"],

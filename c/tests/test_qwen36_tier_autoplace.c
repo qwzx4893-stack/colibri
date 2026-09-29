@@ -1,4 +1,4 @@
-/* Automatic placement of the dense trunk (COLI_PLACE unset or "auto").
+/* Automatic placement of the dense trunk (LMA_PLACE unset or "auto").
  *
  * The rule under test, stated once: a trunk component goes into VRAM when the
  * bytes it saves on the memory bus per token beat the bytes the experts it
@@ -31,10 +31,10 @@ enum { D = 64, IH = 32 };
 /* every case starts from a clean tier: no offers, no auto decision, env set */
 static void fresh(const char *place, const char *gpus, int ndev, const char *budget_gb) {
     G_offer_n = 0; G_auto_on = 0;
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", gpus, 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", gpus, 1);
     setenv("QT_NO_WARMSTART", "1", 1);
-    setenv("COLI_PLACE", place, 1);                 /* "" == unset == auto */
+    setenv("LMA_PLACE", place, 1);                 /* "" == unset == auto */
     setenv("CUDA_EXPERT_GB", budget_gb, 1);        /* the per-device allowance */
     setenv("HEAT_FILE", "", 1);
     fake_ndev = ndev;
@@ -138,7 +138,7 @@ int main(void) {
     }
 
     /* ---- 4. an explicit list wins over auto, and still pays for its trunk ---- */
-    printf(" 4. explicit COLI_PLACE\n");
+    printf(" 4. explicit LMA_PLACE\n");
     fresh("lmhead=cpu,dnproj=0", "0", 1, "0.0625");
     qt_trunk_offer("lmhead", 0, 10 * MiB);
     for (int l = 0; l < 8; l++) if (l % 4 != 3) qt_trunk_offer("dnproj", l, 2 * MiB);
@@ -150,7 +150,7 @@ int main(void) {
     qt_shutdown();
 
     /* ---- 5. off: nothing placed, full budget ---- */
-    printf(" 5. COLI_PLACE=off\n");
+    printf(" 5. LMA_PLACE=off\n");
     fresh("off", "0", 1, "0.0625");
     qt_trunk_offer("lmhead", 0, 10 * MiB);
     qt_trunk_offer("dnproj", 0, 2 * MiB);

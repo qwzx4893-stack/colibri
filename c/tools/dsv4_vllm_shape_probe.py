@@ -24,7 +24,7 @@ def _probe_init(self, *args, **kwargs):
         if hasattr(self, name)
     }
     print(
-        "COLIBRI_MOE_PROBE",
+        "LMA_MOE_PROBE",
         self.layer_name,
         f"tp={parallel.tp_size}:{parallel.tp_rank}",
         f"ep={parallel.ep_size}:{parallel.ep_rank}",
@@ -51,7 +51,7 @@ def _probe_permute(*args, **kwargs):
         aq = kwargs.get("aq", args[0] if args else None)
         topk_ids = kwargs.get("topk_ids", args[2] if len(args) > 2 else None)
         print(
-            "COLIBRI_PERMUTE_PROBE",
+            "LMA_PERMUTE_PROBE",
             f"rank={aq_out.device.index}",
             f"aq={tuple(aq.shape)}",
             f"topk={tuple(topk_ids.shape)}",
@@ -84,7 +84,7 @@ def main():
         [TokensPrompt(prompt_token_ids=[1, 2])],
         SamplingParams(max_tokens=1, temperature=0),
     )
-    print("COLIBRI_TOKEN_PROBE", output[0].outputs[0].token_ids, flush=True)
+    print("LMA_TOKEN_PROBE", output[0].outputs[0].token_ids, flush=True)
 
 
 if __name__ == "__main__":

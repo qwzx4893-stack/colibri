@@ -1,4 +1,4 @@
-/* Kimi K3 inference engine in pure C — sibling of colibri.c (GLM-5.2) / olmoe.c /
+/* Kimi K3 inference engine in pure C — sibling of glm52.c (GLM-5.2) / olmoe.c /
  * inkling.c, sharing st.h / json.h / tok.h / quant.h.
  *
  * Architecture (2.8T total / 104B active, 93 layers, hidden 7168):
@@ -68,21 +68,21 @@
  *   K3_LOGITS=path       dump f32 logits per PREFILL position (teacher-forced
  *                        bit-width comparisons; use with --ngen 0)
  *   K3_MAXT=N            KV/context capacity (default prompt+ngen)
- *   COLI_K3_CKPT=N       OPT-IN recurrent-state checkpoints for serve: keep N
+ *   LMA_K3_CKPT=N       OPT-IN recurrent-state checkpoints for serve: keep N
  *                        photos of the KDA state at turn boundaries so a
  *                        divergent prompt (agentic edit) resumes from the
  *                        deepest valid photo instead of re-prefilling from
  *                        token 0. Unset/0 (default) = feature off, engine
  *                        byte-identical to before. ~434 MB per photo on the
  *                        full model, which is why it is opt-in.
- *   COLI_K3_CKPT_DIR=dir park the photos in files under dir instead of RAM
+ *   LMA_K3_CKPT_DIR=dir park the photos in files under dir instead of RAM
  *                        (low-RAM machines: ~0.4s of sequential I/O per
  *                        restore against minutes of avoided re-prefill).
- *                        Alone it implies COLI_K3_CKPT=2; an explicit
- *                        COLI_K3_CKPT (0 included) always wins. Photos never
+ *                        Alone it implies LMA_K3_CKPT=2; an explicit
+ *                        LMA_K3_CKPT (0 included) always wins. Photos never
  *                        outlive the process: after a restart the MLA rows
  *                        are gone, so no restore could be valid.
- *   COLI_TEMP=F          0 = greedy (default), else softmax temperature
+ *   LMA_TEMP=F          0 = greedy (default), else softmax temperature
  */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -108,23 +108,23 @@
 #include "st.h"
 #include "tok.h"
 #include "quant.h"
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
 #include "backend_cuda.h"
 #endif
 #include "omp_tune.h"
 #include "route_trace.h"
 #include "moe_router.h"
 #include "kv_prefix.h"
-#include "pin_pool.h"   /* coli_pin_slots_wanted: quanti scatti tenere */
+#include "pin_pool.h"   /* lma_pin_slots_wanted: quanti scatti tenere */
 #include "hybrid_split.h"                    /* KV prefix reuse (shared) */
 #include "serve_codec.h"
 #include "serve_budget.h"
-#ifdef COLI_SEGMENT_ADAPTER
+#ifdef LMA_SEGMENT_ADAPTER
 #include "segment_runtime.h"
 #include "segment_adapters.h"
 #include "segment_adapter_internal.h"
 #endif
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 #include "edge_runtime.h"
 #include "edge_adapters.h"
 #include "edge_tok_internal.h"
@@ -153,8 +153,8 @@ typedef struct {
 
 /* ---------- RAM-resident or read-only mapped weight ---------- */
 typedef struct { int fmt; float *f; int8_t *q8; uint8_t *q4; float *s; int O, I, gs;
-                 void *vk;    /* ColiVkTensor* once uploaded (K3_VK); NULL = CPU only */
-                 void *metal; /* ColiMetalTensor* once registered (K3_METAL); NULL = CPU only */
+                 void *vk;    /* LmaVkTensor* once uploaded (K3_VK); NULL = CPU only */
+                 void *metal; /* LmaMetalTensor* once registered (K3_METAL); NULL = CPU only */
                  st_mapped_raw data_map, scale_map;
                  int mapped; } W;
 
@@ -192,10 +192,10 @@ typedef struct {
 /* ---------- routed-expert streaming (native MXFP4 from the HF shards) ---- */
 typedef struct { int fd[6]; int64_t off[6]; int contig; } ERef;  /* w1p w1s w2p w2s w3p w3s */
 #ifndef KIMI_K3_NO_MAIN
-static char g_k3_usage[2100];   /* <snap>/.coli_usage, or COLI_USAGE */
+static char g_k3_usage[2100];   /* <snap>/.lma_usage, or LMA_USAGE */
 #endif
 typedef struct { int eid; uint8_t *buf, *base; uint64_t used; int pinned; } Slot;
-/* pinned: seeded from .coli_usage at startup and never evicted. The LRU adapts to
+/* pinned: seeded from .lma_usage at startup and never evicted. The LRU adapts to
  * THIS session; the pin knows the history of every session before it. Capped at
  * half the layer budget so the adaptive half always survives — an all-pinned cache
  * that guessed wrong is slower than no pin at all (measured on GLM: 0.17 vs 0.25
@@ -263,7 +263,7 @@ static int k3_cap_for_ram(double budget_gb, double resident_gb, double reserve_g
 }
 
 /* Memory the OS says is still reclaimable without swapping, in GB; 0 if unknown.
- * The same quantity colibri.c's cap_for_ram() budgets against -- Linux
+ * The same quantity glm52.c's cap_for_ram() budgets against -- Linux
  * MemAvailable, Windows ullAvailPhys, macOS free+inactive+purgeable. #855. */
 static double k3_mem_avail(void){
 #ifdef _WIN32
@@ -301,7 +301,7 @@ static float *fcalloc(int64_t n){
  * state, conv windows) therefore have to be 16 KB-aligned so GPU updates land in host memory.
  * Freed with plain free(); posix_memalign memory is free()-compatible on macOS. */
 static float *afcalloc(int64_t n){
-#ifdef COLI_METAL
+#ifdef LMA_METAL
     size_t sz=(size_t)n*sizeof(float); void *p=NULL;
     if(posix_memalign(&p,16384,sz)){ fprintf(stderr,"OOM %lld floats\n",(long long)n); exit(1); }
     memset(p,0,sz); return (float*)p;
@@ -395,10 +395,10 @@ static int dsa_score_single(int *sel, int maxsel, const float *qi, const float *
  *    experts enter from freshly-read RAM slots (K3_VK_UP per step) until the
  *    VRAM budget (K3_VK_GB) is reached; resident experts then skip BOTH the
  *    disk read and the CPU matmuls at decode (C==1). */
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
 #include "backend_vulkan.h"
 static int g_k3_vk=0;                     /* backend live (K3_VK=0 disables) */
-typedef struct { void *w1, *w2, *w3; } VkExp;   /* ColiVkTensor* triple */
+typedef struct { void *w1, *w2, *w3; } VkExp;   /* LmaVkTensor* triple */
 static VkExp *g_vkexp; static int64_t g_vkexp_n;
 static int g_vk_upcap=8, g_vk_up_left=0, g_vk_full=0;
 static int g_vk_up_auto=0;                /* K3_VK_UP=auto: measured budget */
@@ -408,7 +408,7 @@ static int g_vk_cap_now=8;                /* last budget chosen (reporting) */
 static long g_vk_hit=0, g_vk_res=0;
 static double g_vk_gb=0;                  /* K3_VK_GB cap (0 = driver budget) */
 static const char *k3_vk_spv(char *buf, size_t n){
-    const char *env=getenv("COLI_VK_SHADERS");
+    const char *env=getenv("LMA_VK_SHADERS");
     struct stat st;
     if(env&&*env){
         if(!stat(env,&st)&&S_ISDIR(st.st_mode)){ snprintf(buf,n,"%s/qmatmul.spv",env); return buf; }
@@ -429,7 +429,7 @@ static const char *k3_vk_spv(char *buf, size_t n){
 }
 static int vk_budget_full(void){
     double used=0,budget=0;
-    if(!coli_vk_mem_budget(&used,&budget)) return 0;
+    if(!lma_vk_mem_budget(&used,&budget)) return 0;
     double cap=budget-0.5; if(g_vk_gb>0&&g_vk_gb<cap) cap=g_vk_gb;
     return used>=cap;
 }
@@ -437,7 +437,7 @@ static int w_vk_upload(W *w){
     if(w->vk) return 1;
     int fmt = w->fmt==1?1 : w->fmt==4?4 : -1;
     if(fmt<0) return 0;
-    return coli_vk_tensor_ensure((ColiVkTensor**)&w->vk,
+    return lma_vk_tensor_ensure((LmaVkTensor**)&w->vk,
         fmt==1?(const void*)w->q8:(const void*)w->q4,w->s,fmt,w->I,w->O,w->gs);
 }
 #endif
@@ -454,7 +454,7 @@ static FILE *g_k3_val_lfp   = NULL; /* K3_VAL_LOGITS: per-step logit dump */
 
 static void val_dump(const char *name, const float *v, int n);  /* forward-declare */
 static FILE *g_k3_dfp = NULL;  /* K3_DEBUG_OUT: Metal/CPU side-by-side per-dim comparison */
-#ifdef COLI_METAL
+#ifdef LMA_METAL
 #include "backend_metal.h"
 
 /* Metal forward entry point — Phase 4: NOT IMPLEMENTED */
@@ -464,26 +464,26 @@ static int kimima_forward_metal(Model *m, Layer *l, int li, const float *x, int 
 }
 #endif
 static void w_matmul(float *y, const float *x, const W *w, int S){
-#ifdef COLI_METAL
-    if(g_k3_metal && coli_metal_available()){
+#ifdef LMA_METAL
+    if(g_k3_metal && lma_metal_available()){
         if(w->fmt==0){
             /* fmt=0 is raw f32, no scales needed — Metal shader handles it */
-            coli_metal_matmul((ColiMetalTensor**)&((W*)w)->metal, y, x, w->f, NULL, 0, S, w->I, w->O, 0);
+            lma_metal_matmul((LmaMetalTensor**)&((W*)w)->metal, y, x, w->f, NULL, 0, S, w->I, w->O, 0);
             return;
         }
         if(w->fmt==1){
-            coli_metal_matmul((ColiMetalTensor**)&((W*)w)->metal, y, x, w->q8, w->s, 1, S, w->I, w->O, 0);
+            lma_metal_matmul((LmaMetalTensor**)&((W*)w)->metal, y, x, w->q8, w->s, 1, S, w->I, w->O, 0);
             return;
         }
         if(w->fmt==4){
-            coli_metal_matmul((ColiMetalTensor**)&((W*)w)->metal, y, x, w->q4, w->s, 4, S, w->I, w->O, w->gs);
+            lma_metal_matmul((LmaMetalTensor**)&((W*)w)->metal, y, x, w->q4, w->s, 4, S, w->I, w->O, w->gs);
             return;
         }
     }
 #endif
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
     if(g_k3_vk&&S==1&&w->vk&&
-       coli_vk_matmul((ColiVkTensor**)&((W*)w)->vk,y,x,NULL,NULL,w->fmt,1,w->I,w->O,w->gs))
+       lma_vk_matmul((LmaVkTensor**)&((W*)w)->vk,y,x,NULL,NULL,w->fmt,1,w->I,w->O,w->gs))
         return;
 #endif
     if(w->fmt==0)      matmul(y,x,w->f,S,w->I,w->O);
@@ -493,9 +493,9 @@ static void w_matmul(float *y, const float *x, const W *w, int S){
 }
 /* f32 GEMM with Metal dispatch: y[S,O] = x[S,I] @ W[O,I]^T */
 static void k3_matmul_f32(void *tens, float *y, const float *x, const float *W, int S, int I, int O){
-#ifdef COLI_METAL
-    if(g_k3_metal && coli_metal_available()){
-        coli_metal_matmul((ColiMetalTensor**)tens, y, x, W, NULL, 0, S, I, O, 0);
+#ifdef LMA_METAL
+    if(g_k3_metal && lma_metal_available()){
+        lma_metal_matmul((LmaMetalTensor**)tens, y, x, W, NULL, 0, S, I, O, 0);
         return;
     }
 #endif
@@ -533,7 +533,7 @@ static int g_bits_env=0;                 /* K3_BITS explicitly set: enables the
                                           * int8-container -> int4 load downcast */
 static int g_k3_mmap=0;                  /* prepared U8/F32 tensors stay file-backed */
 static uint64_t g_k3_mmap_bytes=0, g_k3_mmap_views=0;
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
 static int g_k3_cuda=0;                  /* K3_CUDA=1: MXFP4 routed experts on CUDA at decode */
 #endif
 static int g_k3_direct=-1;               /* K3_DIRECT: O_DIRECT expert reads */
@@ -543,10 +543,10 @@ static float g_k3_topp=0.f;              /* K3_TOPP: routed-expert top-p pruning
 enum { K3_CKPT_MAX = 8 };
 static size_t k3_ckpt_blob_floats(const Model *m); /* def. with the ckpt block */
 static double k3_ckpt_reserve_gb(const Model *m, int slots);
-static int g_k3_ckpt_slots=0;            /* COLI_K3_CKPT: recurrent-state checkpoint
+static int g_k3_ckpt_slots=0;            /* LMA_K3_CKPT: recurrent-state checkpoint
                                           * slots. STRICTLY OPT-IN, 0 = off (default,
                                           * engine behaves exactly as before). */
-static const char *g_k3_ckpt_dir=NULL;   /* COLI_K3_CKPT_DIR: park the photos in
+static const char *g_k3_ckpt_dir=NULL;   /* LMA_K3_CKPT_DIR: park the photos in
                                           * files instead of RAM (low-RAM machines:
                                           * ~0.4s of sequential I/O per restore
                                           * against minutes of avoided re-prefill). */
@@ -838,10 +838,10 @@ static void model_init_range(Model *m, const char *snap, int layer_begin,
     g_k3_mmap = getenv("K3_MMAP")?atoi(getenv("K3_MMAP")):0;
     if(g_k3_mmap){
         int vk_requested=0, cuda_requested=0;
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
         { const char *ev=getenv("K3_VK"); vk_requested=!ev||atoi(ev); }
 #endif
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
         cuda_requested=getenv("K3_CUDA")&&atoi(getenv("K3_CUDA"));
 #endif
         if(!k3_mmap_backend_allowed(1,vk_requested,cuda_requested)){
@@ -850,11 +850,11 @@ static void model_init_range(Model *m, const char *snap, int layer_begin,
         }
         fprintf(stderr,"[K3-MMAP] prepared tensor mapping enabled (CPU-only, no conversion fallback)\n");
     }
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
     g_k3_cuda = getenv("K3_CUDA") ? atoi(getenv("K3_CUDA")) : 0;
     if(g_k3_cuda){
         int dev0 = 0;
-        if(!coli_cuda_init(&dev0, 1)){
+        if(!lma_cuda_init(&dev0, 1)){
             fprintf(stderr,"[K3-CUDA] device unavailable -- experts stay on CPU\n");
             g_k3_cuda = 0;
         } else fprintf(stderr,"[K3-CUDA] MXFP4 routed experts on device 0 (decode only)\n");
@@ -864,14 +864,14 @@ static void model_init_range(Model *m, const char *snap, int layer_begin,
     g_k3_idot  = getenv("K3_IDOT")?atoi(getenv("K3_IDOT")):1;
     { /* Recurrent-state checkpoints are strictly OPT-IN: unset or 0 keeps
        * the engine byte-identical to before the feature existed. */
-      const char *e=segment_mode?NULL:getenv("COLI_K3_CKPT");
+      const char *e=segment_mode?NULL:getenv("LMA_K3_CKPT");
       g_k3_ckpt_slots=e?atoi(e):0;
       if(g_k3_ckpt_slots<0) g_k3_ckpt_slots=0;
       if(g_k3_ckpt_slots>K3_CKPT_MAX) g_k3_ckpt_slots=K3_CKPT_MAX;
-      g_k3_ckpt_dir=segment_mode?NULL:getenv("COLI_K3_CKPT_DIR");
+      g_k3_ckpt_dir=segment_mode?NULL:getenv("LMA_K3_CKPT_DIR");
       if(g_k3_ckpt_dir&&!*g_k3_ckpt_dir) g_k3_ckpt_dir=NULL;
       /* a directory alone is a clear enough request: default to 2 slots
-       * there, while an explicit COLI_K3_CKPT (0 included) always wins */
+       * there, while an explicit LMA_K3_CKPT (0 included) always wins */
       if(g_k3_ckpt_dir&&!e) g_k3_ckpt_slots=2; }
     /* The legacy loader pool is process-global and keeps a Model pointer.
      * Segment hosts may own several engines, so their demand loads stay
@@ -991,11 +991,11 @@ static void model_init_range(Model *m, const char *snap, int layer_begin,
     if(g_k3_mmap)
         fprintf(stderr,"[K3-MMAP] %llu views, %.1f GB prepared weights/scales file-backed\n",
                 (unsigned long long)g_k3_mmap_views,g_k3_mmap_bytes/1e9);
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
     { const char *ev=getenv("K3_VK");
       if(!ev||atoi(ev)){
         char sbuf[512]; const char *spv=k3_vk_spv(sbuf,sizeof(sbuf));
-        g_k3_vk=coli_vk_init(spv);
+        g_k3_vk=lma_vk_init(spv);
         if(!g_k3_vk) fprintf(stderr,"[K3-VK] Vulkan unavailable (tried %s) — CPU only\n",spv);
       }
       if(g_k3_vk){
@@ -1020,18 +1020,18 @@ static void model_init_range(Model *m, const char *snap, int layer_begin,
             Moe *sm2=&m->L[i].moe;
             nsh+=w_vk_upload(&sm2->sh_gate)+w_vk_upload(&sm2->sh_up)+w_vk_upload(&sm2->sh_down);
         }
-        double used=0,budget=0; coli_vk_mem_budget(&used,&budget);
+        double used=0,budget=0; lma_vk_mem_budget(&used,&budget);
                 char vk_cap_str[16]; snprintf(vk_cap_str,sizeof vk_cap_str,"%d",g_vk_upcap);
         fprintf(stderr,"[K3-VK] resident: %d shared-expert mats (%.1f/%.1f GB); routed MXFP4 tier fills at decode (K3_VK_UP=%s/step, cap %s)\n",
                 nsh,used,budget,g_vk_up_auto?"auto":vk_cap_str,g_vk_gb>0?"K3_VK_GB":"driver budget");
       }
     }
 #endif
-#ifdef COLI_METAL
+#ifdef LMA_METAL
     { const char *ev=getenv("K3_METAL");
       if(ev&&atoi(ev)){
         fprintf(stderr,"[K3-METAL] attempting init (K3_METAL=%s)\n", ev);
-        g_k3_metal=coli_metal_init();
+        g_k3_metal=lma_metal_init();
         if(!g_k3_metal) fprintf(stderr,"[K3-METAL] FAILED — CPU only\n");
       }
       if(g_k3_metal)
@@ -1065,14 +1065,14 @@ static void model_init_range(Model *m, const char *snap, int layer_begin,
      *
      * The cache is EMPTY when the init line prints and fills as the session
      * runs, so the first request answers and a later one dies -- which is what
-     * "colibri engine exited unexpectedly" was.
+     * "lmatomic engine exited unexpectedly" was.
      *
      * And --ram was inert here. `grep -c RAM_GB kimi_k3.c` returned 0 against 10
-     * in colibri.c: the one flag a user would reach for to prevent exactly this
+     * in glm52.c: the one flag a user would reach for to prevent exactly this
      * reached the environment and was never read. Same defect shape as #805 and
      * #858 -- a mechanism that lands in one engine and not its siblings.
      *
-     * Unlike colibri.c's cap_for_ram this runs AFTER the dense weights are in,
+     * Unlike glm52.c's cap_for_ram this runs AFTER the dense weights are in,
      * so the resident set is MEASURED rather than projected. rss_gb() is the
      * truth here, not a model of it, which makes this budget the simpler of the
      * two rather than the more elaborate. */
@@ -1082,7 +1082,7 @@ static void model_init_range(Model *m, const char *snap, int layer_begin,
         double ram_env = getenv("RAM_GB") ? atof(getenv("RAM_GB")) : 0.0;
         /* Explicit --ram is a ceiling on the WHOLE process. Absent, take 88% of
          * what the OS still offers and add what we already hold -- the same
-         * fraction colibri.c uses, and for the same reason: overshooting means
+         * fraction glm52.c uses, and for the same reason: overshooting means
          * an OOM kill mid-generation, which is far worse than a smaller cache. */
         double budget = ram_env > 0 ? ram_env : resident + avail_now*0.88;
 
@@ -1136,11 +1136,11 @@ static void model_init_range(Model *m, const char *snap, int layer_begin,
             fprintf(stderr,"[K3] WARNING: cap=1 is the floor and the projected peak is "
                 "%.1f GB, %.1f GB over the budget.\n", peak, peak-budget);
             if(avail_now > 0 && peak > resident + avail_now &&
-               !(getenv("COLI_RAM_OVERCOMMIT") && atoi(getenv("COLI_RAM_OVERCOMMIT")))){
+               !(getenv("LMA_RAM_OVERCOMMIT") && atoi(getenv("LMA_RAM_OVERCOMMIT")))){
                 fprintf(stderr,"[K3] refusing to start: that peak also exceeds the %.1f GB "
                     "this machine actually has left, so the kernel would kill this run "
                     "mid-generation.\n[K3] lower K3_MAXT, raise --ram if the box really has "
-                    "it, or set COLI_RAM_OVERCOMMIT=1 to override.\n", resident + avail_now);
+                    "it, or set LMA_RAM_OVERCOMMIT=1 to override.\n", resident + avail_now);
                 exit(2);
             }
         }
@@ -1245,7 +1245,7 @@ static void kda_forward(Model *m, Layer *l, int li, const float *x, int C, float
     float *q=falloc((int64_t)C*P), *k=falloc((int64_t)C*P), *v=falloc((int64_t)C*P);
     float *gp=falloc((int64_t)C*P), *on=falloc((int64_t)C*P);
     float *t1=falloc((int64_t)C*c->kda_hd), *graw=falloc((int64_t)C*P), *braw=falloc((int64_t)C*H);
-#ifdef COLI_METAL
+#ifdef LMA_METAL
     float *meta_oh = NULL, *meta_alpha = NULL, *meta_beta = NULL;
     if(g_k3_metal){
         meta_oh   = falloc((int64_t)C*P);
@@ -1267,7 +1267,7 @@ static void kda_forward(Model *m, Layer *l, int li, const float *x, int C, float
         float *qt=q+(int64_t)t*P, *kt=k+(int64_t)t*P, *tv=v+(int64_t)t*P;
         float *gpt=gp+(int64_t)t*P, *ont=on+(int64_t)t*P;
         const float *rgt=graw+(int64_t)t*P, *bt=braw+(int64_t)t*H;
-#ifdef COLI_METAL
+#ifdef LMA_METAL
         if(g_k3_metal){
             float *mo = meta_oh + (int64_t)t*P;
             float *ma = meta_alpha + (int64_t)t*P;
@@ -1281,7 +1281,7 @@ static void kda_forward(Model *m, Layer *l, int li, const float *x, int C, float
                 mb[h]=sigmoidf_(bt[h]);
             }
             memset(mo, 0, (size_t)P * sizeof(float));
-            if(!coli_metal_kda_fused_token(m->cwq[li], qt, m->cwk[li], kt, m->cwv[li], tv,
+            if(!lma_metal_kda_fused_token(m->cwq[li], qt, m->cwk[li], kt, m->cwv[li], tv,
                     a->conv_q, a->conv_k, a->conv_v, m->kstate[li], ma, mb, mo, P, K, H, hd)){
                 g_k3_metal = 0;
                 fprintf(stderr, "[K3-METAL] kda_fused_token L%d t%d failed — falling back to CPU\n", li, t);
@@ -1421,7 +1421,7 @@ static void kda_forward(Model *m, Layer *l, int li, const float *x, int C, float
     }
     w_matmul(out,on,&a->o,C);
     free(q);free(k);free(v);free(gp);free(on);free(t1);free(graw);free(braw);
-#ifdef COLI_METAL
+#ifdef LMA_METAL
     if(g_k3_metal || meta_oh){
         free(meta_oh); free(meta_alpha); free(meta_beta);
     }
@@ -1447,7 +1447,7 @@ static void kda_forward(Model *m, Layer *l, int li, const float *x, int C, float
     w_matmul(ckv,x,&a->kva,C);
     /* KV cache write stays on CPU even under Metal. The MLA attention loop below reads the
      * cache directly from host memory (m->Lc[li]/m->Rc[li]), so the write must land there.
-     * coli_metal_kv_write() wrote into an unaligned wrap() copy that was never synced back,
+     * lma_metal_kv_write() wrote into an unaligned wrap() copy that was never synced back,
      * and at row 0 instead of row pos_base — so on Metal the host cache was never populated
      * and attention read garbage, collapsing decode after a few tokens. This write is a
      * trivial rmsnorm+copy per row (negligible vs MoE), so CPU is the correct home for it. */
@@ -1512,7 +1512,7 @@ static void kda_forward(Model *m, Layer *l, int li, const float *x, int C, float
  * reads land in ws[] first and never enter this index until their bytes are
  * complete. Validate both the local range and identity before returning: a
  * broken invariant must become a miss, never another expert's weights. */
-#ifdef COLI_CACHE_INDEX_TEST
+#ifdef LMA_CACHE_INDEX_TEST
 static uint64_t g_slot_index_probes;
 #define SLOT_INDEX_PROBE() (g_slot_index_probes++)
 #else
@@ -1615,7 +1615,7 @@ static inline float situf_(float g, float u, float b1, float b2){
     return b1*tanhf(g/b1)*sigmoidf_(g) * b2*tanhf(u/b2);
 }
 
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
 /* Keep SiTU-GLU and intermediate activations on the GPU when supported.
  * Older DLLs lack the optional fused entry point, so retain the three-matmul
  * path as fallback. Accumulate into u only after a complete expert succeeds. */
@@ -1625,12 +1625,12 @@ static int cuda_expert_apply(Model *m, const uint8_t *w1p, const uint8_t *w1s,
                              const float *z, float wk,
                              float *u, float *gate, float *up, float *hz){
     Cfg *c=&m->c;
-    if(!coli_cuda_expert_mxfp4(hz,z,w1p,w1s,w3p,w3s,w2p,w2s,
+    if(!lma_cuda_expert_mxfp4(hz,z,w1p,w1s,w3p,w3s,w2p,w2s,
                               1,c->latent,c->moe_inter,c->situ_b1,c->situ_b2)) {
-        if(!coli_cuda_matmul_mxfp4(gate,z,w1p,w1s,1,c->latent,c->moe_inter)) return 0;
-        if(!coli_cuda_matmul_mxfp4(up,  z,w3p,w3s,1,c->latent,c->moe_inter)) return 0;
+        if(!lma_cuda_matmul_mxfp4(gate,z,w1p,w1s,1,c->latent,c->moe_inter)) return 0;
+        if(!lma_cuda_matmul_mxfp4(up,  z,w3p,w3s,1,c->latent,c->moe_inter)) return 0;
         for(int i=0;i<c->moe_inter;i++) gate[i]=situf_(gate[i],up[i],c->situ_b1,c->situ_b2);
-        if(!coli_cuda_matmul_mxfp4(hz,gate,w2p,w2s,1,c->moe_inter,c->latent)) return 0;
+        if(!lma_cuda_matmul_mxfp4(hz,gate,w2p,w2s,1,c->moe_inter,c->latent)) return 0;
     }
     for(int i=0;i<c->latent;i++) u[i]+=wk*hz[i];
     return 1;
@@ -1650,7 +1650,7 @@ static void expert_apply(Model *m, Slot *s, const float *z, float wk,
     Cfg *c=&m->c;
     uint8_t *w1p=s->buf, *w1s=w1p+m->e_w1p, *w2p=w1s+m->e_w1s, *w2s=w2p+m->e_w2p,
             *w3p=w2s+m->e_w2s, *w3s=w3p+m->e_w1p;
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
     /* Opt-in (K3_CUDA=1), decode only: at S>1 the CPU kernels amortise across
      * the batch and the per-call upload would not pay for itself. */
     if(g_k3_cuda && cuda_expert_apply(m,w1p,w1s,w2p,w2s,w3p,w3s,z,wk,u,gate,up,hz)) return;
@@ -1669,7 +1669,7 @@ static void expert_apply(Model *m, Slot *s, const float *z, float wk,
     for(int i=0;i<c->latent;i++) u[i]+=wk*hz[i];
 }
 
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
 /* GPU apply for a tier-resident expert (decode, S==1): w1/w3 in one paired
  * submit, SiTU-GLU on CPU, w2 down. Returns 0 untouched on any failure so
  * the caller can run the normal disk+CPU path. */
@@ -1678,11 +1678,11 @@ static int vk_expert_apply(Model *m, int li, int eid, const float *z, float wk,
     Cfg *c=&m->c;
     VkExp *v=&g_vkexp[(int64_t)li*c->n_experts+eid];
     if(!v->w1||!v->w2||!v->w3) return 0;
-    if(!coli_vk_matmul_pair((ColiVkTensor**)&v->w1,gate,NULL,NULL,c->moe_inter,
-                            (ColiVkTensor**)&v->w3,up,NULL,NULL,c->moe_inter,
+    if(!lma_vk_matmul_pair((LmaVkTensor**)&v->w1,gate,NULL,NULL,c->moe_inter,
+                            (LmaVkTensor**)&v->w3,up,NULL,NULL,c->moe_inter,
                             7,z,1,c->latent,32)) return 0;
     for(int i=0;i<c->moe_inter;i++) gate[i]=situf_(gate[i],up[i],c->situ_b1,c->situ_b2);
-    if(!coli_vk_matmul((ColiVkTensor**)&v->w2,hz,gate,NULL,NULL,7,1,c->moe_inter,c->latent,32))
+    if(!lma_vk_matmul((LmaVkTensor**)&v->w2,hz,gate,NULL,NULL,7,1,c->moe_inter,c->latent,32))
         return 0;
     for(int i=0;i<c->latent;i++) u[i]+=wk*hz[i];
     g_vk_hit++;
@@ -1705,22 +1705,22 @@ static void vk_expert_try_upload(Model *m, int li, int eid, Slot *s){
     float *sc=falloc(n1>n2?n1:n2);
     int ok=1;
     for(int64_t i=0;i<n1;i++) sc[i]=mx4_scale(w1s[i]);
-    ok=ok&&coli_vk_tensor_ensure((ColiVkTensor**)&v->w1,w1p,sc,7,LT,MI,32);
+    ok=ok&&lma_vk_tensor_ensure((LmaVkTensor**)&v->w1,w1p,sc,7,LT,MI,32);
     if(ok){ for(int64_t i=0;i<n2;i++) sc[i]=mx4_scale(w2s[i]);
-        ok=ok&&coli_vk_tensor_ensure((ColiVkTensor**)&v->w2,w2p,sc,7,MI,LT,32); }
+        ok=ok&&lma_vk_tensor_ensure((LmaVkTensor**)&v->w2,w2p,sc,7,MI,LT,32); }
     if(ok){ for(int64_t i=0;i<n1;i++) sc[i]=mx4_scale(w3s[i]);
-        ok=ok&&coli_vk_tensor_ensure((ColiVkTensor**)&v->w3,w3p,sc,7,LT,MI,32); }
+        ok=ok&&lma_vk_tensor_ensure((LmaVkTensor**)&v->w3,w3p,sc,7,LT,MI,32); }
     free(sc);
     if(!ok){
-        if(v->w1){ coli_vk_tensor_free(v->w1); v->w1=NULL; }
-        if(v->w2){ coli_vk_tensor_free(v->w2); v->w2=NULL; }
-        if(v->w3){ coli_vk_tensor_free(v->w3); v->w3=NULL; }
+        if(v->w1){ lma_vk_tensor_free(v->w1); v->w1=NULL; }
+        if(v->w2){ lma_vk_tensor_free(v->w2); v->w2=NULL; }
+        if(v->w3){ lma_vk_tensor_free(v->w3); v->w3=NULL; }
         g_vk_full=1;
         fprintf(stderr,"[K3-VK] expert tier full: %ld experts resident\n",g_vk_res);
         return;
     }
     g_vk_res++; g_vk_up_left--;
-    g_vk_upload_ema=coli_v4_hybrid_ema(g_vk_upload_ema,now_s()-up_t0);
+    g_vk_upload_ema=lma_v4_hybrid_ema(g_vk_upload_ema,now_s()-up_t0);
 }
 #endif
 
@@ -1788,13 +1788,13 @@ static void experts_apply_union(Model *m, int li, int nu, const int *uids,
                                 const int *poslist, const float *wlist,
                                 const float *Z, int stride, float *U,
                                 float *gate, float *up, float *hz){
-    /* Quantizzazione sollevata a livello layer (specchia colibri.c #1071):
+    /* Quantizzazione sollevata a livello layer (specchia glm52.c #1071):
      * ogni riga di Z veniva riquantizzata 2x per OGNI expert che la consuma
      * (gate+up dentro matmul_mxfp4_i8, con un malloc/free a chiamata) — con
      * topk=8 sono 16 quantizzazioni della stessa riga per layer. Una sola
      * passata mxfp4_qx qui produce le stesse righe int8 (ordine identico:
      * bit-identico), e il fallimento di allocazione degrada al vecchio path.
-     * EN: layer-hoisted activation quantization, mirroring colibri.c (#1071).
+     * EN: layer-hoisted activation quantization, mirroring glm52.c (#1071).
      * One mxfp4_qx pass replaces 2 requantizations per (expert, position);
      * allocation failure degrades to the old in-call path. */
     int8_t *zq_all=NULL; float *zsc_all=NULL; int zng=0;
@@ -1841,7 +1841,7 @@ static void experts_apply_union(Model *m, int li, int nu, const int *uids,
                     usleep(50);
                 m->t_eload+=now_s()-t0;
             }
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
             /* #848: offer EVERY expert used this layer, not only the ones that just
              * came off disk. qof[j]>=0 means "this was a RAM-cache miss", which is the
              * right gate for the readiness wait above and the wrong one here: it made
@@ -1889,12 +1889,12 @@ static void experts_apply_union(Model *m, int li, int nu, const int *uids,
 /* ---- AUTOPIN: seed the layer caches from the accumulated history ----------
  *
  * K3 counted every routed selection (rt_route) and could READ a history file,
- * but only when COLI_USAGE named one by hand, and it never WROTE one — so the
+ * but only when LMA_USAGE named one by hand, and it never WROTE one — so the
  * read path was unreachable for anyone who did not already have a profile from
- * somewhere else. colibri.c has seeded itself from <snap>/.coli_usage since the
+ * somewhere else. glm52.c has seeded itself from <snap>/.lma_usage since the
  * beginning and inkling.c does too; this brings K3 in line.
  *
- * The quota scales with CONFIDENCE in the history, exactly as colibri.c does it:
+ * The quota scales with CONFIDENCE in the history, exactly as glm52.c does it:
  * a handful of turns is a bad predictor and pinning on it steals slots from the
  * LRU, which at least adapts to the session in front of it. Below 5,000 recorded
  * selections nothing is pinned at all; the quota reaches its cap of half the
@@ -1917,9 +1917,9 @@ static void k3_usage(const char *argv0){
       "\n"
       "For an interactive session use the launcher instead, which starts this\n"
       "engine for you and does not need the GLM engine built:\n"
-      "  coli chat --model /path/to/kimi\n"
+      "  lmatomic chat --model /path/to/kimi\n"
       "\n"
-      "environment: SERVE=1 serve mode (SNAP=<dir>) - COLI_VULKAN=1 GPU path\n"
+      "environment: SERVE=1 serve mode (SNAP=<dir>) - LMA_VULKAN=1 GPU path\n"
       "             OMP_NUM_THREADS=<physical cores> - AUTOPIN=0 no pin seeding\n",
       argv0, argv0);
 }
@@ -1972,7 +1972,7 @@ static void moe_forward(Model *m, Layer *l, int li, const float *x, int C, float
         for(int e=0;e<E;e++) st[e]=sigmoidf_(st[e]);
         int *idx=idxs+(int64_t)t*K; float *wsel=wsels+(int64_t)t*K;
         /* ranking by score+bias is shared (moe_router.h); the weight stays the RAW sigmoid score */
-        coli_router_topk(st,o->rbias,NULL,E,K,idx,NULL,li,1);
+        lma_router_topk(st,o->rbias,NULL,E,K,idx,NULL,li,1);
         for(int kk=0;kk<K;kk++) wsel[kk]=st[idx[kk]];
         { float sm=0; for(int kk=0;kk<K;kk++) sm+=wsel[kk];
           for(int kk=0;kk<K;kk++) wsel[kk]/=(sm+1e-20f); }
@@ -2041,7 +2041,7 @@ static void moe_forward(Model *m, Layer *l, int li, const float *x, int C, float
                 if(er->contig){ if(er->fd[0]>=0) posix_fadvise(er->fd[0],er->off[0],m->e_slot,POSIX_FADV_WILLNEED); }
                 else for(int k2=0;k2<6;k2++) if(er->fd[k2]>=0) posix_fadvise(er->fd[k2],er->off[k2],sizes[k2],POSIX_FADV_WILLNEED);
             }
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
         /* decode: tier-resident experts run on the GPU and drop out of the
          * disk union — that skip is the I/O saving. C>1 prefill stays on the
          * CPU-batched path (and still feeds the tier via the upload hook). */
@@ -2191,7 +2191,7 @@ static float *g_echo_carry = NULL;      /* logit dell'ultima posizione gia fatta
 static int    g_echo_carry_ok = 0;
 
 static void k3_echo(const char *id, int pos, int token, const float *lo, int V, int k){
-    char tail[1024]; coli_logprob_tail(tail, sizeof tail, lo, V, token, k);
+    char tail[1024]; lma_logprob_tail(tail, sizeof tail, lo, V, token, k);
     char piece[512]; int n = g_echo_tok ? tok_decode(g_echo_tok, &token, 1, piece, (int)sizeof piece) : 0;
     if(n<0) n=0;
     printf("ECHO %s %d %d%s\n", id, n, pos, tail);
@@ -2204,13 +2204,13 @@ static float *step_chunk_ex(Model *m, const int *ids, int pos0, int C,
                             int *cancelled){
     Cfg *c=&m->c; int D=c->hidden;
     if(cancelled) *cancelled=0;
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
     /* Routed-tier upload budget for this step. Fixed cap by default;
      * K3_VK_UP=auto bounds the inline upload time to a fraction of the
      * measured decode step instead (hybrid_split.h) — legacy cap until both
      * rates have samples, so enabling auto never starts worse. */
     if(g_vk_up_auto&&!g_vk_full)
-        g_vk_cap_now=coli_k3_fill_budget(g_vk_step_ema,g_vk_upload_ema,
+        g_vk_cap_now=lma_k3_fill_budget(g_vk_step_ema,g_vk_upload_ema,
                                          g_vk_fill_frac,g_vk_upcap);
     g_vk_up_left=g_vk_up_auto?g_vk_cap_now:g_vk_upcap;
     double vk_step_t0=(g_vk_up_auto&&C==1)?now_s():0.0;
@@ -2263,9 +2263,9 @@ static float *step_chunk_ex(Model *m, const int *ids, int pos0, int C,
     }
     /* record what was just fed, at the positions it went to (kv_prefix.h) */
     if(!cancelled||!*cancelled) kv_prefix_record(&m->kvp,ids,pos0,C);
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
     if(g_vk_up_auto&&C==1&&vk_step_t0>0.0)
-        g_vk_step_ema=coli_v4_hybrid_ema(g_vk_step_ema,now_s()-vk_step_t0);
+        g_vk_step_ema=lma_v4_hybrid_ema(g_vk_step_ema,now_s()-vk_step_t0);
 #endif
     free(hidden);free(bres);free(mix);
     return logits;
@@ -2628,7 +2628,7 @@ typedef struct {
     int logprobs, pin;   /* SUBMIT logprobs=k / pin=1 */
 } ServeReq;
 
-static const ColiServeWireProfile kimi_wire={
+static const LmaServeWireProfile kimi_wire={
     .max_header_bytes=511,
     .max_payload_bytes=1u<<24,
     .max_tokens=1<<20,
@@ -2647,10 +2647,10 @@ static void model_state_reset(Model *m){
             memset(m->cwv[i],0,(size_t)c->kda_proj*c->conv_k*sizeof(float));
         }
     }
-#ifdef COLI_METAL
+#ifdef LMA_METAL
     if(m->Lc && m->max_t>0 && g_k3_metal){
         /* KV cache is CPU-managed (host memory) even under Metal — clear in place and keep the
-         * buffers for reuse. coli_metal_kv_clear() wrote to an unsynced GPU copy, so the host
+         * buffers for reuse. lma_metal_kv_clear() wrote to an unsynced GPU copy, so the host
          * cache stayed stale across turns; memset zeroes the memory attention actually reads. */
         for(int i=0;i<c->n_layers;i++) if(!m->L[i].kda){
             if(m->Lc[i]) memset(m->Lc[i],0,(size_t)m->max_t*c->kv_lora*sizeof(float));
@@ -2676,7 +2676,7 @@ static void model_state_reset(Model *m){
     }
 }
 
-/* ---------- recurrent-state checkpoints (OPT-IN, COLI_K3_CKPT=N) ----------
+/* ---------- recurrent-state checkpoints (OPT-IN, LMA_K3_CKPT=N) ----------
  *
  * kv_prefix reuse is all-or-nothing because the 69 KDA layers carry a single
  * RECURRENT state that exists only at "now": a prompt that diverges anywhere
@@ -2697,7 +2697,7 @@ static void model_state_reset(Model *m){
  * record is empty and no restore can happen, which is correct because
  * model_state_reset also freed those rows).
  *
- * With COLI_K3_CKPT unset or 0 (the default), none of this code runs and the
+ * With LMA_K3_CKPT unset or 0 (the default), none of this code runs and the
  * engine is byte-identical to before the feature existed. */
 typedef struct {
     int pos;            /* state covers ids[0..pos-1] */
@@ -2727,7 +2727,7 @@ static size_t k3_ckpt_blob_floats(const Model *m){
 static double k3_ckpt_reserve_gb(const Model *m, int slots){
     if(slots<1) return 0.0;
     /* Disk-parked photos keep ONE bounce buffer in RAM regardless of slot
-     * count -- that is the whole point of COLI_K3_CKPT_DIR on a low-RAM
+     * count -- that is the whole point of LMA_K3_CKPT_DIR on a low-RAM
      * machine. RAM slots each hold a full blob. */
     int resident_blobs = g_k3_ckpt_dir ? 1 : slots;
     return (double)resident_blobs*(double)k3_ckpt_blob_floats(m)*sizeof(float)/1e9;
@@ -2911,7 +2911,7 @@ static int k3_ckpt_restore_best(Model *m, const int *ids, int np){
 static int prepare_request_state(Model *m, const int *ids, int np, int max_t){
     int reuse=kv_prefix_reuse(&m->kvp,ids,np);
     /* Divergent prompt: before surrendering to a full reset, try the
-     * checkpoint pool (a no-op unless COLI_K3_CKPT enabled it). */
+     * checkpoint pool (a no-op unless LMA_K3_CKPT enabled it). */
     if(!reuse) reuse=k3_ckpt_restore_best(m,ids,np);
     if(!reuse) model_state_reset(m);
     kv_alloc(m,max_t);
@@ -2921,40 +2921,40 @@ static int prepare_request_state(Model *m, const int *ids, int np, int max_t){
 static int serve_stdin_readable(void){
     /* Windows non ha fd_set/select in questa forma: la build falliva del tutto.
      * La versione portabile (con i fix #139/#195) vive in compat.h, incluso via st.h. */
-    return coli_stdin_readable();
+    return lma_stdin_readable();
 }
 
 static int serve_read_req(FILE *in, FILE *out, ServeReq *q, const char *active){
-    ColiServeCommand command;
-    ColiServeReadResult result=coli_serve_read_command(in,&kimi_wire,&command);
-    if(result==COLI_SERVE_READ_EOF) return -1;
-    if(result==COLI_SERVE_READ_BAD_FRAME) return -2;
-    if(result==COLI_SERVE_READ_NOMEM){
-        coli_serve_write_error(out,command.id,"out of memory"); return -2;
+    LmaServeCommand command;
+    LmaServeReadResult result=lma_serve_read_command(in,&kimi_wire,&command);
+    if(result==LMA_SERVE_READ_EOF) return -1;
+    if(result==LMA_SERVE_READ_BAD_FRAME) return -2;
+    if(result==LMA_SERVE_READ_NOMEM){
+        lma_serve_write_error(out,command.id,"out of memory"); return -2;
     }
-    if(result==COLI_SERVE_READ_BAD_REQUEST&&
-       command.kind==COLI_SERVE_COMMAND_SUBMIT){
+    if(result==LMA_SERVE_READ_BAD_REQUEST&&
+       command.kind==LMA_SERVE_COMMAND_SUBMIT){
         /* SEC (GHSA-gf38): max_tok needs an upper bound too. INT_MAX wrapped the
          * signed np+max_tok context check below and made the kv_alloc size
          * negative, so kv_alloc's early-return kept the previous request's small
          * KV buffers and the generation loop wrote past them (heap OOB write). */
-        coli_serve_write_error(out,command.id,"bad submit header"); return -2;
+        lma_serve_write_error(out,command.id,"bad submit header"); return -2;
     }
-    if(result!=COLI_SERVE_READ_OK) return 0;
-    if(command.kind==COLI_SERVE_COMMAND_STOP||
-       command.kind==COLI_SERVE_COMMAND_CANCEL){
+    if(result!=LMA_SERVE_READ_OK) return 0;
+    if(command.kind==LMA_SERVE_COMMAND_STOP||
+       command.kind==LMA_SERVE_COMMAND_CANCEL){
         int matched=active&&!strcmp(active,command.id);
-        coli_serve_command_dispose(&command); return matched;
+        lma_serve_command_dispose(&command); return matched;
     }
-    if(command.kind!=COLI_SERVE_COMMAND_SUBMIT){
-        coli_serve_command_dispose(&command); return 0;
+    if(command.kind!=LMA_SERVE_COMMAND_SUBMIT){
+        lma_serve_command_dispose(&command); return 0;
     }
     snprintf(q->id,sizeof(q->id),"%s",command.id);
     q->max_tok=command.max_tokens; q->temp=command.temperature; q->top_p=command.top_p;
     q->logprobs=command.logprobs; q->pin=command.pin;
-    q->payload=(char*)coli_serve_command_take_payload(&command);
+    q->payload=(char*)lma_serve_command_take_payload(&command);
     q->plen=(int)command.payload_bytes;
-    coli_serve_command_dispose(&command);
+    lma_serve_command_dispose(&command);
     return 2;
 }
 
@@ -2970,7 +2970,7 @@ static int k3_serve_poll_cancel(void *context){
         if(r<0){ if(r==-2) poll->fatal=1; return 1; }
         if(r==1) cancelled=1;
         if(r==2){
-            coli_serve_write_error(stdout,queued.id,"engine busy");
+            lma_serve_write_error(stdout,queued.id,"engine busy");
             free(queued.payload);
         }
     }
@@ -2985,7 +2985,7 @@ static void k3_cancel_unpublished_state(Model *m){
 
 static void serve_data(const char *id, const char *p, int n){
     if(n<=0) return;
-    coli_serve_write_data(stdout,id,p,(size_t)n);
+    lma_serve_write_data(stdout,id,p,(size_t)n);
 }
 
 /* Coda del canale logprobs sul frame DATA. La riempie il ciclo di decodifica
@@ -2994,17 +2994,17 @@ static void serve_data(const char *id, const char *p, int n){
 static char g_lp_tail[1024];
 static void serve_data_maybe_lp(const char *id, const char *p, int n){
     if(n<=0) return;
-    if(g_lp_tail[0]) coli_serve_write_data_lp(stdout,id,p,(size_t)n,g_lp_tail);
-    else coli_serve_write_data(stdout,id,p,(size_t)n);
+    if(g_lp_tail[0]) lma_serve_write_data_lp(stdout,id,p,(size_t)n,g_lp_tail);
+    else lma_serve_write_data(stdout,id,p,(size_t)n);
 }
 
 static void serve_tool(const char *id, const char *p, int n){
     if(n<0) return;
-    coli_serve_write_tool(stdout,id,p,(size_t)n);
+    lma_serve_write_tool(stdout,id,p,(size_t)n);
 }
 
 /* ---------- dashboard protocol: EMAP / HITS ----------
- * Same stdout lines colibri.c emits for the web dashboard's Brain tab; the
+ * Same stdout lines glm52.c emits for the web dashboard's Brain tab; the
  * gateway parses them, nothing else does. Rows are the sparse layers, columns
  * the experts. EMAP: one byte per expert as two hex digits, tier<<6 | heat
  * (tier 1 = resident in the layer cache, heat 0: this engine keeps no usage
@@ -3043,7 +3043,7 @@ static void serve_hits(Model *m){
 
 static int serve_one(Model *m, Tok *T, ServeReq *q){
     int cap=65536, *ids=malloc((size_t)cap*sizeof(int)), np=0;
-    if(!ids){ coli_serve_write_error(stdout,q->id,"out of memory"); return 0; }
+    if(!ids){ lma_serve_write_error(stdout,q->id,"out of memory"); return 0; }
     int sp[4]={-1,-1,-1,-1}, chat=0, thinking=0;
     if(m->c.bos>=0) ids[np++]=m->c.bos;
     if(q->plen>=8&&!memcmp(q->payload,"K3CHAT1\n",8)){
@@ -3052,29 +3052,29 @@ static int serve_one(Model *m, Tok *T, ServeReq *q){
             /* Not the request's fault: this snapshot's tokenizer.json has no
              * <|open|>/<|close|>/<|sep|>/<|end_of_msg|>, so no chat turn can be
              * built from it. Say that, and say where a usable one comes from. */
-            coli_serve_write_error(stdout,q->id,
+            lma_serve_write_error(stdout,q->id,
                 "tokenizer.json has no XTML chat tokens "
                 "(<|open|> <|close|> <|sep|> <|end_of_msg|>); "
                 "regenerate it with tools/k3_tokenizer.py");
             fprintf(stderr,"[K3] chat: XTML special tokens not in tokenizer.json — "
                            "regenerate with tools/k3_tokenizer.py\n");
             free(ids); return 0; }
-        if(n<0){ coli_serve_write_error(stdout,q->id,"invalid K3 chat payload"); free(ids); return 0; }
+        if(n<0){ lma_serve_write_error(stdout,q->id,"invalid K3 chat payload"); free(ids); return 0; }
         np+=n; chat=1;
     } else {
         np+=tok_encode(T,q->payload,q->plen,ids+np,cap-np);
     }
     int max_ctx=getenv("K3_MAXT")?atoi(getenv("K3_MAXT")):8192;
-    int budget=coli_serve_budget(np,q->max_tok,max_ctx,q->logprobs>0);
+    int budget=lma_serve_budget(np,q->max_tok,max_ctx,q->logprobs>0);
     if(budget<0){
         if(np<1){
-            coli_serve_write_error(stdout,q->id,"EMPTY_PROMPT");
+            lma_serve_write_error(stdout,q->id,"EMPTY_PROMPT");
         }else{
             char message[160];
             snprintf(message,sizeof(message),
                      "CONTEXT_EXCEEDED prompt_tokens=%d requested=%d capacity=%d",
                      np,q->max_tok,max_ctx);
-            coli_serve_write_error(stdout,q->id,message);
+            lma_serve_write_error(stdout,q->id,message);
         }
         free(ids); return 0;
     }
@@ -3084,7 +3084,7 @@ static int serve_one(Model *m, Tok *T, ServeReq *q){
                 q->max_tok,budget,max_ctx,np);
         q->max_tok=budget;
     }
-    coli_serve_write_accept(stdout,q->id,np);
+    lma_serve_write_accept(stdout,q->id,np);
     /* Declare the structured sideband before any generated DATA. Even an
      * empty sideband is meaningful: it tells the gateway that literal K3
      * marker lookalikes in DATA are content, not engine-proven structure. */
@@ -3101,7 +3101,7 @@ static int serve_one(Model *m, Tok *T, ServeReq *q){
      * Either the reused positions are token-identical or nothing is reused;
      * the emitted tokens are unchanged in both cases. */
     /* Una richiesta con pin=1 chiede la fotografia anche quando l'operatore non
-     * ha acceso COLI_K3_CKPT: senza almeno uno slot non c'e dove metterla e
+     * ha acceso LMA_K3_CKPT: senza almeno uno slot non c'e dove metterla e
      * ogni opzione rifarebbe il prompt intero. Se la memoria non basta si
      * resta senza: e un'ottimizzazione, mai il motivo di un errore. */
     /* Gli scatti utili sono ANNIDATI: le istruzioni, condivise da mille
@@ -3109,9 +3109,9 @@ static int serve_one(Model *m, Tok *T, ServeReq *q){
      * sola. Con uno solo se ne perde sempre uno e la domanda viene riletta
      * una volta per opzione. Questo motore il pool ce l'ha gia' (K3Ckpt tiene
      * il piu' profondo valido); qui si apre solo con quanti slot, con lo
-     * stesso COLI_PIN_SLOTS degli altri. */
+     * stesso LMA_PIN_SLOTS degli altri. */
     if(q->pin && g_k3_ckpt_slots<1){
-        int n=coli_pin_slots_wanted(); if(n<1) n=1;
+        int n=lma_pin_slots_wanted(); if(n<1) n=1;
         if(n>K3_CKPT_MAX) n=K3_CKPT_MAX;
         g_k3_ckpt_slots=n;
         fprintf(stderr,"[PIN] %d scatti dello stato ricorrente accesi su richiesta (%.2f GB)\n",
@@ -3162,7 +3162,7 @@ static int serve_one(Model *m, Tok *T, ServeReq *q){
     }
     if(prefill_cancelled){
         free(lo); k3_cancel_unpublished_state(m); free(ids);
-        if(!poll.fatal) coli_serve_write_error(stdout,q->id,"CANCELLED");
+        if(!poll.fatal) lma_serve_write_error(stdout,q->id,"CANCELLED");
         return poll.fatal?-1:0;
     }
     /* Turn boundary: the state now covers exactly the prompt. A photo here is
@@ -3177,7 +3177,7 @@ static int serve_one(Model *m, Tok *T, ServeReq *q){
     for(int s=0;s<q->max_tok&&!cancelled;s++){
         int tk=sample_tok(lo,m->c.vocab,q->temp,q->top_p);
         g_lp_tail[0]=0;
-        if(q->logprobs>0) coli_logprob_tail(g_lp_tail,sizeof g_lp_tail,lo,m->c.vocab,tk,q->logprobs);
+        if(q->logprobs>0) lma_logprob_tail(g_lp_tail,sizeof g_lp_tail,lo,m->c.vocab,tk,q->logprobs);
         free(lo); lo=NULL;
         int eos=0; for(int i=0;i<m->c.n_eos;i++) if(tk==m->c.eos[i]) eos=1;
         int show=!eos;
@@ -3219,7 +3219,7 @@ static int serve_one(Model *m, Tok *T, ServeReq *q){
             if(r<0){ cancelled=1; break; }
             if(r==1) cancelled=1;
             if(r==2){
-                coli_serve_write_error(stdout,queued.id,"engine busy"); free(queued.payload);
+                lma_serve_write_error(stdout,queued.id,"engine busy"); free(queued.payload);
             }
         }
         if(cancelled){ limited=0; break; }
@@ -3233,17 +3233,17 @@ static int serve_one(Model *m, Tok *T, ServeReq *q){
     k3_ckpt_save(m, NULL);
     double dt=now_s()-t0, decode=now_s()-tg;
     uint64_t hits=m->hits-hit0, misses=m->miss-miss0, total=hits+misses;
-    ColiServeDone done={gen,decode>0?gen/decode:0.0,
+    LmaServeDone done={gen,decode>0?gen/decode:0.0,
                         total?100.0*hits/total:0.0,rss_gb(),np,limited};
     char done_line[256];
-    int done_bytes=coli_serve_format_done(done_line,sizeof(done_line),q->id,&done);
+    int done_bytes=lma_serve_format_done(done_line,sizeof(done_line),q->id,&done);
     if(done_bytes>0) fwrite(done_line,1,(size_t)done_bytes,stdout);
     double moe=m->t_moe-e0, disk=m->t_eload-d0;
     printf("PROF %.3f %d %d %.3f %.3f %.3f %.3f %.3f %d\n",
            dt,np,gen,disk,0.0,moe>disk?moe-disk:moe,m->t_attn-a0,m->t_head-h0,forwards);
     fflush(stdout);
     serve_hits(m);
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
     if(g_k3_vk){
         if(g_vk_up_auto)
             fprintf(stderr,"[K3-VK] routed tier: %ld resident, %ld GPU hits | "
@@ -3261,10 +3261,10 @@ static int serve_one(Model *m, Tok *T, ServeReq *q){
 static void serve_loop(Model *m, Tok *T){
     /* PRIMA del sentinella: su Windows stdout in modalita' TEXT trasforma il \n
      * finale in \r\n, il gateway non lo riconosce e resta in attesa per sempre
-     * (#748). Vive in compat.h perche' colibri.c ce l'ha da #195 e questo motore
+     * (#748). Vive in compat.h perche' glm52.c ce l'ha da #195 e questo motore
      * e' nato senza. */
-    coli_serve_stdio_init();
-    coli_serve_write_ready(stdout,rss_gb());
+    lma_serve_stdio_init();
+    lma_serve_write_ready(stdout,rss_gb());
     serve_emap(m);                        /* after READY and STAT: the boot reader discards what precedes them */
     for(;;){
         ServeReq q={0}; int r;
@@ -3276,7 +3276,7 @@ static void serve_loop(Model *m, Tok *T){
 
 #ifndef KIMI_K3_NO_MAIN
 int main(int argc, char **argv){
-    coli_omp_tune_threads("kimi_k3");   /* squadra sui core fisici, niente spin-wait: vedi omp_tune.h */
+    lma_omp_tune_threads("kimi_k3");   /* squadra sui core fisici, niente spin-wait: vedi omp_tune.h */
     int serving=getenv("SERVE")&&getenv("SERVE")[0]=='1';
     /* Usage was printed only when there were NO arguments, so `--help` fell
      * through as the model directory and the engine went looking for
@@ -3285,7 +3285,7 @@ int main(int argc, char **argv){
      * below, so an error says what to do instead of only what went wrong. */
     if(!serving && (argc<2 || !strcmp(argv[1],"--help") || !strcmp(argv[1],"-h")
                           || !strcmp(argv[1],"help"))){
-        if(argc<2){ coli_print_launcher_help("Kimi K3"); return 1; }
+        if(argc<2){ lma_print_launcher_help("Kimi K3"); return 1; }
         k3_usage(argv[0]);
         return argc<2 ? 1 : 0;          /* asking for help is not a failure */
     }
@@ -3293,7 +3293,7 @@ int main(int argc, char **argv){
     if(!snap||!*snap){ fprintf(stderr,"set SNAP=<Kimi K3 snapshot directory>\n"); return 1; }
     int ngen=32, chat=0;
     for(int i=serving?1:2;i<argc;i++){
-        if(!strcmp(argv[i],"--ngen")&&i+1<argc) ngen=coli_arg_int(argv[++i], "--ngen");
+        if(!strcmp(argv[i],"--ngen")&&i+1<argc) ngen=lma_arg_int(argv[++i], "--ngen");
         else if(!strcmp(argv[i],"--ids")&&i+1<argc) idstr=argv[++i];
         else if(!strcmp(argv[i],"--chat")) chat=1;
         else if(!strcmp(argv[i],"--system")&&i+1<argc) sysmsg=argv[++i];
@@ -3315,7 +3315,7 @@ int main(int argc, char **argv){
         for(int i=0;i<n;i++) printf("%s%d",i?" ":"",wid[i]);
         printf("\n"); free(wire); free(wid); return 0;
     }
-    float temp=getenv("COLI_TEMP")?(float)atof(getenv("COLI_TEMP")):0.f;
+    float temp=getenv("LMA_TEMP")?(float)atof(getenv("LMA_TEMP")):0.f;
     int nlayers=getenv("K3_LAYERS")?atoi(getenv("K3_LAYERS")):0;
     Model m;
     model_init(&m,snap,nlayers);
@@ -3325,21 +3325,21 @@ int main(int argc, char **argv){
      * silently absorbed and written back out. See docs/routing-telemetry.md. */
     for(int i=0;i<m.c.n_layers;i++) if(!m.L[i].sparse) rt_drop_row(i);
     rt_drop_row(m.c.n_layers);
-    /* LEARNED CACHE. Expert use accumulates in <snap>/.coli_usage across sessions
-     * and seeds the pins at startup, the same convention colibri.c and inkling.c
-     * already follow. COLI_USAGE overrides the location; USAGE_SAVE=0 makes the
+    /* LEARNED CACHE. Expert use accumulates in <snap>/.lma_usage across sessions
+     * and seeds the pins at startup, the same convention glm52.c and inkling.c
+     * already follow. LMA_USAGE overrides the location; USAGE_SAVE=0 makes the
      * run read-only, for benchmark loops that would otherwise skew the profile
      * they are measuring. */
-    { const char *up=getenv("COLI_USAGE");
+    { const char *up=getenv("LMA_USAGE");
       if(up&&*up) snprintf(g_k3_usage,sizeof(g_k3_usage),"%s",up);
-      else        snprintf(g_k3_usage,sizeof(g_k3_usage),"%s/.coli_usage",snap);
+      else        snprintf(g_k3_usage,sizeof(g_k3_usage),"%s/.lma_usage",snap);
       int64_t h=rt_load(g_k3_usage);
       if(h>0) fprintf(stderr,"[USAGE] expert history: %lld selections (%s)\n",
                       (long long)h,g_k3_usage);
       /* #780: without a half-life the ranking freezes — after ~18M recorded
        * selections one more turn moves it by 0.2% and the profile stops
        * following the workload. */
-      if(getenv("COLI_USAGE_DECAY")) rt_decay();
+      if(getenv("LMA_USAGE_DECAY")) rt_decay();
       pin_seed(&m,h); }
     if(getenv("K3_TRACE")){
         m.trace=fopen(getenv("K3_TRACE"),"wb");
@@ -3363,7 +3363,7 @@ int main(int argc, char **argv){
           fprintf(stderr,"[K3] tokenizer.json loaded (family=%s)\n",T.kimi?"kimi":(T.o200k?"o200k":"cl100k")); } }
     if(serving){
         if(!has_tok){ fprintf(stderr,"serve mode needs tokenizer.json\n"); return 1; }
-        coli_rt_term_arm();   /* SIGTERM must reach the save below (#1629) */
+        lma_rt_term_arm();   /* SIGTERM must reach the save below (#1629) */
          serve_loop(&m,&T);
         /* Questo ramo non salvava affatto la storia: gli altri motori lo
          * fanno subito dopo il loop, qui mancava del tutto, quindi la
@@ -3372,8 +3372,8 @@ int main(int argc, char **argv){
         if(g_k3_usage[0]) rt_save(g_k3_usage,0);
         if(g_k3_val_fp){ fflush(g_k3_val_fp); fclose(g_k3_val_fp); g_k3_val_fp=NULL; }
         if(g_k3_val_lfp){ fflush(g_k3_val_lfp); fclose(g_k3_val_lfp); g_k3_val_lfp=NULL; }
-#ifdef COLI_METAL
-        if(g_k3_metal) coli_metal_shutdown();
+#ifdef LMA_METAL
+        if(g_k3_metal) lma_metal_shutdown();
 #endif
         return 0;
     }
@@ -3427,8 +3427,8 @@ int main(int argc, char **argv){
     if(m.trace) fclose(m.trace);
     if(g_k3_val_fp){ fflush(g_k3_val_fp); fclose(g_k3_val_fp); g_k3_val_fp=NULL; }
         if(g_k3_val_lfp){ fflush(g_k3_val_lfp); fclose(g_k3_val_lfp); g_k3_val_lfp=NULL; }
-#ifdef COLI_METAL
-        if(g_k3_metal) coli_metal_shutdown();
+#ifdef LMA_METAL
+        if(g_k3_metal) lma_metal_shutdown();
 #endif
         return 0;
     }
@@ -3481,13 +3481,13 @@ int main(int argc, char **argv){
             (unsigned long long)m.hits,(unsigned long long)(m.hits+m.miss),m.ebytes/1e9);
     fprintf(stderr,"[K3] time: attn %.1fs moe %.1fs (eload %.1fs) head %.1fs | RSS %.1f GB\n",
             m.t_attn,m.t_moe,m.t_eload,m.t_head,rss_gb());
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
     if(g_k3_vk&&g_vk_up_auto)
         fprintf(stderr,"[K3-VK] fill auto: cap=%d (step %.2fms, upload %.2fms, frac %.2f) | %ld resident\n",
                 g_vk_cap_now,g_vk_step_ema*1e3,g_vk_upload_ema*1e3,g_vk_fill_frac,g_vk_res);
 #endif
-    /* One line, every engine, one format: `coli tune` sweeps scheduling knobs and
-     * needs tokens-and-elapsed to compare candidates. Before this only colibri
+    /* One line, every engine, one format: `lmatomic tune` sweeps scheduling knobs and
+     * needs tokens-and-elapsed to compare candidates. Before this only lmatomic
      * emitted a parseable throughput line (REPLAY decode), so the tuner was
      * GLM-only and bannered the right model while launching the wrong engine
      * (#898). Printed to stdout, which is what autotune captures.
@@ -3500,14 +3500,14 @@ int main(int argc, char **argv){
         rt_save(g_k3_usage,0);                       /* same bytes as every other engine */
     if(g_k3_val_fp){ fflush(g_k3_val_fp); fclose(g_k3_val_fp); g_k3_val_fp=NULL; }
     if(g_k3_val_lfp){ fflush(g_k3_val_lfp); fclose(g_k3_val_lfp); g_k3_val_lfp=NULL; }
-#ifdef COLI_METAL
-    if(g_k3_metal) coli_metal_shutdown();
+#ifdef LMA_METAL
+    if(g_k3_metal) lma_metal_shutdown();
 #endif
     return 0;
 }
 #endif /* KIMI_K3_NO_MAIN */
 
-#ifdef COLI_SEGMENT_ADAPTER
+#ifdef LMA_SEGMENT_ADAPTER
 /* ---------- engine-owned Segment adapter ------------------------------ */
 
 typedef struct {
@@ -3590,28 +3590,28 @@ static void kimi_segment_model_destroy(KimiSegmentEngine *engine) {
 }
 
 static int kimi_segment_engine_open(
-    void **engine_impl, ColiSegmentCapabilities *capabilities,
-    const ColiSegmentEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaSegmentCapabilities *capabilities,
+    const LmaSegmentEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "invalid Kimi K3 Segment open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_SEGMENT_CAP_CPU))
-        return coli_segment_adapter_error(error, error_size,
+        (options->backend_mask & ~LMA_SEGMENT_CAP_CPU))
+        return lma_segment_adapter_error(error, error_size,
                                            "Kimi K3 Segment currently supports CPU");
 
     Cfg config;
     memset(&config, 0, sizeof(config));
     load_cfg(&config, options->model_dir);
     if (options->layer_end > (uint32_t)config.n_layers)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Kimi K3 Segment range exceeds model");
     uint64_t nbmax = ((uint64_t)config.n_layers + config.res_bs - 1u) /
                      (uint64_t)config.res_bs;
     uint64_t state_width = (uint64_t)config.hidden * (1u + nbmax);
     if (state_width > UINT32_MAX)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Kimi K3 boundary state is too wide");
 
     int sparse_layers = 0;
@@ -3639,7 +3639,7 @@ static int kimi_segment_engine_open(
 
     KimiSegmentEngine *engine = calloc(1, sizeof(*engine));
     if (!engine)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory opening Kimi Segment");
     engine->layer_begin = options->layer_begin;
     engine->layer_end = options->layer_end;
@@ -3648,7 +3648,7 @@ static int kimi_segment_engine_open(
     engine->nbmax = (uint32_t)nbmax;
     if (pthread_mutex_init(&engine->run_lock, NULL)) {
         free(engine);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "cannot initialize Kimi Segment lock");
     }
     model_init_range(&engine->model, options->model_dir,
@@ -3661,14 +3661,14 @@ static int kimi_segment_engine_open(
 
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_SEGMENT_ABI_VERSION;
-    capabilities->flags = COLI_SEGMENT_CAP_SNAPSHOT |
-                          COLI_SEGMENT_CAP_RANGE_NATIVE |
-                          COLI_SEGMENT_CAP_MULTI_SESSION |
-                          COLI_SEGMENT_CAP_CPU;
-    coli_segment_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_SEGMENT_ABI_VERSION;
+    capabilities->flags = LMA_SEGMENT_CAP_SNAPSHOT |
+                          LMA_SEGMENT_CAP_RANGE_NATIVE |
+                          LMA_SEGMENT_CAP_MULTI_SESSION |
+                          LMA_SEGMENT_CAP_CPU;
+    lma_segment_capability_string(capabilities->engine_id,
                                    sizeof(capabilities->engine_id), "kimi");
-    coli_segment_capability_string(capabilities->state_schema,
+    lma_segment_capability_string(capabilities->state_schema,
                                    sizeof(capabilities->state_schema),
                                    "kimi-k3/attnres-kda-mla-dsa-f32-v1");
     int bits = getenv("K3_BITS") ? atoi(getenv("K3_BITS")) : 4;
@@ -3677,7 +3677,7 @@ static int kimi_segment_engine_open(
              sizeof(capabilities->numeric_class),
              "kimi-k3/q%d-mla%d-mxfp4-idot%d/f32/cpu-v1",
              bits, mla_bits, g_k3_idot != 0);
-    capabilities->state_dtype = COLI_SEGMENT_DTYPE_F32;
+    capabilities->state_dtype = LMA_SEGMENT_DTYPE_F32;
     capabilities->state_width = engine->state_width;
     capabilities->max_batch_rows = 128;
     capabilities->max_context_tokens = options->context_tokens;
@@ -3715,15 +3715,15 @@ static void kimi_segment_session_free(KimiSegmentSession *session) {
 
 static int kimi_segment_session_create(
     void *engine_impl, void **session_impl,
-    const ColiSegmentSessionOptions *options, char *error, size_t error_size) {
+    const LmaSegmentSessionOptions *options, char *error, size_t error_size) {
     KimiSegmentEngine *engine = (KimiSegmentEngine *)engine_impl;
     if (!engine || !session_impl || !options)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "invalid Kimi Segment session");
     *session_impl = NULL;
     KimiSegmentSession *session = calloc(1, sizeof(*session));
     if (!session)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory creating Kimi session");
     session->engine = engine;
     session->context_tokens = options->context_tokens;
@@ -3745,12 +3745,12 @@ static int kimi_segment_session_create(
          layer++) {
         size_t cells;
         if (config->is_kda[layer]) {
-            if (coli_segment_size_mul((size_t)config->kda_heads,
+            if (lma_segment_size_mul((size_t)config->kda_heads,
                                       (size_t)config->kda_hd, &cells) ||
-                coli_segment_size_mul(cells, (size_t)config->kda_hd,
+                lma_segment_size_mul(cells, (size_t)config->kda_hd,
                                       &cells)) goto oom;
             session->kstate[layer] = calloc(cells, sizeof(float));
-            if (coli_segment_size_mul((size_t)config->kda_proj,
+            if (lma_segment_size_mul((size_t)config->kda_proj,
                                       (size_t)config->conv_k, &cells)) goto oom;
             session->cwq[layer] = calloc(cells, sizeof(float));
             session->cwk[layer] = calloc(cells, sizeof(float));
@@ -3761,16 +3761,16 @@ static int kimi_segment_session_create(
             if (!session->kstate[layer] || !session->cwq[layer] ||
                 !session->cwk[layer] || !session->cwv[layer]) goto oom;
         } else {
-            if (coli_segment_size_mul(options->context_tokens,
+            if (lma_segment_size_mul(options->context_tokens,
                                       (size_t)config->kv_lora, &cells)) goto oom;
             session->Lc[layer] = calloc(cells, sizeof(float));
             state_bytes += (uint64_t)cells * sizeof(float);
-            if (coli_segment_size_mul(options->context_tokens,
+            if (lma_segment_size_mul(options->context_tokens,
                                       (size_t)config->qk_rope, &cells)) goto oom;
             session->Rc[layer] = calloc(cells, sizeof(float));
             state_bytes += (uint64_t)cells * sizeof(float);
             if (config->index_hd > 0 && config->idx_type[layer]) {
-                if (coli_segment_size_mul(options->context_tokens,
+                if (lma_segment_size_mul(options->context_tokens,
                                           (size_t)config->index_hd,
                                           &cells)) goto oom;
                 session->Ic[layer] = calloc(cells, sizeof(float));
@@ -3784,7 +3784,7 @@ static int kimi_segment_session_create(
     if (options->memory_limit_bytes &&
         state_bytes > options->memory_limit_bytes) {
         kimi_segment_session_free(session);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Kimi session state exceeds memory limit");
     }
     *session_impl = session;
@@ -3792,7 +3792,7 @@ static int kimi_segment_session_create(
 
 oom:
     kimi_segment_session_free(session);
-    return coli_segment_adapter_error(error, error_size,
+    return lma_segment_adapter_error(error, error_size,
                                        "out of memory allocating Kimi state");
 }
 
@@ -3801,30 +3801,30 @@ static void kimi_segment_session_destroy(void *session_impl) {
 }
 
 static int kimi_segment_session_run(void *session_impl,
-                                    const ColiSegmentRunRequest *request,
+                                    const LmaSegmentRunRequest *request,
                                     char *error, size_t error_size) {
     KimiSegmentSession *session = (KimiSegmentSession *)session_impl;
     if (!session || !request || request->position != session->position)
-        return coli_segment_adapter_error(
+        return lma_segment_adapter_error(
             error, error_size, "Kimi Segment requires contiguous positions");
     if (request->should_cancel &&
         request->should_cancel(request->cancel_user_data))
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Kimi Segment run cancelled");
     KimiSegmentEngine *engine = session->engine;
     Cfg *config = &engine->model.c;
     size_t hidden_cells, residual_cells;
-    if (coli_segment_size_mul(request->rows, (size_t)config->hidden,
+    if (lma_segment_size_mul(request->rows, (size_t)config->hidden,
                               &hidden_cells) ||
-        coli_segment_size_mul(hidden_cells, (size_t)engine->nbmax,
+        lma_segment_size_mul(hidden_cells, (size_t)engine->nbmax,
                               &residual_cells))
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Kimi boundary state overflows");
     float *hidden = calloc(hidden_cells, sizeof(float));
     float *residuals = calloc(residual_cells, sizeof(float));
     if (!hidden || !residuals) {
         free(hidden); free(residuals);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory running Kimi Segment");
     }
     const float *input = (const float *)request->input;
@@ -3861,7 +3861,7 @@ static int kimi_segment_session_run(void *session_impl,
     pthread_mutex_unlock(&engine->run_lock);
     if (result) {
         free(hidden); free(residuals);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Kimi Segment layer run failed");
     }
 
@@ -3881,14 +3881,14 @@ static int kimi_segment_session_run(void *session_impl,
 
 static int kimi_segment_spans(
     KimiSegmentSession *session, uint32_t position,
-    ColiSegmentStateSpan **spans_output, size_t *count_output,
+    LmaSegmentStateSpan **spans_output, size_t *count_output,
     char *error, size_t error_size) {
     size_t capacity = (size_t)(session->engine->layer_end -
                                session->engine->layer_begin) * 4u;
-    ColiSegmentStateSpan *spans = capacity
+    LmaSegmentStateSpan *spans = capacity
         ? calloc(capacity, sizeof(*spans)) : NULL;
     if (capacity && !spans)
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "out of memory describing Kimi state");
     Cfg *config = &session->engine->model.c;
     size_t count = 0;
@@ -3898,23 +3898,23 @@ static int kimi_segment_spans(
             size_t rec_cells = (size_t)config->kda_heads * config->kda_hd *
                                config->kda_hd;
             size_t conv_cells = (size_t)config->kda_proj * config->conv_k;
-            spans[count++] = (ColiSegmentStateSpan){
+            spans[count++] = (LmaSegmentStateSpan){
                 session->kstate[layer], rec_cells * sizeof(float)};
-            spans[count++] = (ColiSegmentStateSpan){
+            spans[count++] = (LmaSegmentStateSpan){
                 session->cwq[layer], conv_cells * sizeof(float)};
-            spans[count++] = (ColiSegmentStateSpan){
+            spans[count++] = (LmaSegmentStateSpan){
                 session->cwk[layer], conv_cells * sizeof(float)};
-            spans[count++] = (ColiSegmentStateSpan){
+            spans[count++] = (LmaSegmentStateSpan){
                 session->cwv[layer], conv_cells * sizeof(float)};
         } else {
-            spans[count++] = (ColiSegmentStateSpan){
+            spans[count++] = (LmaSegmentStateSpan){
                 session->Lc[layer],
                 (size_t)position * config->kv_lora * sizeof(float)};
-            spans[count++] = (ColiSegmentStateSpan){
+            spans[count++] = (LmaSegmentStateSpan){
                 session->Rc[layer],
                 (size_t)position * config->qk_rope * sizeof(float)};
             if (config->index_hd > 0 && config->idx_type[layer])
-                spans[count++] = (ColiSegmentStateSpan){
+                spans[count++] = (LmaSegmentStateSpan){
                     session->Ic[layer],
                     (size_t)position * config->index_hd * sizeof(float)};
         }
@@ -3924,53 +3924,53 @@ static int kimi_segment_spans(
 }
 
 static int kimi_segment_session_snapshot(
-    void *session_impl, ColiSegmentWriteFn write_fn, void *write_user_data,
+    void *session_impl, LmaSegmentWriteFn write_fn, void *write_user_data,
     char *error, size_t error_size) {
     KimiSegmentSession *session = (KimiSegmentSession *)session_impl;
-    ColiSegmentStateSpan *spans = NULL;
+    LmaSegmentStateSpan *spans = NULL;
     size_t count = 0, payload_bytes;
     if (!session || kimi_segment_spans(session, session->position, &spans,
                                        &count, error, error_size))
         return -1;
-    if (coli_segment_spans_size(spans, count, &payload_bytes)) {
+    if (lma_segment_spans_size(spans, count, &payload_bytes)) {
         free(spans);
-        return coli_segment_adapter_error(error, error_size,
+        return lma_segment_adapter_error(error, error_size,
                                            "Kimi snapshot size overflow");
     }
-    ColiSegmentSnapshotHeader header;
-    coli_segment_snapshot_header_init(
+    LmaSegmentSnapshotHeader header;
+    lma_segment_snapshot_header_init(
         &header, "kimi", session->engine->layer_begin,
         session->engine->layer_end, session->context_tokens, session->position,
-        payload_bytes, coli_segment_spans_hash(spans, count));
-    int result = coli_segment_stream_write(
+        payload_bytes, lma_segment_spans_hash(spans, count));
+    int result = lma_segment_stream_write(
         write_fn, write_user_data, &header, sizeof(header), error, error_size);
     if (!result)
-        result = coli_segment_spans_write(spans, count, write_fn,
+        result = lma_segment_spans_write(spans, count, write_fn,
                                           write_user_data, error, error_size);
     free(spans);
     return result;
 }
 
 static int kimi_segment_session_restore(
-    void *session_impl, ColiSegmentReadFn read_fn, void *read_user_data,
+    void *session_impl, LmaSegmentReadFn read_fn, void *read_user_data,
     char *error, size_t error_size) {
     KimiSegmentSession *session = (KimiSegmentSession *)session_impl;
-    ColiSegmentSnapshotHeader header;
-    if (!session || coli_segment_stream_read(read_fn, read_user_data, &header,
+    LmaSegmentSnapshotHeader header;
+    if (!session || lma_segment_stream_read(read_fn, read_user_data, &header,
                                              sizeof(header), error, error_size))
         return -1;
-    ColiSegmentStateSpan *spans = NULL;
+    LmaSegmentStateSpan *spans = NULL;
     size_t count = 0, payload_bytes;
     if (kimi_segment_spans(session, header.position, &spans, &count,
                            error, error_size)) return -1;
-    if (coli_segment_spans_size(spans, count, &payload_bytes) ||
-        coli_segment_snapshot_header_valid(
+    if (lma_segment_spans_size(spans, count, &payload_bytes) ||
+        lma_segment_snapshot_header_valid(
             &header, "kimi", session->engine->layer_begin,
             session->engine->layer_end, session->context_tokens,
             payload_bytes, error, error_size)) {
         free(spans); return -1;
     }
-    int result = coli_segment_spans_restore(
+    int result = lma_segment_spans_restore(
         spans, count, header.payload_hash, read_fn, read_user_data,
         error, error_size);
     free(spans);
@@ -3978,20 +3978,20 @@ static int kimi_segment_session_restore(
     return result;
 }
 
-static const ColiSegmentAdapter kimi_segment_adapter = {
-    sizeof(ColiSegmentAdapter), COLI_SEGMENT_ABI_VERSION, "kimi",
+static const LmaSegmentAdapter kimi_segment_adapter = {
+    sizeof(LmaSegmentAdapter), LMA_SEGMENT_ABI_VERSION, "kimi",
     kimi_segment_engine_open, kimi_segment_engine_destroy,
     kimi_segment_session_create, kimi_segment_session_destroy,
     kimi_segment_session_run, kimi_segment_session_snapshot,
     kimi_segment_session_restore, {0}
 };
 
-int coli_kimi_segment_adapter_register(void) {
-    return coli_segment_adapter_register(&kimi_segment_adapter);
+int lma_kimi_segment_adapter_register(void) {
+    return lma_segment_adapter_register(&kimi_segment_adapter);
 }
-#endif /* COLI_SEGMENT_ADAPTER */
+#endif /* LMA_SEGMENT_ADAPTER */
 
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 /* ---------- engine-owned model Edge adapter --------------------------- */
 
 typedef struct {
@@ -4026,19 +4026,19 @@ static void kimi_edge_engine_destroy(void *engine_impl) {
 }
 
 static int kimi_edge_engine_open(
-    void **engine_impl, ColiEdgeCapabilities *capabilities,
-    const ColiEdgeEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaEdgeCapabilities *capabilities,
+    const LmaEdgeEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "invalid Kimi K3 Edge open");
     *engine_impl = NULL;
     if (options->backend_mask &&
-        (options->backend_mask & ~COLI_EDGE_CAP_CPU))
-        return coli_edge_adapter_error(error, error_size,
+        (options->backend_mask & ~LMA_EDGE_CAP_CPU))
+        return lma_edge_adapter_error(error, error_size,
                                        "Kimi K3 Edge supports CPU only");
     KimiEdgeEngine *engine = calloc(1, sizeof(*engine));
     if (!engine)
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "out of memory opening Kimi K3 Edge");
     Model *model = &engine->model;
     load_cfg(&model->c, options->model_dir);
@@ -4054,7 +4054,7 @@ static int kimi_edge_engine_open(
     uint64_t state_width = (1u + nbmax) * (uint64_t)config->hidden;
     if (!nbmax || state_width > UINT32_MAX) {
         kimi_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "Kimi K3 boundary state is too wide");
     }
     engine->nbmax = (uint32_t)nbmax;
@@ -4068,7 +4068,7 @@ static int kimi_edge_engine_open(
     snprintf(name, sizeof(name), "%smodel.norm.weight", model->pfx);
     if (!st_has(&model->S, name)) {
         kimi_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "Kimi K3 final head is not present");
     }
     model->has_head = 1;
@@ -4092,31 +4092,31 @@ static int kimi_edge_engine_open(
                         2u * (uint64_t)config->hidden * sizeof(float);
     if (options->memory_limit_bytes && resident > options->memory_limit_bytes) {
         kimi_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error, error_size,
+        return lma_edge_adapter_error(error, error_size,
                                        "Kimi K3 Edge exceeds memory limit");
     }
     int bits = getenv("K3_BITS") ? atoi(getenv("K3_BITS")) : 4;
     int mla_bits = getenv("K3_MLA_BITS") ? atoi(getenv("K3_MLA_BITS")) : 8;
     memset(capabilities, 0, sizeof(*capabilities));
     capabilities->struct_size = sizeof(*capabilities);
-    capabilities->abi_version = COLI_EDGE_ABI_VERSION;
-    capabilities->flags = COLI_EDGE_CAP_TOKENIZE |
-                          COLI_EDGE_CAP_DETOKENIZE |
-                          COLI_EDGE_CAP_GREEDY | COLI_EDGE_CAP_LOGITS |
-                          COLI_EDGE_CAP_CPU;
-    coli_edge_capability_string(capabilities->engine_id,
+    capabilities->abi_version = LMA_EDGE_ABI_VERSION;
+    capabilities->flags = LMA_EDGE_CAP_TOKENIZE |
+                          LMA_EDGE_CAP_DETOKENIZE |
+                          LMA_EDGE_CAP_GREEDY | LMA_EDGE_CAP_LOGITS |
+                          LMA_EDGE_CAP_CPU;
+    lma_edge_capability_string(capabilities->engine_id,
                                 sizeof(capabilities->engine_id), "kimi");
-    coli_edge_capability_string(capabilities->state_schema,
+    lma_edge_capability_string(capabilities->state_schema,
                                 sizeof(capabilities->state_schema),
                                 "kimi-k3/attnres-kda-mla-dsa-f32-v1");
     snprintf(capabilities->numeric_class,
              sizeof(capabilities->numeric_class),
              "kimi-k3/q%d-mla%d-mxfp4-idot%d/f32/cpu-v1",
              bits, mla_bits, g_k3_idot != 0);
-    coli_edge_capability_string(capabilities->tokenizer_class,
+    lma_edge_capability_string(capabilities->tokenizer_class,
                                 sizeof(capabilities->tokenizer_class),
                                 "kimi-k3/rank-byte-bpe-v1");
-    capabilities->state_dtype = COLI_EDGE_DTYPE_F32;
+    capabilities->state_dtype = LMA_EDGE_DTYPE_F32;
     capabilities->state_width = engine->state_width;
     capabilities->vocab_size = (uint32_t)config->vocab;
     capabilities->max_batch_rows = 128;
@@ -4134,7 +4134,7 @@ static int kimi_edge_tokenize(
     int32_t *token_ids, size_t token_capacity, size_t *token_count,
     char *error, size_t error_size) {
     KimiEdgeEngine *engine = (KimiEdgeEngine *)engine_impl;
-    return coli_edge_tok_tokenize(&engine->tokenizer, text, text_bytes,
+    return lma_edge_tok_tokenize(&engine->tokenizer, text, text_bytes,
                                   token_ids, token_capacity, token_count,
                                   error, error_size);
 }
@@ -4144,13 +4144,13 @@ static int kimi_edge_detokenize(
     char *text, size_t text_capacity, size_t *text_bytes,
     char *error, size_t error_size) {
     KimiEdgeEngine *engine = (KimiEdgeEngine *)engine_impl;
-    return coli_edge_tok_detokenize(&engine->tokenizer, token_ids, token_count,
+    return lma_edge_tok_detokenize(&engine->tokenizer, token_ids, token_count,
                                     text, text_capacity, text_bytes,
                                     error, error_size);
 }
 
 static int kimi_edge_embed(void *engine_impl,
-                           const ColiEdgeEmbedRequest *request,
+                           const LmaEdgeEmbedRequest *request,
                            char *error, size_t error_size) {
     KimiEdgeEngine *engine = (KimiEdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -4161,7 +4161,7 @@ static int kimi_edge_embed(void *engine_impl,
     for (uint32_t row = 0; row < request->rows; row++) {
         int token = request->token_ids[row];
         if (token < 0 || token >= config->vocab)
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Kimi K3 token ID is out of range");
         float *state = output + (size_t)row * engine->state_width;
         memset(state, 0, (size_t)engine->state_width * sizeof(float));
@@ -4173,7 +4173,7 @@ static int kimi_edge_embed(void *engine_impl,
 }
 
 static int kimi_edge_select(void *engine_impl,
-                            const ColiEdgeSelectRequest *request,
+                            const LmaEdgeSelectRequest *request,
                             char *error, size_t error_size) {
     KimiEdgeEngine *engine = (KimiEdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -4184,7 +4184,7 @@ static int kimi_edge_select(void *engine_impl,
         if (request->should_cancel &&
             request->should_cancel(request->cancel_user_data)) {
             free(logits); free(mixed);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Kimi K3 Edge selection cancelled");
         }
         const float *state = input + (size_t)row * engine->state_width;
@@ -4194,11 +4194,11 @@ static int kimi_edge_select(void *engine_impl,
         rmsnorm_(mixed, mixed, engine->model.final_norm,
                  config->hidden, config->eps);
         w_matmul(logits, mixed, &engine->model.lm_head, 1);
-        if (coli_edge_argmax(logits, (uint32_t)config->vocab,
+        if (lma_edge_argmax(logits, (uint32_t)config->vocab,
                             &request->token_ids[row],
                             request->scores ? &request->scores[row] : NULL)) {
             free(logits); free(mixed);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Kimi K3 Edge head failed");
         }
     }
@@ -4207,7 +4207,7 @@ static int kimi_edge_select(void *engine_impl,
 }
 
 static int kimi_edge_logits(void *engine_impl,
-                            const ColiEdgeLogitsRequest *request,
+                            const LmaEdgeLogitsRequest *request,
                             char *error, size_t error_size) {
     KimiEdgeEngine *engine = (KimiEdgeEngine *)engine_impl;
     Cfg *config = &engine->model.c;
@@ -4217,7 +4217,7 @@ static int kimi_edge_logits(void *engine_impl,
         if (request->should_cancel &&
             request->should_cancel(request->cancel_user_data)) {
             free(mixed);
-            return coli_edge_adapter_error(error, error_size,
+            return lma_edge_adapter_error(error, error_size,
                                            "Kimi K3 Edge logits cancelled");
         }
         const float *state = input + (size_t)row * engine->state_width;
@@ -4233,14 +4233,14 @@ static int kimi_edge_logits(void *engine_impl,
     return 0;
 }
 
-static const ColiEdgeAdapter kimi_edge_adapter = {
-    sizeof(ColiEdgeAdapter), COLI_EDGE_ABI_VERSION, "kimi",
+static const LmaEdgeAdapter kimi_edge_adapter = {
+    sizeof(LmaEdgeAdapter), LMA_EDGE_ABI_VERSION, "kimi",
     kimi_edge_engine_open, kimi_edge_engine_destroy,
     kimi_edge_tokenize, kimi_edge_detokenize,
     kimi_edge_embed, kimi_edge_select, kimi_edge_logits, {0}
 };
 
-int coli_kimi_edge_adapter_register(void) {
-    return coli_edge_adapter_register(&kimi_edge_adapter);
+int lma_kimi_edge_adapter_register(void) {
+    return lma_edge_adapter_register(&kimi_edge_adapter);
 }
-#endif /* COLI_EDGE_ADAPTER */
+#endif /* LMA_EDGE_ADAPTER */

@@ -9,8 +9,8 @@
  * No model, no GPU: exercises the predicate on a hand-built slot. */
 #include <assert.h>
 #include <string.h>
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 int main(void) {

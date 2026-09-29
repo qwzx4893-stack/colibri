@@ -9,7 +9,7 @@ CPU so `make_dsv41_tiny.py` can emit a token-exact reference the C engine is hel
 Everything here mirrors a named piece of the vendor file; where the two could drift the
 vendor's line is quoted. Deviations that are deliberate:
 
-- fp32 everywhere. The vendor keeps activations in bf16 between sublayers; colibri's
+- fp32 everywhere. The vendor keeps activations in bf16 between sublayers; lmatomic's
   engines carry fp32. On the tiny fixture the two agree token-for-token, and fp32 is
   what the C side has to reproduce, so the oracle is written in it.
 - weights are dequantized once, up front, exactly as the engine dequantizes them
@@ -83,7 +83,7 @@ def fp4_quant_rowgroups(w: torch.Tensor, group: int = 32):
 
     Returns (packed [O, I/2] uint8, scale [O, I/group] uint8). This is the released
     expert layout: `ffn.experts.0.w1.weight I8 [2304, 2560]` for a [2304, 5120] matrix
-    beside `w1.scale F8_E8M0 [2304, 160]`, and it is also colibri's existing mxfp4
+    beside `w1.scale F8_E8M0 [2304, 160]`, and it is also lmatomic's existing mxfp4
     layout, so `matmul_mxfp4` in quant.h reads it unchanged.
 
     LOW nibble = even column, exactly as quant.h documents and as torch's

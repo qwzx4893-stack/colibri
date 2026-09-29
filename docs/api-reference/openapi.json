@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "colibrì HTTP API",
+    "title": "LM Atomic HTTP API",
     "version": "1.0.0",
     "description": "OpenAI- and Anthropic-compatible inference endpoints plus local scheduler and dashboard telemetry."
   },
@@ -36,7 +36,7 @@
           "200": {
             "description": "A JSON completion or an SSE stream when `stream` is true.",
             "headers": {
-              "x-colibri-queue-wait-ms": {
+              "x-lmatomic-queue-wait-ms": {
                 "description": "Milliseconds spent waiting for the engine admission queue.",
                 "schema": { "type": "number" }
               }
@@ -203,7 +203,7 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "The value configured with `COLI_API_KEY` or `--api-key`."
+        "description": "The value configured with `LMA_API_KEY` or `--api-key`."
       },
       "apiKeyAuth": {
         "type": "apiKey",
@@ -233,7 +233,7 @@
         "type": "object",
         "required": ["model", "messages"],
         "properties": {
-          "model": { "type": "string", "example": "glm-5.2-colibri" },
+          "model": { "type": "string", "example": "glm-5.2-lmatomic" },
           "messages": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/ChatMessage" } },
           "stream": { "type": "boolean", "default": false },
           "stream_options": { "type": "object", "properties": { "include_usage": { "type": "boolean" } } },
@@ -250,9 +250,9 @@
           "tools": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
           "tool_choice": { "oneOf": [{ "type": "string" }, { "type": "object", "additionalProperties": true }] },
           "reasoning_effort": { "type": "string" },
-          "enable_thinking": { "type": "boolean", "description": "colibrì extension for model reasoning output." },
-          "cache_slot": { "type": "integer", "minimum": 0, "maximum": 15, "description": "colibrì extension selecting an isolated KV context." },
-          "x_colibri_ignore_leading_stop": { "type": "boolean", "description": "Ignore leading stop markers until non-whitespace output begins." }
+          "enable_thinking": { "type": "boolean", "description": "LM Atomic extension for model reasoning output." },
+          "cache_slot": { "type": "integer", "minimum": 0, "maximum": 15, "description": "LM Atomic extension selecting an isolated KV context." },
+          "x_lmatomic_ignore_leading_stop": { "type": "boolean", "description": "Ignore leading stop markers until non-whitespace output begins." }
         }
       },
       "CompletionRequest": {

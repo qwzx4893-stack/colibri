@@ -4,7 +4,7 @@ The gateway maps one engine frame to the OpenAI error clients act on:
 `ERROR <id> CONTEXT_EXCEEDED ...` (#506, both spellings since #1381). OLMoE
 refused an over-long prompt with free text instead,
 `ERROR <id> context exceeds CTX (30 + 4 > 16)`, which the gateway can only
-treat as an engine fault: HTTP 500 "The colibri engine failed to process the
+treat as an engine fault: HTTP 500 "The lmatomic engine failed to process the
 request.", streaming or not. A client that compacts its conversation on
 context_length_exceeded never gets the chance to.
 
@@ -21,7 +21,7 @@ from openai_server import APIError, _engine_error
 
 HERE = Path(__file__).resolve().parent.parent
 ENGINE = HERE / ("olmoe.exe" if os.name == "nt" else "olmoe")
-FIXTURE = Path(os.environ.get("COLI_OLMOE_FIXTURE", ""))
+FIXTURE = Path(os.environ.get("LMA_OLMOE_FIXTURE", ""))
 CTX = 16
 MAX_TOKENS = 4
 
@@ -62,7 +62,7 @@ def serve_turn(prompt):
 
 @unittest.skipUnless(ENGINE.exists(), "olmoe engine is not built")
 @unittest.skipUnless(FIXTURE.name and (FIXTURE / "config.json").is_file(),
-                     "COLI_OLMOE_FIXTURE not set to a converted OLMoE container")
+                     "LMA_OLMOE_FIXTURE not set to a converted OLMoE container")
 class OlmoeContextExceededTest(unittest.TestCase):
     OVER_LONG = b"abc" * 10          # 30 byte-level tokens, 30 + 4 > CTX
 

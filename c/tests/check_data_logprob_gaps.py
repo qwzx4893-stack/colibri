@@ -19,7 +19,7 @@ Run recipe (orchestrator; needs a real model -- CPU or explicit-CUDA build):
     # single KV slot + model drafts live = the speculative serve regime
     cd c && make glm
     SERVE=1 SERVE_BATCH=1 KV_SLOTS=1 DRAFT=2 CTX=4096 \
-        ./colibri <snapshot-dir> < submit.raw | tee engine_stdout.raw
+        ./glm52 <snapshot-dir> < submit.raw | tee engine_stdout.raw
 
   where submit.raw contains one opted-in generation request, e.g. (prompt
   "Hello" = 5 payload bytes, 64 new tokens, greedy, logprobs top-5):
@@ -77,7 +77,7 @@ Checks performed:
     logprob is not finite/non-positive", quoting the exact token and
     byte offset) instead of a generic "matches neither form" failure --
     it is not an accepted value, just a diagnosed one. On today's engine
-    (colibri.c) this is also not a normal, tolerable outcome to shrug
+    (glm52.c) this is also not a normal, tolerable outcome to shrug
     off: grammar-constrained decoding (GRAMMAR=/SCHEMA=, method F)
     proposes speculative draft tokens verified against the model's own
     unmasked distribution and never zeroes or -inf's any vocabulary

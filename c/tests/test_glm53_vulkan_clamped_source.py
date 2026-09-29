@@ -19,11 +19,11 @@ class Glm53VulkanClampedSourceTests(unittest.TestCase):
 
     def test_host_push_constant_carries_limit(self):
         self.assertIn("struct PCGU", SRC)
-        self.assertIn("coli_vk_set_swiglu_limit", HDR)
+        self.assertIn("lma_vk_set_swiglu_limit", HDR)
         self.assertIn("sizeof(struct PCGU)", SRC)
 
     def test_glm53_publishes_its_checkpoint_limit(self):
-        self.assertIn("coli_vk_set_swiglu_limit(m->c.swiglu_limit)", GLM)
+        self.assertIn("lma_vk_set_swiglu_limit(m->c.swiglu_limit)", GLM)
 
     def test_zero_limit_keeps_unclamped_path(self):
         self.assertIn("g_swiglu_limit = limit > 0.f ? limit : 0.f", SRC)

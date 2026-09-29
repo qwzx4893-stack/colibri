@@ -1,6 +1,6 @@
 /* GLM config must not select more routed experts than the model contains. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 #ifndef _WIN32
 #include <sys/wait.h>

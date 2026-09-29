@@ -6,7 +6,7 @@ tests/test_stops.c and tests/test_pipe_block.c both carry the rule in the
 source: 'Relative to the CWD [...] NOT "/tmp/..."', because the windows job
 builds native .exe files that resolve Windows paths, "/tmp" is not one, and
 "the whole `make check` goes red on the windows job (and only there)".
-setup.sh was moved off its own /tmp probe to OMP_PROBE=".colibri-omp-probe-$$"
+setup.sh was moved off its own /tmp probe to OMP_PROBE=".lmatomic-omp-probe-$$"
 for the same reason, and test_cuda_test_makefile.py's
 test_setup_openmp_probe_does_not_require_tmp pins it there. This file is that
 same pin for tools/k3_tokenizer.py.

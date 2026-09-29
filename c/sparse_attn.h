@@ -23,8 +23,8 @@
  * Header-only, all static, no dependency beyond immintrin -- the quant.h and
  * fused_simd.h convention.
  */
-#ifndef COLI_SPARSE_ATTN_H
-#define COLI_SPARSE_ATTN_H
+#ifndef LMA_SPARSE_ATTN_H
+#define LMA_SPARSE_ATTN_H
 
 #include <math.h>
 #include <stddef.h>
@@ -33,7 +33,7 @@
 #include <immintrin.h>
 
 /* named apart from quant.h's hsum256: this header stands alone */
-static inline float coli_sa_hsum(__m256 v) {
+static inline float lma_sa_hsum(__m256 v) {
     __m128 low = _mm256_castps256_ps128(v);
     __m128 high = _mm256_extractf128_ps(v, 1);
     low = _mm_add_ps(low, high);
@@ -45,7 +45,7 @@ static inline float coli_sa_hsum(__m256 v) {
 
 /* The reading of the kernel, one multiply at a time. Kept because it is what the
  * vector path is checked against, and because a machine without AVX2 runs it. */
-static inline void coli_sparse_attend_scalar(float *out, const float *q, const float *kv,
+static inline void lma_sparse_attend_scalar(float *out, const float *q, const float *kv,
                                              const int *idx, int count, int hd,
                                              float sink, float scale, float *score) {
     float best = -1e30f;
@@ -69,11 +69,11 @@ static inline void coli_sparse_attend_scalar(float *out, const float *q, const f
     for (int i = 0; i < hd; i++) out[i] /= denom;
 }
 
-static inline void coli_sparse_attend(float *out, const float *q, const float *kv,
+static inline void lma_sparse_attend(float *out, const float *q, const float *kv,
                                       const int *idx, int count, int hd,
                                       float sink, float scale, float *score) {
 #if !defined(__AVX2__)
-    coli_sparse_attend_scalar(out, q, kv, idx, count, hd, sink, scale, score);
+    lma_sparse_attend_scalar(out, q, kv, idx, count, hd, sink, scale, score);
 #else
     float best = -1e30f;
     for (int j = 0; j < count; j++) {
@@ -90,7 +90,7 @@ static inline void coli_sparse_attend(float *out, const float *q, const float *k
         }
         for (; i + 8 <= hd; i += 8)
             a0 = _mm256_fmadd_ps(_mm256_loadu_ps(q + i), _mm256_loadu_ps(k + i), a0);
-        float dot = coli_sa_hsum(_mm256_add_ps(_mm256_add_ps(a0, a1), _mm256_add_ps(a2, a3)));
+        float dot = lma_sa_hsum(_mm256_add_ps(_mm256_add_ps(a0, a1), _mm256_add_ps(a2, a3)));
         for (; i < hd; i++) dot += q[i] * k[i];
         score[j] = dot * scale;
         if (score[j] > best) best = score[j];
@@ -119,4 +119,4 @@ static inline void coli_sparse_attend(float *out, const float *q, const float *k
 #endif
 }
 
-#endif /* COLI_SPARSE_ATTN_H */
+#endif /* LMA_SPARSE_ATTN_H */

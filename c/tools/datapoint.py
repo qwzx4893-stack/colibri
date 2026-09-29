@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""datapoint.py - run the standard cross-engine colibri datapoint.
+"""datapoint.py - run the standard cross-engine lmatomic datapoint.
 
 The default ``persistent`` mode starts one engine through the shared mux
 ``SERVE=1`` protocol and keeps it alive for the complete campaign: one cold
 request, a repeated-prompt warm upper bound, then a deterministic rotation of
 different prompts as the primary serving workload.  Expert, KV, GPU-residency
-and allocator state therefore survive exactly as they do in ``coli serve``,
+and allocator state therefore survive exactly as they do in ``lmatomic serve``,
 without letting one repeated prompt define the headline result.  The engine's
 DONE frame supplies the real completion count, decode tok/s, expert hit rate
 and RSS; no output re-tokenization is needed.
@@ -246,9 +246,9 @@ def physical_core_count():
 def _persistent_executable(runtime, family, engine):
     if engine:
         name = os.path.basename(engine).lower()
-        if name in ("coli", "coli.exe", "coli-wrapper", "coli-wrapper.exe"):
+        if name in ("lmatomic", "lmatomic.exe", "lmatomic-wrapper", "lmatomic-wrapper.exe"):
             raise ValueError(
-                "persistent mode needs an engine binary, not the coli wrapper; "
+                "persistent mode needs an engine binary, not the lmatomic wrapper; "
                 "omit --engine to select the model family's engine automatically"
             )
         path = Path(engine).expanduser()
@@ -264,12 +264,12 @@ def _persistent_executable(runtime, family, engine):
 
 
 def _persistent_environment(family, max_new, memory_gb, physical_cores):
-    env = dict(os.environ, COLI_TEMP="0", MAX_NEW=str(max_new), NGEN=str(max_new))
+    env = dict(os.environ, LMA_TEMP="0", MAX_NEW=str(max_new), NGEN=str(max_new))
     if memory_gb is not None:
         env["RAM_GB"] = f"{memory_gb:g}"
-    # Match the public coli launcher: sister engines use physical cores; V4's
+    # Match the public lmatomic launcher: sister engines use physical cores; V4's
     # runtime deliberately owns its compute/loader split (#897/#958).
-    if (family.id != "deepseek_v4" and not env.get("COLI_NO_OMP_TUNE") and
+    if (family.id != "deepseek_v4" and not env.get("LMA_NO_OMP_TUNE") and
             physical_cores):
         env.setdefault("OMP_NUM_THREADS", str(physical_cores))
     return env
@@ -425,14 +425,14 @@ def run_fresh_engine(engine, snap, prompt, max_new, runs, cap, bits, memory_gb=N
     engine_name = os.path.basename(engine).lower()
 
     for i in range(runs):
-        env = dict(os.environ, CHAT="1", COLI_TEMP="0", MAX_NEW=str(max_new),
+        env = dict(os.environ, CHAT="1", LMA_TEMP="0", MAX_NEW=str(max_new),
                    N_NEW=str(max_new), SNAP=snap)
         t0 = time.monotonic()
         prompt_path = None
 
         # Support modern engines and CLI wrappers
-        # Exact basename check so 'colibri' isn't misclassified as 'coli-wrapper'
-        if engine_name in ("coli", "coli-wrapper"):
+        # Exact basename check so 'lmatomic' isn't misclassified as 'lmatomic-wrapper'
+        if engine_name in ("lmatomic", "lmatomic-wrapper"):
             cmd = [engine, "run", "--model", snap, prompt, "--ngen", str(max_new)]
             stdin_input = None
         elif "deepseek" in engine_name:
@@ -453,7 +453,7 @@ def run_fresh_engine(engine, snap, prompt, max_new, runs, cap, bits, memory_gb=N
             cmd = [engine, str(cap), str(bits), prompt_path]
             stdin_input = None
         else:
-            # Legacy positional engines (olmoe, inkling, colibri)
+            # Legacy positional engines (olmoe, inkling, lmatomic)
             cmd = [engine, str(cap), str(bits)]
             stdin_input = prompt + "\n"
 
@@ -659,7 +659,7 @@ def format_report(info, args, campaign, cold_label, disk):
 
     count_note = ("actual counts from engine" if campaign["mode"] == "persistent"
                   else "legacy count inference")
-    out += ["", f"**Decode (COLI_TEMP=0, capped at {args.max_new} tokens; "
+    out += ["", f"**Decode (LMA_TEMP=0, capped at {args.max_new} tokens; "
             f"{count_note}):**", "",
             "| phase | prompt tok | completion tok | request s | TTFT s | decode tok/s | hit | RSS |",
             "|---|---:|---:|---:|---:|---:|---:|---:|"]

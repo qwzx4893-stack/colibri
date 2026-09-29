@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Build / validate a DeepSeek V4 oracle fixture for colibri.
+"""Build / validate a DeepSeek V4 oracle fixture for lmatomic.
 
 This is intentional heavy validation — not part of light `make check`.
 
 Comparison contract (documented in the JSON and docs/deepseek-v4.md):
   - top-1 token exact match for teacher-forcing and greedy windows
   - logits max-abs / top-k ranking are reserved for a future transformers
-    oracle (`source=transformers`); coli-self fixtures only claim token match
+    oracle (`source=transformers`); lmatomic-self fixtures only claim token match
 
 Preferred source when transformers + DeepseekV4ForCausalLM are available:
   record reference tokens from the official implementation.
 
 Fallback (current default on most machines):
-  drive the target-only C engine with --record-oracle (source=coli-self).
+  drive the target-only C engine with --record-oracle (source=lmatomic-self).
   That proves reproducibility, not bit-exact parity with Hugging Face.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ def try_transformers_oracle(model: str, prompt: str, max_new: int) -> dict | Non
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
     except Exception as exc:  # noqa: BLE001 — optional dependency
-        print(f"[oracle] transformers unavailable ({exc}); using coli-self",
+        print(f"[oracle] transformers unavailable ({exc}); using lmatomic-self",
               file=sys.stderr)
         return None
 
@@ -40,11 +40,11 @@ def try_transformers_oracle(model: str, prompt: str, max_new: int) -> dict | Non
             model, trust_remote_code=True, torch_dtype=torch.bfloat16
         ).eval()
     except Exception as exc:  # noqa: BLE001
-        print(f"[oracle] cannot load HF DeepSeek V4 ({exc}); using coli-self",
+        print(f"[oracle] cannot load HF DeepSeek V4 ({exc}); using lmatomic-self",
               file=sys.stderr)
         return None
 
-    # Match colibri's default non-thinking chat template as closely as practical.
+    # Match lmatomic's default non-thinking chat template as closely as practical.
     encoded = tokenizer(prompt, return_tensors="pt")
     prompt_ids = encoded["input_ids"][0].tolist()
     with torch.no_grad():
@@ -77,7 +77,7 @@ def run_c(binary: Path, args: list[str], env: dict | None = None) -> subprocess.
     return subprocess.run(cmd, check=False, env=merged)
 
 
-def coli_self_oracle(
+def lma_self_oracle(
     binary: Path,
     model: str,
     prompt: str,
@@ -91,7 +91,7 @@ def coli_self_oracle(
         args.extend(["--memory-gb", str(memory_gb)])
     proc = run_c(binary, args)
     if proc.returncode != 0:
-        raise SystemExit(f"coli-self record failed with exit {proc.returncode}")
+        raise SystemExit(f"lmatomic-self record failed with exit {proc.returncode}")
     return json.loads(output.read_text(encoding="utf-8"))
 
 
@@ -134,7 +134,7 @@ def main() -> int:
     parser.add_argument(
         "--prefer-transformers",
         action="store_true",
-        help="Try Hugging Face first; fall back to coli-self on failure",
+        help="Try Hugging Face first; fall back to lmatomic-self on failure",
     )
     args = parser.parse_args()
 
@@ -160,10 +160,10 @@ def main() -> int:
             print(f"[oracle] wrote transformers fixture → {output}", file=sys.stderr)
 
     if fixture is None:
-        fixture = coli_self_oracle(
+        fixture = lma_self_oracle(
             binary, args.model, args.prompt, output, args.max_new, args.memory_gb
         )
-        print(f"[oracle] wrote coli-self fixture → {output}", file=sys.stderr)
+        print(f"[oracle] wrote lmatomic-self fixture → {output}", file=sys.stderr)
 
     if not args.validate:
         return 0

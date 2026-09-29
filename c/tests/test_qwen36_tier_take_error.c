@@ -1,11 +1,11 @@
 /* A failed device must not silently drop an expert or publish a partial sum. */
 #include <stdio.h>
-#define coli_cuda_expert_group_take fixture_take
+#define lma_cuda_expert_group_take fixture_take
 #include "qwen36_fake_cuda.h"
-#undef coli_cuda_expert_group_take
+#undef lma_cuda_expert_group_take
 static int failed=-1, calls[2];
 static float rows[2][2]={{2,4},{8,12}};
-const float *coli_cuda_expert_group_take(int device) {
+const float *lma_cuda_expert_group_take(int device) {
     calls[device]++;
     return device==failed?NULL:rows[device];
 }

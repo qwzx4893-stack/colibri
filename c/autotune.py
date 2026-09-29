@@ -1,4 +1,4 @@
-"""Measured, quality-preserving execution tuning for colibri.
+"""Measured, quality-preserving execution tuning for lmatomic.
 
 The tuner changes execution scheduling only.  It never sweeps quantization,
 expert selection, sampling, or model weights.  GLM uses its fixed-token replay
@@ -24,11 +24,11 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 PROMPT_RE = re.compile(r"\[PROMPT_TOKENS\]\s+\d+:\s*([0-9 ]+)")
 TOKENS_RE = re.compile(r"\[TOKENS\]\s+\d+\s+generated:\s*([0-9 ]+)")
-# Two shapes, one meaning. colibri emits the richer REPLAY line from its fixed
+# Two shapes, one meaning. lmatomic emits the richer REPLAY line from its fixed
 # oracle replay; the sibling engines emit `TUNE decode: N tokens in T.TTTs` at
 # the end of an ordinary greedy run, which is deterministic for a fixed prompt
 # and NGEN and therefore comparable across candidates. Accepting both is what
-# lets `coli tune` work on more than GLM (#898).
+# lets `lmatomic tune` work on more than GLM (#898).
 TIMING_RE = re.compile(r"(?:REPLAY|TUNE) decode:\s+(\d+)\s+tokens in\s+([0-9.]+)s")
 SPEED_RE = re.compile(r"REPLAY decode:\s+\d+\s+tokens.*?\|\s*([0-9.]+)\s+tok/s")
 HIT_RE = re.compile(r"expert hit\s+([0-9.]+)%")
@@ -37,8 +37,8 @@ LATENCY_RE = re.compile(r"latency p50\s+([0-9.]+)\s*ms.*?p99\s+([0-9.]+)\s*ms")
 # Only scheduling / placement knobs belong here.  Quality-affecting knobs such
 # as TOPK, TOPP, DRAFT, quantization and CACHE_ROUTE are intentionally excluded.
 TUNABLE_KEYS = frozenset({
-    "OMP_NUM_THREADS", "COLI_NUMA", "PIPE", "DIRECT",
-    "COLI_CUDA_PIPE", "COLI_CUDA_ASYNC", "V4_LOADER_LANES",
+    "OMP_NUM_THREADS", "LMA_NUMA", "PIPE", "DIRECT",
+    "LMA_CUDA_PIPE", "LMA_CUDA_ASYNC", "V4_LOADER_LANES",
     "RAM_GB", "K3_EXPERT_GB",
 })
 
@@ -50,9 +50,9 @@ def _config_path(profile_dir: str | None, fingerprint: str) -> Path:
     if profile_dir:
         root = Path(profile_dir).expanduser()
     elif os.name == "nt":
-        root = Path(os.environ.get("LOCALAPPDATA", "~/AppData/Local")).expanduser() / "colibri" / "tuning"
+        root = Path(os.environ.get("LOCALAPPDATA", "~/AppData/Local")).expanduser() / "lmatomic" / "tuning"
     else:
-        root = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser() / "colibri" / "tuning"
+        root = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser() / "lmatomic" / "tuning"
     return root / f"{fingerprint}.json"
 
 
@@ -179,31 +179,31 @@ def candidate_steps(plan: dict, base_env: dict, arch: str = "glm") -> list[tuple
 
     `arch` gates the knobs that are not universal. OMP_NUM_THREADS is read by
     every engine (it is OpenMP, not an engine feature), so it is always
-    eligible. COLI_NUMA is not: it is colibri.c's own mbind of its expert slabs,
-    and no other engine reads it. PIPE and DIRECT are read by colibri alone --
-    `grep -c 'getenv("PIPE")'` is 3 in colibri.c and 0 in the other four -- so
+    eligible. LMA_NUMA is not: it is glm52.c's own mbind of its expert slabs,
+    and no other engine reads it. PIPE and DIRECT are read by lmatomic alone --
+    `grep -c 'getenv("PIPE")'` is 3 in glm52.c and 0 in the other four -- so
     offering them elsewhere would sweep candidates that cannot differ, spend the
     replay budget proving it, and report a 0% gain as if it were a measurement
     (#898)."""
     steps = []
     cores = max(1, int(plan.get("cpu", {}).get("physical_cores", os.cpu_count() or 1)))
     current_threads = int(base_env.get("OMP_NUM_THREADS", cores))
-    if not base_env.get("COLI_NO_OMP_TUNE"):
+    if not base_env.get("LMA_NO_OMP_TUNE"):
         for threads in dict.fromkeys((cores, max(1, cores // 2))):
             if threads != current_threads:
                 steps.append((f"omp-{threads}", {"OMP_NUM_THREADS": str(threads)}))
     sockets = int(plan.get("cpu", {}).get("sockets", 1))
-    if sockets > 1 and arch == "glm" and base_env.get("COLI_NUMA") != "1":
-        steps.append(("numa-on", {"COLI_NUMA": "1"}))
+    if sockets > 1 and arch == "glm" and base_env.get("LMA_NUMA") != "1":
+        steps.append(("numa-on", {"LMA_NUMA": "1"}))
     has_gpu = bool(plan.get("tiers", {}).get("vram", {}).get("devices"))
-    # Same rule for the CUDA knobs: COLI_CUDA_PIPE is read in colibri.c only,
-    # and COLI_CUDA_ASYNC only on the grouped-expert call colibri.c makes.
+    # Same rule for the CUDA knobs: LMA_CUDA_PIPE is read in glm52.c only,
+    # and LMA_CUDA_ASYNC only on the grouped-expert call glm52.c makes.
     if has_gpu and arch == "glm":
-        pipe = int(base_env.get("COLI_CUDA_PIPE", "0"))
+        pipe = int(base_env.get("LMA_CUDA_PIPE", "0"))
         for value in (1, 2):
             if value != pipe:
-                steps.append((f"cuda-pipe-{value}", {"COLI_CUDA_PIPE": str(value)}))
-        steps.append(("cuda-sync", {"COLI_CUDA_ASYNC": "0"}))
+                steps.append((f"cuda-pipe-{value}", {"LMA_CUDA_PIPE": str(value)}))
+        steps.append(("cuda-sync", {"LMA_CUDA_ASYNC": "0"}))
     if arch == "glm" and plan.get("tiers", {}).get("disk", {}).get("cold_expert_bytes", 0) > 0:
         direct = int(base_env.get("DIRECT", "0"))
         if direct != 1:
@@ -388,7 +388,7 @@ def _run(command: list[str], env: dict, timeout: int) -> subprocess.CompletedPro
     # The engine writes UTF-8 ("[prefill] layer 1/78 · 12 token", the PROF
     # verdict's em dash). Decoding in the locale's code page raised in the
     # reader thread on cp949/cp932 or the C locale, left proc.stdout None, and
-    # killed `coli tune` in calibration with a TypeError.
+    # killed `lmatomic tune` in calibration with a TypeError.
     return subprocess.run(command, env=env, capture_output=True, timeout=timeout,
                           encoding="utf-8", errors="replace")
 
@@ -423,7 +423,7 @@ def run_tune(engine: str, cap: int, base_env: dict, plan: dict, model: str,
         # as argv[1]="None", which atoi() turns into 0: qwen36 refuses it and
         # tuning dies with "calibration failed (1)", while GLM silently swept
         # its platform default instead of the cap the plan just resolved
-        # (#1190). The plan is authoritative here, exactly like `coli chat`;
+        # (#1190). The plan is authoritative here, exactly like `lmatomic chat`;
         # a plan without a resolved cap is a loud error, never "None".
         cap = plan.get("tiers", {}).get("ram", {}).get("cache_slots_per_layer")
         if cap is None:
@@ -436,14 +436,14 @@ def run_tune(engine: str, cap: int, base_env: dict, plan: dict, model: str,
     # none of it (#1191) but ALL of them speak the serve protocol -- it is how
     # the gateway and tools/datapoint.py drive every engine in production --
     # so their measurement runs go through openai_server.Engine instead: one
-    # greedy request per run (COLI_TEMP=0, a deterministic fixed workload) with
+    # greedy request per run (LMA_TEMP=0, a deterministic fixed workload) with
     # the DONE frame supplying decode tok/s and cache hit%. Quality is not
     # assumed but enforced: the first run's bytes are the contract, and any
     # run that emits different bytes raises OutputDrift -- a drifting
     # candidate is disqualified, a drifting baseline aborts the tune.
     if arch == "glm":
         replay, _ = create_replay(engine, cap, base_env, prompt, tokens, timeout)
-        context = tempfile.TemporaryDirectory(prefix="coli-tune-")
+        context = tempfile.TemporaryDirectory(prefix="lmatomic-tune-")
     else:
         replay = None
         context = contextlib.nullcontext()
@@ -487,7 +487,7 @@ def run_tune(engine: str, cap: int, base_env: dict, plan: dict, model: str,
             def measure(name, overlay, launch_cap):
                 env = dict(base_env)
                 env.update(overlay)
-                env["COLI_TEMP"] = "0"
+                env["LMA_TEMP"] = "0"
                 served = engine_cls(engine, model, launch_cap, tokens, env, 1, family)
                 samples = []
                 try:

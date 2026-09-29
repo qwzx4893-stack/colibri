@@ -35,7 +35,7 @@ def strip_comments(source: str) -> str:
 
 # engine source -> the label it passes to the helper
 SHARED_HELPER = {
-    "colibri.c": "colibri",
+    "glm52.c": "lmatomic",
     "inkling.c": "inkling",
     "kimi_k3.c": "kimi_k3",
     "olmoe.c": "olmoe",
@@ -65,9 +65,9 @@ class OpenMPTeamSizingWiringTest(unittest.TestCase):
         for name, label in SHARED_HELPER.items():
             with self.subTest(engine=name):
                 source = strip_comments((ROOT / name).read_text(encoding="utf-8"))
-                self.assertTrue(f'coli_omp_tune_threads("{label}")' in source,
+                self.assertTrue(f'lma_omp_tune_threads("{label}")' in source,
                                 f"{name} never sizes its OpenMP team "
-                                f"(expected coli_omp_tune_threads(\"{label}\"))")
+                                f"(expected lma_omp_tune_threads(\"{label}\"))")
 
     def test_the_call_is_reachable_from_main(self):
         """A call in a dead helper is the same defect with extra steps."""

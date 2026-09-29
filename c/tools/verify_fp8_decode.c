@@ -4,7 +4,7 @@
 #include <string.h>
 #include <math.h>
 
-/* reference: exact copy of coli_e4m3fn_decode (deepseek_v4.c:14774) */
+/* reference: exact copy of lma_e4m3fn_decode (deepseek_v4.c:14774) */
 static float ref_decode(uint8_t value) {
     int sign = value >> 7, exponent = (value >> 3) & 15, mantissa = value & 7;
     if (exponent == 15 && mantissa == 7) return NAN;

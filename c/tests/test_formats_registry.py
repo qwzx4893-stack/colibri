@@ -1,8 +1,8 @@
-"""docs/FORMATS.md <-> colibri.c FMT_NAMES parity (fix round 1, adopted
+"""docs/FORMATS.md <-> glm52.c FMT_NAMES parity (fix round 1, adopted
 review test-candidate).
 
 The registry's name column IS the canonical stamp string: a container's
-__metadata__["colibri.fmt"] entry is matched byte-for-byte against
+__metadata__["lma.fmt"] entry is matched byte-for-byte against
 FMT_NAMES by qt_fmt_by_name(), and FORMATS.md is what a third-party tool
 author will read to learn the string to write. A divergence between the
 two (the class of defect this test pins: the registry shipped "e8-iq3"
@@ -43,7 +43,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 C_DIR = os.path.normpath(os.path.join(HERE, ".."))
-COLIBRI_C = os.path.join(C_DIR, "colibri.c")
+LMA_C = os.path.join(C_DIR, "glm52.c")
 FORMATS_MD = os.path.normpath(os.path.join(C_DIR, "..", "docs", "FORMATS.md"))
 
 
@@ -52,7 +52,7 @@ def parse_fmt_names(path):
         src = f.read()
     m = re.search(r"FMT_NAMES\[\]\s*=\s*\{(.*?)\};", src, re.S)
     if not m:
-        raise AssertionError("FMT_NAMES[] initializer not found in colibri.c "
+        raise AssertionError("FMT_NAMES[] initializer not found in glm52.c "
                              "(anchor drifted -- update this test's regex)")
     entries = re.findall(r'\{\s*"([^"]+)"\s*,\s*(\d+)\s*\}', m.group(1))
     return {int(fmt): name for name, fmt in entries}
@@ -95,7 +95,7 @@ def parse_doc_rows(path):
 
 class RegistryParityTest(unittest.TestCase):
     def setUp(self):
-        self.c_names = parse_fmt_names(COLIBRI_C)
+        self.c_names = parse_fmt_names(LMA_C)
         self.doc_rows, self.ordinal_less = parse_doc_rows(FORMATS_MD)
         # plausibility floors: an anchor drift must fail HERE, loudly.
         self.assertGreaterEqual(len(self.c_names), 8,

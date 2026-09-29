@@ -10,15 +10,15 @@ int main(void) {
     const int width = H * D;
     float *state = calloc((size_t)H * D * D, sizeof(float));
     float *window = calloc((size_t)3 * width * K, sizeof(float));
-    float *scratch = malloc((size_t)coli_kda_scratch_floats(H, D, D) * sizeof(float));
+    float *scratch = malloc((size_t)lma_kda_scratch_floats(H, D, D) * sizeof(float));
     float *out = malloc((size_t)S * width * sizeof(float));
     for (int s = 0; s < S; s++)
-        if (coli_kda_step(out + (size_t)s * width, state, window,
+        if (lma_kda_step(out + (size_t)s * width, state, window,
                           glm53_kda_qkv + (size_t)s * 3 * width, glm53_kda_conv,
                           glm53_kda_decay + (size_t)s * width,
                           glm53_kda_beta + (size_t)s * H,
                           H, D, D, K, 1e-6f, scratch)) {
-            printf("coli_kda_step ha fallito\n"); return 1;
+            printf("lma_kda_step ha fallito\n"); return 1;
         }
     float worst = 0.f; int at = 0;
     for (int i = 0; i < S * width; i++) {

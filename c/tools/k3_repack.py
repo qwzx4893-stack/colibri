@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repack a Kimi K3 HF snapshot into colibri's ideal ingestion layout.
+"""Repack a Kimi K3 HF snapshot into lmatomic's ideal ingestion layout.
 
 Designed so the HDD->NVMe copy IS the conversion (one read of the source):
 

@@ -1,4 +1,4 @@
-# Qwen3.6-35B-A3B on colibri
+# Qwen3.6-35B-A3B on LM Atomic
 
 `c/qwen36.c` runs [Qwen/Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)
 (35B total / ~3B active, Apache 2.0) — a hybrid architecture: 25% Gated
@@ -33,13 +33,13 @@ Build and chat:
 
 ```sh
 make -C c qwen36
-COLI_MODEL=~/Models/qwen36_i4_gs64 ./c/coli chat
+LMA_MODEL=~/Models/qwen36_i4_gs64 ./c/lmatomic chat
 ```
 
-`coli` reads the model's `config.json` and matches its `model_type` against the
+`lmatomic` reads the model's `config.json` and matches its `model_type` against the
 family registry (`qwen3_5_moe` / `qwen3_5_moe_text` — an exact match, so other
-Qwen architectures are not claimed by this engine), picks it, and drives it over the serve protocol — `coli web` and
-`coli serve` (OpenAI-compatible API) work the same way.
+Qwen architectures are not claimed by this engine), picks it, and drives it over the serve protocol — `lmatomic web` and
+`lmatomic serve` (OpenAI-compatible API) work the same way.
 
 Direct invocation without the gateway:
 
@@ -124,18 +124,18 @@ tokens, every expert resident, perplexity on 4 x 512 tokens of English text:
 | | tok/s | ms/token: DeltaNet proj / out, attention, lm_head, expert compute | perplexity |
 |---|---|---|---|
 | f32 activations (1.12.0) | 6.71 | 21.9 / 8.6, 9.5, 12.6, 22.7 | 13.79 |
-| int8 activations, dense trunk (`COLI_DENSE_IDOT=1`) | 7.35 | 17.4 / 6.3, 7.7, 10.2, 22.7 | 13.92 (+1.0%) |
+| int8 activations, dense trunk (`LMA_DENSE_IDOT=1`) | 7.35 | 17.4 / 6.3, 7.7, 10.2, 22.7 | 13.92 (+1.0%) |
 | int8 activations, routed experts (`QWEN_EXPERT_ACT=i8`) | 7.20 | 21.9 / 8.6, 9.5, 12.6, 15.9 | 13.80 (+0.1%) |
 | both (the 1.12.1 default) | **8.23** (+22.6%) | 17.2 / 6.3, 7.5, 10.1, 15.6 | 13.97 (+1.3%) |
 
-Both are the default; `COLI_DENSE_IDOT=0` and `QWEN_EXPERT_ACT=f32`
+Both are the default; `LMA_DENSE_IDOT=0` and `QWEN_EXPERT_ACT=f32`
 restore the f32 kernels, which stay bit-identical to their references.
 
-**int4 for the trunk is opt-in, per component.** `COLI_DENSE_BITS=4` stores
+**int4 for the trunk is opt-in, per component.** `LMA_DENSE_BITS=4` stores
 the dense matrices as int4 in blocks of 64 with one scale per block (the
 planar layout of the grouped expert kernel) and halves the bytes the token
 reads, but the parts of the trunk pay 4 bits very differently, so
-`COLI_DENSE_INT4` picks which ones take it:
+`LMA_DENSE_INT4` picks which ones take it:
 
 | int4 on | tok/s | perplexity |
 |---|---|---|
@@ -190,7 +190,7 @@ ahead. Keep it as a measurement tool and a middle step for boxes with RAM to
 spare; it is not the answer to the gap. The engine tells the layout apart by
 size and reads each matrix in its own format on the CPU path; the CUDA VRAM
 tier takes one format per expert and refuses a mixed container with a line
-(`COLI_CUDA=1 ignored`), so such a container runs CPU-only for now.
+(`LMA_CUDA=1 ignored`), so such a container runs CPU-only for now.
 
 ## Which checkpoints, and what the banner calls them
 
@@ -245,7 +245,7 @@ cd c && make qwen36
 python3 tools/make_qwen36_tiny.py --geometry qwen38-2p4t --seed 3 \
         --out q24 --ref-mode full --emit-ref q24/ref_full.json
 python3 tools/convert_qwen36.py --model q24 --out q24_c --ebits 8
-COLI_DENSE_I8=0 SNAP=q24_c ./qwen36 512 8 q24/ref_full.json
+LMA_DENSE_I8=0 SNAP=q24_c ./qwen36 512 8 q24/ref_full.json
 ```
 
 (`--seed 3`: the default seed collapses this geometry's reference to one

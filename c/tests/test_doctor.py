@@ -147,7 +147,7 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(report["plan"]["tiers"]["vram"]["devices"], [])
         self.assertEqual(report["plan"]["tiers"]["vram"]["budget_bytes"], 0)
         self.assertEqual(report["plan"]["warnings"], [])
-        self.assertNotIn("COLI_CUDA_PIPE", report["plan"]["tune"])
+        self.assertNotIn("LMA_CUDA_PIPE", report["plan"]["tune"])
         self.assertNotIn("GPU", report["plan"]["expected_bottleneck"])
         self.assertEqual(report["status"], "warning")
         self.assertEqual(exit_code(report), 0)
@@ -162,7 +162,7 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(report["plan"]["tiers"]["vram"]["devices"], [
             {**gpu, "reserve_bytes": 2 * GB, "usable_bytes": 8 * GB},
         ])
-        self.assertIn("COLI_CUDA_PIPE", report["plan"]["tune"])
+        self.assertIn("LMA_CUDA_PIPE", report["plan"]["tune"])
 
     def test_gpu_check_uses_backend_neutral_identifier(self):
         gpu = {"index": 0, "name": "Intel Arc B570", "total_bytes": 10 * GB,
@@ -185,17 +185,17 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(report["status"], "error")
 
     # #379: doctor surfaces the cached F_NOCACHE probe read-only (S4) -- it
-    # never re-measures storage itself, only reflects what colibri.c already wrote.
+    # never re-measures storage itself, only reflects what glm52.c already wrote.
     # --- Windows backend-artifact linkage ---------------------------------
     # c/backend_loader.c compiles exactly one backend basename into the host:
-    # COLI_BACKEND_DLL is "coli_hip.dll" under COLI_HIP_DLL and "coli_cuda.dll"
+    # LMA_BACKEND_DLL is "lma_hip.dll" under LMA_HIP_DLL and "lma_cuda.dll"
     # otherwise. So the binary states which artifact it will LoadLibrary, and
     # doctor can check for that one instead of assuming CUDA. This validates the
     # host/artifact contract only -- it says nothing about the runtime binding
     # or about any GPU actually computing.
 
     def _win_engine(self, backend_dll, artifacts=()):
-        engine = self.root / "colibri.exe"
+        engine = self.root / "glm52.exe"
         engine.write_bytes(b"...[CUDA] mode: routed experts..."
                            + backend_dll.encode() + b"...")
         for artifact in artifacts:
@@ -212,49 +212,49 @@ class DoctorTest(unittest.TestCase):
             return cuda_linkage(engine)
 
     def test_windows_cuda_host_accepts_its_own_backend(self):
-        engine = self._win_engine("coli_cuda.dll", ["coli_cuda.dll"])
+        engine = self._win_engine("lma_cuda.dll", ["lma_cuda.dll"])
         self.assertEqual(self._win_linkage(engine),
                          {"linked": True, "missing": False})
 
     def test_windows_hip_host_accepts_its_own_backend(self):
-        engine = self._win_engine("coli_hip.dll", ["coli_hip.dll"])
+        engine = self._win_engine("lma_hip.dll", ["lma_hip.dll"])
         self.assertEqual(self._win_linkage(engine),
                          {"linked": True, "missing": False})
 
     def test_windows_hip_host_is_not_satisfied_by_the_cuda_backend(self):
-        engine = self._win_engine("coli_hip.dll", ["coli_cuda.dll"])
+        engine = self._win_engine("lma_hip.dll", ["lma_cuda.dll"])
         self.assertEqual(self._win_linkage(engine),
                          {"linked": False, "missing": True})
 
     def test_windows_cuda_host_is_not_satisfied_by_the_hip_backend(self):
-        engine = self._win_engine("coli_cuda.dll", ["coli_hip.dll"])
+        engine = self._win_engine("lma_cuda.dll", ["lma_hip.dll"])
         self.assertEqual(self._win_linkage(engine),
                          {"linked": False, "missing": True})
 
     def test_windows_missing_backend_artifact_still_fails(self):
-        engine = self._win_engine("coli_hip.dll")
+        engine = self._win_engine("lma_hip.dll")
         self.assertEqual(self._win_linkage(engine),
                          {"linked": False, "missing": True})
 
     def test_windows_cpu_only_engine_is_not_a_gpu_build(self):
-        engine = self.root / "colibri.exe"
+        engine = self.root / "glm52.exe"
         engine.write_bytes(b"a plain CPU build with no backend loader")
         self.assertEqual(self._win_linkage(engine),
                          {"linked": False, "missing": False})
 
     def test_windows_kimi_cuda_host_without_glm_banner(self):
         """Kimi K3 CUDA_DLL=1 never prints [CUDA] mode: routed experts.
-        The loader still compiles coli_cuda.dll into the host, and that is
+        The loader still compiles lma_cuda.dll into the host, and that is
         the artifact doctor must require -- the same pair cuda_binary uses."""
         engine = self.root / "kimi_k3.exe"
-        engine.write_bytes(b"MZ [K3-CUDA] MXFP4 routed experts coli_cuda.dll")
-        (self.root / "coli_cuda.dll").write_bytes(b"")
+        engine.write_bytes(b"MZ [K3-CUDA] MXFP4 routed experts lma_cuda.dll")
+        (self.root / "lma_cuda.dll").write_bytes(b"")
         self.assertEqual(self._win_linkage(engine),
                          {"linked": True, "missing": False})
 
     def test_windows_kimi_cuda_host_missing_dll_is_missing(self):
         engine = self.root / "kimi_k3.exe"
-        engine.write_bytes(b"MZ [K3-CUDA] MXFP4 routed experts coli_cuda.dll")
+        engine.write_bytes(b"MZ [K3-CUDA] MXFP4 routed experts lma_cuda.dll")
         self.assertEqual(self._win_linkage(engine),
                          {"linked": False, "missing": True})
 
@@ -262,7 +262,7 @@ class DoctorTest(unittest.TestCase):
         # End-to-end: the same host that previously reported a hard error
         # ("GPU runtime library is missing") now passes, with #903's
         # backend-neutral wording preserved.
-        engine = self._win_engine("coli_hip.dll", ["coli_hip.dll"])
+        engine = self._win_engine("lma_hip.dll", ["lma_hip.dll"])
         report = self.report(gpu_indices=None, engine_path=engine,
                              gpus=[{"index": 0, "name": "AMD Radeon(TM) 8060S Graphics",
                                     "total_bytes": 78 * GB, "free_bytes": None,
@@ -280,7 +280,7 @@ class DoctorTest(unittest.TestCase):
     def test_ssd_probe_check_passes_and_reports_cached_value(self):
         # byte-exact (write_bytes): Windows text mode would CRLF-translate and the
         # strict reader would (correctly) reject the fixture as garbage
-        (self.model / ".coli_ssd").write_bytes(f"v2 14.3 {os.stat(self.model).st_dev}\n".encode("ascii"))
+        (self.model / ".lma_ssd").write_bytes(f"v2 14.3 {os.stat(self.model).st_dev}\n".encode("ascii"))
         checks = self.checks_by_id(self.report())
         self.assertEqual(checks["storage.ssd_probe"]["status"], "pass")
         self.assertEqual(checks["storage.ssd_probe"]["details"]["gbs"], 14.3)
@@ -294,21 +294,21 @@ class DoctorTest(unittest.TestCase):
             (b"not-a-number\n", "unreadable cache"),
         )
         for content, expected in cases:
-            (self.model / ".coli_ssd").write_bytes(content)
+            (self.model / ".lma_ssd").write_bytes(content)
             check = self.checks_by_id(self.report())["storage.ssd_probe"]
             self.assertEqual(check["status"], "skip", content)
             self.assertIn(expected, check["summary"], content)
             self.assertNotIn("no cached probe yet", check["summary"], content)
-        (self.model / ".coli_ssd").unlink()
+        (self.model / ".lma_ssd").unlink()
         check = self.checks_by_id(self.report())["storage.ssd_probe"]
         self.assertIn("no cached probe yet", check["summary"])
 
     def test_ssd_probe_check_never_emits_json_infinity(self):
         # float("inf") used to sail through the old reader; json.dumps renders
         # it as the bare literal Infinity, which is not JSON -- machine
-        # consumers of `coli doctor --json` would then fail to parse the whole
+        # consumers of `lmatomic doctor --json` would then fail to parse the whole
         # report. The strict v2 grammar bans inf/nan outright (#386 fix round).
-        (self.model / ".coli_ssd").write_bytes(b"inf\n")
+        (self.model / ".lma_ssd").write_bytes(b"inf\n")
         report = self.report()
         checks = self.checks_by_id(report)
         self.assertEqual(checks["storage.ssd_probe"]["status"], "skip")
@@ -323,7 +323,7 @@ class DoctorTest(unittest.TestCase):
         self.assertTrue(output.endswith("result ok"))
 
     def test_cli_json_is_machine_readable_without_loading_model(self):
-        cli = Path(__file__).parents[1] / "coli"
+        cli = Path(__file__).parents[1] / "lmatomic"
         run = subprocess.run([
             sys.executable, str(cli), "doctor", "--model", str(self.model),
             "--gpu", "none", "--ram", "16", "--ctx", "32", "--json",
@@ -526,7 +526,7 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("exceeds 1 bytes", checks["model.index"]["summary"])
 
     def test_cli_deep_json_is_machine_readable(self):
-        cli = Path(__file__).parents[1] / "coli"
+        cli = Path(__file__).parents[1] / "lmatomic"
         run = subprocess.run([
             sys.executable, str(cli), "doctor", "--model", str(self.model),
             "--gpu", "none", "--ram", "16", "--ctx", "32", "--deep", "--json",
@@ -539,7 +539,7 @@ class DoctorTest(unittest.TestCase):
 
 
 class CoreTensorRoleTest(unittest.TestCase):
-    """#1365: `coli doctor` reported "2 required core tensor(s) are missing"
+    """#1365: `lmatomic doctor` reported "2 required core tensor(s) are missing"
     for every GLM-5.3-Flash checkpoint, converted locally or downloaded
     pre-converted. Nothing was missing. The check held three literal tensor
     names taken from GLM-5.2, and Flash nests its language model under the

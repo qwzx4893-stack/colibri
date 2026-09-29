@@ -1,4 +1,4 @@
-"""Efficiency / regression harness for the colibri engine.
+"""Efficiency / regression harness for the lmatomic engine.
 
 The engine already emits rich telemetry (REPLAY tok/s, PROFILE phase timings,
 [PROF] time shares + verdict, CUDA expert-tier utilization). Until now every
@@ -158,7 +158,7 @@ CUDA_GROUPS_RE = re.compile(
     r"\[CUDA\] expert groups:\s+(\d+)\s+call,\s+(\d+)\s+expert,\s+(\d+)\s+righe\s+\(([0-9.]+)\s+expert/call\)"
 )
 
-# "[CUDA] expert groups timing: H2D 12.3 ms | kernel 45.6 ms | D2H 7.8 ms"  (COLI_CUDA_PROFILE=1)
+# "[CUDA] expert groups timing: H2D 12.3 ms | kernel 45.6 ms | D2H 7.8 ms"  (LMA_CUDA_PROFILE=1)
 CUDA_GROUPS_TIME_RE = re.compile(
     r"\[CUDA\] expert groups timing: H2D\s+([0-9.]+)\s+ms\s*\|\s*kernel\s+([0-9.]+)\s+ms\s*\|\s*D2H\s+([0-9.]+)\s+ms"
 )
@@ -180,19 +180,19 @@ LOAD_BANNER_RE = re.compile(
 # pathological configs, telemetry accounting bugs) without flapping on machine
 # noise. The tiny model is fully resident at ~200 tok/s, so a 20 tok/s floor is
 # a 10x margin. Tune per-host via env if needed (documented in README).
-TINY_TOK_S_FLOOR = float(os.environ.get("COLI_TINY_TOK_S_FLOOR", "20.0"))
+TINY_TOK_S_FLOOR = float(os.environ.get("LMA_TINY_TOK_S_FLOOR", "20.0"))
 # On a fully-resident tiny model the expert-disk wait share should be tiny.
 # If it exceeds this, something regressed in the I/O accounting or cache path.
-MAX_DISK_WAIT_SHARE = float(os.environ.get("COLI_MAX_DISK_WAIT_SHARE", "0.20"))
+MAX_DISK_WAIT_SHARE = float(os.environ.get("LMA_MAX_DISK_WAIT_SHARE", "0.20"))
 # decode wall-time should be roughly the sum of PROFILE phases (other = residual).
-PROFILE_SUM_TOLERANCE = float(os.environ.get("COLI_PROFILE_SUM_TOL", "0.05"))
+PROFILE_SUM_TOLERANCE = float(os.environ.get("LMA_PROFILE_SUM_TOL", "0.05"))
 # Minimum direct CPU-vs-CUDA argmax agreement on the tiny TF fixture. The two
 # backends use different accumulation orders (SIMD dot vs CUDA kernel), so a
 # few near-tied positions flip argmax — that's expected numeric divergence, not
 # a kernel bug. Measured baseline ~84% (27/32) on this fixture; the 70% floor
 # leaves headroom for machine noise while still catching a catastrophic kernel
 # regression (e.g. a wrong GEMM would drop this to ~random = ~4%).
-MIN_CPU_CUDA_AGREEMENT = float(os.environ.get("COLI_MIN_CPU_CUDA_AGREE", "0.70"))
+MIN_CPU_CUDA_AGREEMENT = float(os.environ.get("LMA_MIN_CPU_CUDA_AGREE", "0.70"))
 
 
 def parse_run(stdout: str, stderr: str = "") -> dict:
@@ -389,19 +389,19 @@ def run_engine(
 ) -> tuple[dict, subprocess.CompletedProcess]:
     """Run the engine with an env overlay; return (parsed_telemetry, proc).
 
-    `engine` defaults to the built ./colibri (or .exe). `snap` defaults to
+    `engine` defaults to the built ./glm52 (or .exe). `snap` defaults to
     the bundled tiny model (glm_tiny) so callers can omit it for fast tests.
     The positional argv is `cap ebits dbits`, matching the engine's main().
     """
     if engine is None:
-        # glm was renamed colibri; prefer whichever of the two names exists so
+        # glm was renamed lmatomic; prefer whichever of the two names exists so
         # a stale checkout still resolves, and fall back to the current one.
         _c = Path(__file__).resolve().parent.parent
-        engine = str(next((p for p in (_c / "colibri", _c / "colibri.exe") if p.exists()), _c / "colibri"))
+        engine = str(next((p for p in (_c / "glm52", _c / "glm52.exe") if p.exists()), _c / "glm52"))
     env = os.environ.copy()
     # Strip CUDA vars by default so a CPU run isn't accidentally GPU-accelerated
     # by a leftover env; callers opt in by passing them in env_overlay.
-    for k in ("COLI_CUDA", "COLI_GPU", "COLI_GPUS", "CUDA_DENSE", "CUDA_EXPERT_GB"):
+    for k in ("LMA_CUDA", "LMA_GPU", "LMA_GPUS", "CUDA_DENSE", "CUDA_EXPERT_GB"):
         env.pop(k, None)
     env.update(env_overlay)
     if snap is not None:

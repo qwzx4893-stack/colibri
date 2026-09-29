@@ -28,14 +28,14 @@
  * siano ancora vive. Non entrano nella fotografia, restano dove sono, e i
  * banchi possono essere stati ributtati nel frattempo. Chi rimette uno scatto
  * DEVE chiederlo a kv_prefix_holds() prima di fidarsi. */
-#ifndef COLI_PIN_POOL_H
-#define COLI_PIN_POOL_H
+#ifndef LMA_PIN_POOL_H
+#define LMA_PIN_POOL_H
 
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef COLI_PIN_SLOTS_MAX
-#define COLI_PIN_SLOTS_MAX 8
+#ifndef LMA_PIN_SLOTS_MAX
+#define LMA_PIN_SLOTS_MAX 8
 #endif
 
 typedef struct {
@@ -45,30 +45,30 @@ typedef struct {
     float *logit;    /* logit dell'ultima posizione coperta: predice il primo token fresco */
     void  *state;    /* blob del motore (stato ricorrente), opaco qui */
     unsigned long long used;   /* marca LRU */
-} ColiPin;
+} LmaPin;
 
 typedef struct {
-    ColiPin slot[COLI_PIN_SLOTS_MAX];
+    LmaPin slot[LMA_PIN_SLOTS_MAX];
     int n;                       /* slot in uso, 0 = spento */
     int vocab;
     unsigned long long clock;
-} ColiPinPool;
+} LmaPinPool;
 
 /* Quanti scatti tenere. Default 4: bastano istruzioni + domanda con margine.
  * Su un motore con stato ricorrente grosso ogni scatto costa (qwen36: decine
  * di MB), quindi si puo' abbassare senza toccare il codice. */
-static inline int coli_pin_slots_wanted(void) {
-    const char *e = getenv("COLI_PIN_SLOTS");
+static inline int lma_pin_slots_wanted(void) {
+    const char *e = getenv("LMA_PIN_SLOTS");
     int n = e ? atoi(e) : 4;
     if (n < 0) n = 0;
-    if (n > COLI_PIN_SLOTS_MAX) n = COLI_PIN_SLOTS_MAX;
+    if (n > LMA_PIN_SLOTS_MAX) n = LMA_PIN_SLOTS_MAX;
     return n;
 }
 
-static inline void coli_pin_pool_init(ColiPinPool *p, int vocab) {
+static inline void lma_pin_pool_init(LmaPinPool *p, int vocab) {
     if (!p || p->n) return;
     memset(p, 0, sizeof(*p));
-    p->n = coli_pin_slots_wanted();
+    p->n = lma_pin_slots_wanted();
     p->vocab = vocab;
 }
 
@@ -77,11 +77,11 @@ static inline void coli_pin_pool_init(ColiPinPool *p, int vocab) {
  * Stretto perche' serve almeno un token nuovo: un prompt uguale allo scatto
  * vorrebbe dire riavvolgere fino a se stesso e non lascerebbe niente da
  * macinare, quindi nessun logit da cui ripartire. Torna l'indice o -1. */
-static inline int coli_pin_best(const ColiPinPool *p, const int *ids, int n) {
+static inline int lma_pin_best(const LmaPinPool *p, const int *ids, int n) {
     if (!p || !ids || n < 1) return -1;
     int best = -1;
     for (int s = 0; s < p->n; s++) {
-        const ColiPin *k = &p->slot[s];
+        const LmaPin *k = &p->slot[s];
         if (k->len < 1 || !k->ids || k->len >= n) continue;
         if (memcmp(k->ids, ids, (size_t)k->len * sizeof(int)) != 0) continue;
         if (best < 0 || k->len > p->slot[best].len) best = s;
@@ -91,7 +91,7 @@ static inline int coli_pin_best(const ColiPinPool *p, const int *ids, int n) {
 
 /* Dove mettere lo scatto nuovo: uno slot libero, oppure lo stesso prefisso se
  * c'e' gia' (rinfrescarlo, non duplicarlo), oppure il meno usato di recente. */
-static inline int coli_pin_victim(ColiPinPool *p, const int *ids, int n) {
+static inline int lma_pin_victim(LmaPinPool *p, const int *ids, int n) {
     if (!p || p->n < 1) return -1;
     for (int s = 0; s < p->n; s++)
         if (p->slot[s].len == n && p->slot[s].ids &&
@@ -106,12 +106,12 @@ static inline int coli_pin_victim(ColiPinPool *p, const int *ids, int n) {
  * fotografia e' un'ottimizzazione e non deve MAI essere il motivo di un
  * errore, quindi chi chiama tira dritto. `state` non viene toccato: se lo
  * slot ne portava uno, il chiamante lo riusa o lo libera lui. */
-static inline ColiPin *coli_pin_store(ColiPinPool *p, const int *ids, int n,
+static inline LmaPin *lma_pin_store(LmaPinPool *p, const int *ids, int n,
                                       const float *logit) {
     if (!p || p->n < 1 || !ids || n < 1) return NULL;
-    int s = coli_pin_victim(p, ids, n);
+    int s = lma_pin_victim(p, ids, n);
     if (s < 0) return NULL;
-    ColiPin *k = &p->slot[s];
+    LmaPin *k = &p->slot[s];
     if (k->cap < n) {
         int *grown = (int *)realloc(k->ids, (size_t)n * sizeof(int));
         if (!grown) { k->len = 0; return NULL; }
@@ -128,14 +128,14 @@ static inline ColiPin *coli_pin_store(ColiPinPool *p, const int *ids, int n,
     return k;
 }
 
-static inline void coli_pin_touch(ColiPinPool *p, int s) {
+static inline void lma_pin_touch(LmaPinPool *p, int s) {
     if (p && s >= 0 && s < p->n) p->slot[s].used = ++p->clock;
 }
 
 /* Butta ogni scatto. Si chiama quando lo stato che descrivono non esiste piu'
  * (banchi K/V riallocati, sessione chiusa): uno scatto orfano rimesso a posto
  * risponderebbe da posizioni che non ci sono, e lo farebbe in silenzio. */
-static inline void coli_pin_pool_clear(ColiPinPool *p, void (*free_state)(void *)) {
+static inline void lma_pin_pool_clear(LmaPinPool *p, void (*free_state)(void *)) {
     if (!p) return;
     for (int s = 0; s < p->n; s++) {
         if (free_state && p->slot[s].state) free_state(p->slot[s].state);
@@ -144,4 +144,4 @@ static inline void coli_pin_pool_clear(ColiPinPool *p, void (*free_state)(void *
     }
 }
 
-#endif /* COLI_PIN_POOL_H */
+#endif /* LMA_PIN_POOL_H */

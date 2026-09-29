@@ -3,23 +3,23 @@
 #include "../qwen36.c"
 #undef main
 
-/* Define COLI_DNPROJ_REAL_CUDA and link --wrap=coli_cuda_matmul to run
+/* Define LMA_DNPROJ_REAL_CUDA and link --wrap=lma_cuda_matmul to run
  * the same state-parity test against the real CUDA backend on Linux. */
-#ifdef COLI_DNPROJ_REAL_CUDA
+#ifdef LMA_DNPROJ_REAL_CUDA
 #include "../backend_cuda.h"
-int __real_coli_cuda_matmul(ColiCudaTensor **,float *,const float *,const void *,
+int __real_lma_cuda_matmul(LmaCudaTensor **,float *,const float *,const void *,
                            const float *,int,int,int,int,int,int);
-#define dn_fake_matmul __real_coli_cuda_matmul
-#define DN_MATMUL __wrap_coli_cuda_matmul
+#define dn_fake_matmul __real_lma_cuda_matmul
+#define DN_MATMUL __wrap_lma_cuda_matmul
 #else
 /* Wrap the shared fake so this test can inject a failure at a block boundary. */
-#define coli_cuda_matmul dn_fake_matmul
+#define lma_cuda_matmul dn_fake_matmul
 #include "qwen36_fake_cuda.h"
-#undef coli_cuda_matmul
-#define DN_MATMUL coli_cuda_matmul
+#undef lma_cuda_matmul
+#define DN_MATMUL lma_cuda_matmul
 #endif
 static int calls, fail_call, max_rows, last_rows;
-int DN_MATMUL(ColiCudaTensor **t,float *y,const float *x,const void *w,
+int DN_MATMUL(LmaCudaTensor **t,float *y,const float *x,const void *w,
                     const float *sc,int fmt,int S,int I,int O,int dev,int gs) {
     calls++; if (S > max_rows) max_rows = S; last_rows = S;
     if (calls == fail_call) { for(int i=0;i<S*O;i++) y[i] = NAN; return 0; }
@@ -50,7 +50,7 @@ int main(void) {
 #ifdef _OPENMP
     omp_set_num_threads(1);
 #endif
-    setenv("COLI_DENSE_IDOT","0",1);
+    setenv("LMA_DENSE_IDOT","0",1);
     Model m={0}; Layer l={0};
     m.c.hidden=H; m.c.dn_kheads=KH; m.c.dn_vheads=VH;
     m.c.dn_kdim=KD; m.c.dn_vdim=VD; m.c.dn_convk=CK; m.c.dn_conv_dim=C; m.c.eps=1e-6f;
@@ -72,9 +72,9 @@ int main(void) {
     float *x=weights(S*H), cpu[S*H], gpu[S*H], rec[VH*KD*VD], conv[C*(CK-1)];
     deltanet(&m,&l,0,x,S,0,cpu);
     memcpy(rec,m.DN_rec[0],sizeof(rec)); memcpy(conv,m.DN_conv[0],sizeof(conv));
-#ifdef COLI_DNPROJ_REAL_CUDA
+#ifdef LMA_DNPROJ_REAL_CUDA
     int device=0;
-    if(!coli_cuda_init(&device,1)) return 1;
+    if(!lma_cuda_init(&device,1)) return 1;
 #else
     fake_dense_compute=1;
 #endif
@@ -87,7 +87,7 @@ int main(void) {
         if(failure!=1) CHECK(last_rows==3);
         agree(cpu,gpu,S*H); agree(rec,m.DN_rec[0],VH*KD*VD); agree(conv,m.DN_conv[0],C*(CK-1));
         CHECK(qt_dnproj_ready(0) == !failure);
-        coli_cuda_tensor_free(G_dnp[0].t); memset(&G_dnp[0],0,sizeof(G_dnp[0]));
+        lma_cuda_tensor_free(G_dnp[0].t); memset(&G_dnp[0],0,sizeof(G_dnp[0]));
         qt_shutdown();
     }
     CHECK(dnproj_batch_rows(10000,65536,65536)==64);
@@ -100,7 +100,7 @@ int main(void) {
     deltanet(&m,&l,0,x,1,0,gpu);
     CHECK(calls==1 && last_rows==1);
     agree(cpu,gpu,H); agree(rec,m.DN_rec[0],VH*KD*VD); agree(conv,m.DN_conv[0],C*(CK-1));
-    coli_cuda_tensor_free(G_dnp[0].t); memset(&G_dnp[0],0,sizeof(G_dnp[0]));
+    lma_cuda_tensor_free(G_dnp[0].t); memset(&G_dnp[0],0,sizeof(G_dnp[0]));
     qt_shutdown();
     /* Prefix extension must preserve state across separate calls, including a
      * split immediately before, on, and after the 256-row block boundary. */
@@ -125,11 +125,11 @@ int main(void) {
         CHECK(qt_dnproj_ready(0)==!failure);
         agree(cpu,gpu,S*H); agree(cpu_next,gpu_next,H);
         agree(rec,m.DN_rec[0],VH*KD*VD); agree(conv,m.DN_conv[0],C*(CK-1));
-        coli_cuda_tensor_free(G_dnp[0].t); memset(&G_dnp[0],0,sizeof(G_dnp[0]));
+        lma_cuda_tensor_free(G_dnp[0].t); memset(&G_dnp[0],0,sizeof(G_dnp[0]));
         qt_shutdown();
     }
-#ifdef COLI_DNPROJ_REAL_CUDA
-    coli_cuda_shutdown();
+#ifdef LMA_DNPROJ_REAL_CUDA
+    lma_cuda_shutdown();
 #endif
     free(x); free(m.DN_rec[0]); free(m.DN_conv[0]); free(m.DN_rec); free(m.DN_conv);
     qw_free(&l.dn_qkv); qw_free(&l.dn_z); free((void*)l.dn_out.w);

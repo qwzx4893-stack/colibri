@@ -5,10 +5,10 @@
 ## Setup (held fixed across every run)
 
 - **Hardware:** Mac Studio, Apple M1 Ultra — 20 CPU cores (16 P + 4 E), 48-core GPU, 128 GB unified memory, macOS 26.5.2, internal SSD; `sudo sysctl iogpu.wired_limit_mb=120832` (118 GB)
-- **Engine:** colibri dev @ `c024a46` (v1.4.0, post-rebase); the pre-rebase comparison runs used the v1.2.0-era build (see "Rebase check")
+- **Engine:** LM Atomic dev @ `c024a46` (v1.4.0, post-rebase); the pre-rebase comparison runs used the v1.2.0-era build (see "Rebase check")
 - **Model:** GLM-5.2 int4 (744B MoE, 78 layers, 256 experts, topk=8) converted to **fmt=2 (per-row int4)** from the official fmt=4 (g64) container with `c/tools/convert_fmt4_to_fmt2.py`. fmt=2 is the format the Metal backend fully supports (fmt=4 Metal dispatch is still open: #585/#587). **Quality caveat:** per-row scales cost ~9pp vs grouped (see the benchmarks.md quality section) — fmt=2 here is a Metal-compatibility vehicle, not a quality recommendation.
-- **Workload:** `./coli run "Compare the myths of Lucifer and Prometheus"`, 1024 tokens generated (warmup 128). Prefill ~11 s, excluded from tok/s.
-- **Constant flags:** `COLI_METAL=1 DIRECT=1 MTP=0 --cap 33`
+- **Workload:** `./lmatomic run "Compare the myths of Lucifer and Prometheus"`, 1024 tokens generated (warmup 128). Prefill ~11 s, excluded from tok/s.
+- **Constant flags:** `LMA_METAL=1 DIRECT=1 MTP=0 --cap 33`
 - **Expert history frozen:** the same 6.37M-selection usage snapshot is restored before every run → identical pin (2478 experts / 46.9 GB mlock'd, no compression) in all runs except `ram105` (auto-capped to 41.9 GB to preserve LRU room).
 - **Disk (iobench, 19 MB × 64, 8 threads — benchmarks.md methodology):** **6.89 GB/s F_NOCACHE**, 8.93 GB/s buffered (cache-influenced).
 - **Single run per config**, warm page cache. The engine is non-deterministic run-to-run (see the M5 Max report's caveats); treat ~±0.05 tok/s as noise.
@@ -21,7 +21,7 @@
 |---|---|---|---|---|---|---|---|
 | **A** — baseline | 1.31 | 781.2 | 76.5 | 431.7 | 188.3 | 149.6 | 97.9 |
 | **C** — + `PIPE=1 PIPE_WORKERS=8` | 1.40 | 732.2 | 76.2 | 433.1 | 164.2 | 123.7 | 97.9 |
-| **D** — + `COLI_NO_OMP_TUNE=1` | 1.32 | 775.0 | 76.8 | 424.8 | 189.2 | 149.4 | 97.9 |
+| **D** — + `LMA_NO_OMP_TUNE=1` | 1.32 | 775.0 | 76.8 | 424.8 | 189.2 | 149.4 | 97.9 |
 | **E** — `NO_OMP` + `PIPE` | 1.40 | 732.8 | 76.1 | 432.5 | 164.7 | 124.4 | 97.9 |
 | E with `PIPE_WORKERS=12` | 1.41 | 726.8 | 76.6 | 426.5 | 165.5 | 123.7 | 97.9 |
 | E with `PIPE_WORKERS=16` | 1.37 | 745.0 | 75.9 | 441.5 | 167.6 | 124.9 | 97.9 |
@@ -40,8 +40,8 @@
 Winner command:
 
 ```bash
-COLI_METAL=1 DIRECT=1 MTP=0 COLI_NO_OMP_TUNE=1 PIPE=1 PIPE_WORKERS=8 \
-  ./coli run --model /path/to/GLM-5.2-colibri-int4-perrow \
+LMA_METAL=1 DIRECT=1 MTP=0 LMA_NO_OMP_TUNE=1 PIPE=1 PIPE_WORKERS=8 \
+  ./lmatomic run --model /path/to/GLM-5.2-colibri-int4-perrow \
   "Compare the myths of Lucifer and Prometheus" --ram 125 --cap 33 --ngen 1024
 ```
 
@@ -59,7 +59,7 @@ COLI_METAL=1 DIRECT=1 MTP=0 COLI_NO_OMP_TUNE=1 PIPE=1 PIPE_WORKERS=8 \
 
 ## What happened, phase by phase (tuning at `--ram 110`)
 
-**The M5 Max OMP active-spin trap does not reproduce (A vs D).** On the M5 Max, the #77 hot-team spin steals the shared SoC power budget and triples attention GPU kernel time (76 → 223 s). Here, attention GPU time is identical between A and D (149.56 vs 149.36 s) and `COLI_NO_OMP_TUNE` alone is neutral (+0.8%). Observed, not fully explained — likely the Mac Studio's desktop power/thermal headroom leaves the GPU unthrottled by the spin. `NO_OMP` remains harmless insurance and is kept in the winner config.
+**The M5 Max OMP active-spin trap does not reproduce (A vs D).** On the M5 Max, the #77 hot-team spin steals the shared SoC power budget and triples attention GPU kernel time (76 → 223 s). Here, attention GPU time is identical between A and D (149.56 vs 149.36 s) and `LMA_NO_OMP_TUNE` alone is neutral (+0.8%). Observed, not fully explained — likely the Mac Studio's desktop power/thermal headroom leaves the GPU unthrottled by the spin. `NO_OMP` remains harmless insurance and is kept in the winner config.
 
 **`PIPE` is the only lever that matters (A → C).** +6.9% (1.31 → 1.40), trimming matmul 188 → 164 s and attention 150 → 124 s by keeping experts streaming. E equals C within noise — once `PIPE` is present, `NO_OMP` adds nothing.
 
@@ -83,7 +83,7 @@ All configs land within the noise band; hit rate, disk wait and attention time w
 
 ## Recommendations
 
-1. **Operating point on a 128 GB M1 Ultra:** `--ram 120`–`125` · `--cap 33` · `COLI_NO_OMP_TUNE=1 PIPE=1 PIPE_WORKERS=8` · MTP off. No memory-pressure thrash anywhere in the sweep (GPU-sched canaries flat at 13–16 s).
+1. **Operating point on a 128 GB M1 Ultra:** `--ram 120`–`125` · `--cap 33` · `LMA_NO_OMP_TUNE=1 PIPE=1 PIPE_WORKERS=8` · MTP off. No memory-pressure thrash anywhere in the sweep (GPU-sched canaries flat at 13–16 s).
 2. **Beware the v1.4.0 fast-SSD default:** it detects this drive as fast and drops the expert cache to cap=1 — 0.98 vs 1.45 tok/s on the warmup. If a Metal+SSD box regresses against older builds, check `--cap` first.
 3. **MTP is a strict loss at 128 GB.** Acceptance was real (63–74%, 1.63–1.74 tok/fw in accidental MTP-active runs) but the +12–15 GB RSS crosses the memory knee into swap thrash (0.07–1.04 tok/s vs 1.47 MTP-off). Do not enable MTP on this machine/RAM class.
 4. **To go faster on this hardware class, spend on storage, not GPU.** The drive runs at ~93% of its measured ceiling during decode; a faster expert-read path (or a much larger pin budget) is the only lever with headroom.

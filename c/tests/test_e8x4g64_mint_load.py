@@ -1,5 +1,5 @@
 """wq-v0-class regression case: REAL tools/convert_fp8_to_int4.py output fed
-into the REAL C loader (st_init/qt_from_disk in colibri.c) at toy scale.
+into the REAL C loader (st_init/qt_from_disk in glm52.c) at toy scale.
 
 The wq-v0 production container class is "e8x4g64": int8 per-row spine
 (attention / shared expert / dense MLP / embed / lm_head -> fmt=1) with
@@ -58,7 +58,7 @@ from glm_fp8_emit import save_fp8_safetensors, fp8_block_quantize, fp8_block_deq
 
 
 def _cc_flags():
-    """Mirror the Makefile's CFLAGS closely enough to compile colibri.c
+    """Mirror the Makefile's CFLAGS closely enough to compile glm52.c
     cleanly (same arrangement as tests/test_fp8_e2e_repack_load.py)."""
     cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
     if not cc:

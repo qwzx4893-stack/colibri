@@ -1,11 +1,11 @@
 /* io_uring expert-load batches (Linux, URING=1): one owner prepares all reads of a block, submits
  * them in one syscall and reaps completions on demand. Wraps the raw ring in uring.h.
  *
- * Not a standalone header: colibri.c includes it in place, and the code below uses that
+ * Not a standalone header: glm52.c includes it in place, and the code below uses that
  * file's types and statics (Model, ESlot, QT, now_s, ...). Moving it out changes no
  * behaviour; the translation unit is byte-for-byte the same after preprocessing. */
-#ifndef COLIBRI_URING_LOAD_H
-#define COLIBRI_URING_LOAD_H
+#ifndef GLM52_URING_LOAD_H
+#define GLM52_URING_LOAD_H
 
 #ifdef __linux__
 /* io_uring expert batches.  One owner prepares all reads for a block, submits
@@ -25,7 +25,7 @@ typedef struct {
     int pending,done,finalized,error;
 } UringLoad;
 typedef struct {
-    ColiUring ring;
+    LmaUring ring;
     UringLoad load[URING_LOAD_MAX];
     UringRead req[URING_REQ_MAX];
     int nload,nreq,started;
@@ -34,7 +34,7 @@ static UringBatch g_ub_pipe, g_ub_pilot;
 
 static int uring_batch_init(UringBatch *b){
     if(b->started) return 0;
-    if(coli_uring_init(&b->ring,URING_REQ_MAX)) return -1;
+    if(lma_uring_init(&b->ring,URING_REQ_MAX)) return -1;
     b->started=1; return 0;
 }
 static void uring_batch_reset(UringBatch *b){
@@ -51,7 +51,7 @@ static int uring_add_read(UringBatch *b,int li,int fd,int primary_fd,int rep,
     if(rep<0 || rep>=MIR_REPS){ errno=EINVAL; return -1; }
     int ri=b->nreq++;
     b->req[ri]=(UringRead){li,(int)expect,fd,primary_fd,rep,buf,off};
-    if(coli_uring_prep_read(&b->ring,fd,buf,len,off,(uint64_t)ri+1)) return -1;
+    if(lma_uring_prep_read(&b->ring,fd,buf,len,off,(uint64_t)ri+1)) return -1;
     b->load[li].pending++;
     return 0;
 }
@@ -78,7 +78,7 @@ static int uring_load_add(UringBatch *b,Model *m,int layer,int eid,ESlot *s,int 
     snprintf(qn,sizeof(qn),"%s.qs",nm[0]);
     if(g_mmap || !st_has(&m->S,qn))
         return uring_load_error(l,ENOTSUP,"URING requires quantized expert tensors"),li;
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
     if(s->eid!=eid){ qt_cuda_reset(&s->g); qt_cuda_reset(&s->u); qt_cuda_reset(&s->d); }
 #endif
     for(int k=0;k<3;k++){
@@ -97,13 +97,13 @@ static int uring_load_add(UringBatch *b,Model *m,int layer,int eid,ESlot *s,int 
     int64_t want=wtot+8192, hyst=want/4; if(hyst<(1<<16)) hyst=1<<16;
     int64_t fhyst=ftot/4; if(fhyst<(1<<14)) fhyst=1<<14;   /* floats, so 64 KB again */
     if(!s->slab || want>s->slab_cap || (g_slab_shrink && !s->aslab && s->slab_cap > want+hyst)){
-#ifdef COLI_METAL
-        if(s->slab&&g_metal_enabled) coli_metal_unregister(s->slab);
+#ifdef LMA_METAL
+        if(s->slab&&g_metal_enabled) lma_metal_unregister(s->slab);
         compat_aligned_free(s->slab);
         size_t need=((size_t)wtot+8192+16383)&~(size_t)16383;
         if(posix_memalign((void**)&s->slab,16384,need)){
             s->slab=NULL; s->slab_cap=0; return uring_load_error(l,ENOMEM,"io_uring expert slab"),li; }
-        s->slab_cap=need; if(g_metal_enabled) coli_metal_register(s->slab,need);
+        s->slab_cap=need; if(g_metal_enabled) lma_metal_register(s->slab,need);
 #else
         compat_aligned_free(s->slab);
         if(posix_memalign((void**)&s->slab,4096,(size_t)wtot+8192)){
@@ -112,12 +112,12 @@ static int uring_load_add(UringBatch *b,Model *m,int layer,int eid,ESlot *s,int 
 #endif
     }
     if(!s->fslab || ftot>s->fslab_cap || (g_slab_shrink && !s->afslab && s->fslab_cap > ftot+fhyst)){
-#ifdef COLI_METAL
-        if(s->fslab&&g_metal_enabled) coli_metal_unregister(s->fslab);
+#ifdef LMA_METAL
+        if(s->fslab&&g_metal_enabled) lma_metal_unregister(s->fslab);
         free(s->fslab); size_t fb=(((size_t)ftot*sizeof(float))+16383)&~(size_t)16383;
         if(posix_memalign((void**)&s->fslab,16384,fb)){
             s->fslab=NULL; s->fslab_cap=0; return uring_load_error(l,ENOMEM,"io_uring expert scales"),li; }
-        s->fslab_cap=ftot; if(g_metal_enabled) coli_metal_register(s->fslab,fb);
+        s->fslab_cap=ftot; if(g_metal_enabled) lma_metal_register(s->fslab,fb);
 #else
         free(s->fslab); s->fslab=malloc((size_t)ftot*sizeof(float));
         if(!s->fslab){ s->fslab_cap=0; return uring_load_error(l,ENOMEM,"io_uring expert scales"),li; }
@@ -126,7 +126,7 @@ static int uring_load_add(UringBatch *b,Model *m,int layer,int eid,ESlot *s,int 
     }
     /* DUAL-SSD (#1165): pick this expert's replica exactly as the blocking
      * path does. The uring path used the primary fd unconditionally, so
-     * URING=1 read every expert from drive 0 and COLI_MODEL_MIRROR bought
+     * URING=1 read every expert from drive 0 and LMA_MODEL_MIRROR bought
      * nothing -- visible as an idle mirror in iostat while URING=0 lit it up.
      * Same deterministic hash of (layer,eid), so an expert always comes from
      * the same drive and PILOT's readahead lands where the demand read will.
@@ -178,7 +178,7 @@ static int uring_load_add(UringBatch *b,Model *m,int layer,int eid,ESlot *s,int 
 }
 static void uring_reap(UringBatch *b){
     struct io_uring_cqe cqe;
-    while(coli_uring_peek(&b->ring,&cqe)){
+    while(lma_uring_peek(&b->ring,&cqe)){
         if(!cqe.user_data || cqe.user_data>(uint64_t)b->nreq) continue;
         UringRead *r=&b->req[cqe.user_data-1]; UringLoad *l=&b->load[r->load];
         int served=cqe.res>=r->expect;
@@ -205,14 +205,14 @@ static void uring_reap(UringBatch *b){
     }
 }
 static int uring_submit_batch(UringBatch *b){
-    if(coli_uring_enter(&b->ring,0)<0) return -1;
+    if(lma_uring_enter(&b->ring,0)<0) return -1;
     uring_reap(b); return 0;
 }
 static int uring_wait_load(UringBatch *b,int li){
     UringLoad *l=&b->load[li];
     while(!l->done){
         uring_reap(b); if(l->done) break;
-        if(coli_uring_enter(&b->ring,1)<0) return uring_load_error(l,errno,"io_uring wait");
+        if(lma_uring_enter(&b->ring,1)<0) return uring_load_error(l,errno,"io_uring wait");
     }
     return l->error?-1:0;
 }
@@ -252,4 +252,4 @@ static int uring_wait_all(UringBatch *b){
 }
 #endif
 
-#endif /* COLIBRI_URING_LOAD_H */
+#endif /* GLM52_URING_LOAD_H */

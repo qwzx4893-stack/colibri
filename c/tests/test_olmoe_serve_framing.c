@@ -1,7 +1,7 @@
 /* Freeze OLMoE's existing request framing before moving it behind a shared
  * codec. This includes the production parser and queue, but no model weights. */
 #define OLMOE_TESTING 1
-#define main coli_olmoe_main_unused
+#define main lma_olmoe_main_unused
 #include "../olmoe.c"
 #undef main
 
@@ -177,10 +177,10 @@ static void test_bad_frame_stops_before_the_next_command(void)
 
 static void test_max_tokens_is_a_ceiling(void)
 {
-    assert(coli_serve_budget(2, 1024, 4096, 0) == 1024);
-    assert(coli_serve_budget(3500, 1024, 4096, 0) == 596);
-    assert(coli_serve_budget(4096, 1, 4096, 0) == -1);
-    assert(coli_serve_budget(4096, 0, 4096, 1) == 0);
+    assert(lma_serve_budget(2, 1024, 4096, 0) == 1024);
+    assert(lma_serve_budget(3500, 1024, 4096, 0) == 596);
+    assert(lma_serve_budget(4096, 1, 4096, 0) == -1);
+    assert(lma_serve_budget(4096, 0, 4096, 1) == 0);
 }
 
 int main(void)

@@ -55,7 +55,7 @@ int main(void){
     fclose(in);fclose(out);
     /* #1641: max_tokens is a ceiling. The gateway's default budget (8192, the
      * whole default context) used to be refused on every request without
-     * max_tokens and on every `coli chat` message; now it is clamped to what
+     * max_tokens and on every `lmatomic chat` message; now it is clamped to what
      * the context holds, and only a prompt that does not fit is refused. */
     CHECK(q38_serve_budget(2, 8192, 8192, 0)==8190);      /* clamped to the room left */
     CHECK(q38_serve_budget(100, 50, 8192, 0)==50);        /* fits: untouched */

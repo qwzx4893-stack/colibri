@@ -13,7 +13,7 @@
  *
  * No conversion step: the released checkpoint is already fp8 (dense, 32x32 ue8m0
  * block scales) and fp4 (experts, ue8m0 per 32-column group), and the fp4 layout is
- * byte-identical to the mxfp4 colibri already reads for Kimi K3, so quant.h's
+ * byte-identical to the mxfp4 lmatomic already reads for Kimi K3, so quant.h's
  * matmul_mxfp4 is the expert kernel. What the container does need is a sidecar the
  * engine cannot compute (tools/prepare_dsv41.py): the engram bucket primes (sympy),
  * the hash multipliers (numpy PCG64) and the compressed-token map (the tokenizer's
@@ -185,7 +185,7 @@ static void cfg_load(Cfg *c, const char *snap) {
     /* CTX caps the context, and with it every buffer sized from it: the compressed
      * KV and index keys of the four source layers, and both rope tables. Every
      * other engine in the registry reads its own context variable (CTX, GLM53_MAXT,
-     * CTX_MAX, K3_MAXT, Q36_MAXT, Q38_MAXT); this one read none, so `coli --ctx`
+     * CTX_MAX, K3_MAXT, Q36_MAXT, Q38_MAXT); this one read none, so `lmatomic --ctx`
      * set CTX for the planner and the engine ignored it. The planner sizes those
      * buffers from the context it was asked for, which at the default 4096 is
      * 0.02 GiB against the 6.25 GiB the engine allocated for the checkpoint's
@@ -275,7 +275,7 @@ typedef struct { float *w; int64_t n; } WF;                /* f32               
 
 #define FP8_TILE 32
 
-/* Per-turn accounting on stderr. Off by default because `coli chat` shows the
+/* Per-turn accounting on stderr. Off by default because `lmatomic chat` shows the
  * engine's stderr right next to the answer; V41_STATS=1 turns it on, which is
  * what the benchmarks and the server scripts use. */
 static int v41_stats(void) {
@@ -936,13 +936,13 @@ static void rms_into(float *out, const float *x, const float *weight, int n, flo
  * Two things move them that the sibling engines already have and this one did
  * not:
  *
- *   - COLI_MODEL_MIRROR=<dir>[;<dir>...] registers read-only copies of the
+ *   - LMA_MODEL_MIRROR=<dir>[;<dir>...] registers read-only copies of the
  *     checkpoint on other drives. st_mirror_add above accepts a copy only when
  *     its size and safetensors header are byte-identical to the primary's, so
  *     every data offset matches by construction and each expert can be served
  *     by any replica. A partial mirror is legal and a shard it does not carry
  *     simply stays on the primary.
- *   - the split between replicas follows COLI_DISK_WEIGHTS, or is measured at
+ *   - the split between replicas follows LMA_DISK_WEIGHTS, or is measured at
  *     startup with this engine's own access pattern when that is absent.
  *
  * Two independent drives answer in parallel; one drive split two ways answers no
@@ -1019,7 +1019,7 @@ static double mirror_probe_bw(shards *S, int rep) {
  * primary by the time the split exists. */
 static void mirror_setup(shards *S, const char *model_dir, int experts_per_layer) {
     if (experts_per_layer > 0) g_mir_epl = experts_per_layer;
-    const char *dirs = getenv("COLI_MODEL_MIRROR");
+    const char *dirs = getenv("LMA_MODEL_MIRROR");
     if (!dirs || !*dirs) dirs = getenv("SNAP_MIRROR");
     if (!dirs || !*dirs) return;
     st_mirror_reset(S);
@@ -1060,8 +1060,8 @@ static void mirror_setup(shards *S, const char *model_dir, int experts_per_layer
     g_mirror = 1; g_mir_nrep = nrep;
     double weight[V41_MIR_REPS];
     int have = 0;
-    const char *spec = getenv("COLI_DISK_WEIGHTS");
-    const char *how = "COLI_DISK_WEIGHTS";
+    const char *spec = getenv("LMA_DISK_WEIGHTS");
+    const char *how = "LMA_DISK_WEIGHTS";
     if (spec && *spec) {
         char wb[256];
         snprintf(wb, sizeof(wb), "%s", spec);
@@ -1073,7 +1073,7 @@ static void mirror_setup(shards *S, const char *model_dir, int experts_per_layer
         }
         if (!bad && n == nrep) have = 1;
         else
-            fprintf(stderr, "[MIRROR] invalid COLI_DISK_WEIGHTS '%s' (want %d positive "
+            fprintf(stderr, "[MIRROR] invalid LMA_DISK_WEIGHTS '%s' (want %d positive "
                             "comma-separated weights, e.g. 9,3) — probing instead\n", spec, nrep);
     }
     if (!have) {
@@ -1115,7 +1115,7 @@ static void mirror_setup(shards *S, const char *model_dir, int experts_per_layer
 }
 
 /* The per-drive line ENVIRONMENT.md documents ("Per-drive byte counts are
- * reported in a MIRROR: stats line"), in the shape colibri.c prints. Counters
+ * reported in a MIRROR: stats line"), in the shape glm52.c prints. Counters
  * are cumulative; passing the values from before a turn reports that turn. On
  * stderr, because stdout carries the serve protocol. */
 static void mirror_report(const uint64_t *bytes0, const uint64_t *reads0) {
@@ -1210,7 +1210,7 @@ static int expert_read_depth(void) {
  * once out of it -- to leave the cache exactly as cold as it was. V41_DIRECT=0
  * restores the buffered path, which is the arm of the A/B and the escape hatch
  * on a device where the direct path turns out to be slower. */
-/* COLI_KV_PREFIX: on this engine reuse is OPT-IN, which it is on no other.
+/* LMA_KV_PREFIX: on this engine reuse is OPT-IN, which it is on no other.
  *
  * Everywhere else a reused prefix is the same computation as a cold prefill, so
  * reuse changes the time and nothing else and can be on by default. Here it is
@@ -1230,7 +1230,7 @@ static int expert_read_depth(void) {
  * assumed. A resumed PREFILL is exact (docs/deepseek-v41.md records the split
  * measurements), so a prompt that only ever grows without generated text in
  * between -- an agent resending a document, a tool loop -- reuses losslessly. */
-static int kv_prefix_on(void){ const char *e = getenv("COLI_KV_PREFIX"); return e && *e != '0'; }
+static int kv_prefix_on(void){ const char *e = getenv("LMA_KV_PREFIX"); return e && *e != '0'; }
 
 static int expert_direct(void) {
     static int on = -1;
@@ -1457,16 +1457,16 @@ static void model_load(Model *m, const char *snap, int ecap, int engram_cache_ro
      * is one int per position the engine can actually hold, not per position the
      * checkpoint allows. A failure here disables reuse and nothing else. */
     kv_prefix_alloc(&m->kvp, c->max_positions);
-    /* COLI_MODEL_DIRS: the container split across drives as DISTINCT shards, so
+    /* LMA_MODEL_DIRS: the container split across drives as DISTINCT shards, so
      * the 510 GB this engine streams can live on two drives of ~256 GB instead
      * of one of 512 -- which is the configuration most people can actually
      * build, and it needs no second copy. The mirror below is the other half of
      * the same idea: that one duplicates the bytes and splits the reads, this
      * one splits the bytes and reads each shard from the one drive holding it.
      * They compose: a mirror dir may copy any subset of the split's shards. */
-    const char *extra_dirs = getenv("COLI_MODEL_DIRS");
+    const char *extra_dirs = getenv("LMA_MODEL_DIRS");
     st_init_multi(&m->S, snap, (extra_dirs && *extra_dirs) ? extra_dirs : NULL);
-    /* DUAL-SSD: register COLI_MODEL_MIRROR copies and settle the read split
+    /* DUAL-SSD: register LMA_MODEL_MIRROR copies and settle the read split
      * before the first expert read, so nothing has been pulled from the primary
      * by the time the replicas exist. */
     mirror_setup(&m->S, snap, c->n_routed);
@@ -1642,7 +1642,7 @@ static void window_idxs(const Cfg *c, const Layer *l, int n, int start_pos, int 
 static void sparse_attend(float *out, const float *q, const float *kv, const int *idx,
                           int count, int nh, int hd, float sink_h, float scale,
                           float *score) {
-    coli_sparse_attend(out, q, kv, idx, count, hd, sink_h, scale, score);
+    lma_sparse_attend(out, q, kv, idx, count, hd, sink_h, scale, score);
     (void)nh;
 }
 
@@ -2188,7 +2188,7 @@ static void moe_gate(Model *m, Layer *l, int E, int topk, const float *x,
     }
     /* Ranking by score+bias is shared (moe_router.h); the weight is the unbiased score.
      * The layer index is not known here, so a non-finite-router warning says -1. */
-    coli_router_topk(scores, l->gate_bias.w, NULL, E, topk, chosen, NULL, -1, 1);
+    lma_router_topk(scores, l->gate_bias.w, NULL, E, topk, chosen, NULL, -1, 1);
     for (int k = 0; k < topk; k++) weights[k] = scores[chosen[k]];
     if (c->norm_topk_prob && topk > 1) {
         float total = 0.0f;
@@ -2393,7 +2393,7 @@ static void engram_run(Model *m, int layer, float *h, int n, int start_pos) {
                 if (magnitude < 1e-6f) magnitude = 1e-6f;
                 float signed_root = sqrtf(magnitude);
                 if (scaled < 0.0f) signed_root = -signed_root;
-                float gate = coli_hc_sigmoid(signed_root);
+                float gate = lma_hc_sigmoid(signed_root);
                 for (int i = 0; i < dim; i++) stream_copy[i] += gate * value[i];
             }
         }
@@ -2591,8 +2591,8 @@ static void vision_forward(Model *m, Vision *v, const float *patches, int n_h, i
 
 /* The mix coefficients a sublayer computes are used by the NEXT one (model.py
  * Block.forward): attention collapses with what the previous block's FFN produced,
- * the FFN with what this attention produced. Keeping `pre` out of coli_hc_pre is
- * exactly why this engine calls coli_hc_split_sinkhorn directly. */
+ * the FFN with what this attention produced. Keeping `pre` out of lma_hc_pre is
+ * exactly why this engine calls lma_hc_split_sinkhorn directly. */
 static void hc_mixes(Model *m, const float *hc_fn, const float *scale, const float *base,
                      const float *stream, float *pre, float *post, float *comb) {
     Cfg *c = &m->c;
@@ -2608,7 +2608,7 @@ static void hc_mixes(Model *m, const float *hc_fn, const float *scale, const flo
         for (int i = 0; i < flat; i++) sum += w[i] * stream[i];
         mixes[row] = sum * inverse;
     }
-    if (coli_hc_split_sinkhorn(pre, post, comb, mixes, scale, base, hc, c->hc_iters, c->hc_eps) != 0) {
+    if (lma_hc_split_sinkhorn(pre, post, comb, mixes, scale, base, hc, c->hc_iters, c->hc_eps) != 0) {
         fprintf(stderr, "[hc] sinkhorn refused its arguments\n"); exit(1); }
     free(mixes);
 }
@@ -2895,7 +2895,7 @@ static int spec_step(Model *m, int token, int start_pos, int main_rows,
         }
         spec_attention(m, stage, branch_in, block, start_pos, main_x, main_rows, branch_out);
         for (int i = 0; i < block; i++)
-            coli_hc_post(h + (size_t)i * hc * dim, branch_out + (size_t)i * dim,
+            lma_hc_post(h + (size_t)i * hc * dim, branch_out + (size_t)i * dim,
                          residual + (size_t)i * hc * dim, post + (size_t)i * hc,
                          comb + (size_t)i * hc * hc, hc, dim);
         memcpy(pre_mix, pre, (size_t)block * hc * sizeof(float));
@@ -2917,7 +2917,7 @@ static int spec_step(Model *m, int token, int start_pos, int main_rows,
         moe_run_at(m, l, &sp->cache[stage], "mtp", stage, c->spec_routed, c->spec_activated,
                    branch_in, block, branch_out);
         for (int i = 0; i < block; i++)
-            coli_hc_post(h + (size_t)i * hc * dim, branch_out + (size_t)i * dim,
+            lma_hc_post(h + (size_t)i * hc * dim, branch_out + (size_t)i * dim,
                          residual + (size_t)i * hc * dim, post + (size_t)i * hc,
                          comb + (size_t)i * hc * hc, hc, dim);
         memcpy(pre_mix, pre, (size_t)block * hc * sizeof(float));
@@ -2984,13 +2984,13 @@ static void forward_full(Model *m, const int *ids, int n, float *logits, int spe
  * che il prefisso tenuto e quello fotografato: le righe KV di quelle posizioni
  * non sono state toccate da nessuno. Si salvano gli id e il vettore di logit
  * finale, che e il predittore del primo token fresco. */
-static ColiPinPool g_pins;               /* piu scatti annidati, vedi pin_pool.h */
+static LmaPinPool g_pins;               /* piu scatti annidati, vedi pin_pool.h */
 static const float *g_pin_logit = NULL;
 static int    g_pin_use_logit = 0;
 
 static void v41_echo(const char *id, int pos, int token, const float *lo, int V, int k,
                      Tok *tokenizer) {
-    char tail[1024]; coli_logprob_tail(tail, sizeof tail, lo, V, token, k);
+    char tail[1024]; lma_logprob_tail(tail, sizeof tail, lo, V, token, k);
     char piece[512]; int n = tok_decode(tokenizer, &token, 1, piece, (int)sizeof(piece));
     if (n < 0) n = 0;
     printf("ECHO %s %d %d%s\n", id, n, pos, tail);
@@ -3156,7 +3156,7 @@ static void forward_full(Model *m, const int *ids, int n, float *logits, int spe
         attention_run(m, layer, branch_in, n, start_pos, branch_out);
         trace("attn_out", layer, branch_out + (size_t)trace_row * dim, dim);
         for (int t = 0; t < n; t++)
-            coli_hc_post(h + (size_t)t * hc * dim, branch_out + (size_t)t * dim,
+            lma_hc_post(h + (size_t)t * hc * dim, branch_out + (size_t)t * dim,
                          residual + (size_t)t * hc * dim, post + (size_t)t * hc,
                          comb + (size_t)t * hc * hc, hc, dim);
         /* the attention's own `pre` collapses the FFN input */
@@ -3184,7 +3184,7 @@ static void forward_full(Model *m, const int *ids, int n, float *logits, int spe
             trace("ffn_out", layer, branch_out + (size_t)trace_row * dim, dim);
         }
         for (int t = 0; t < n; t++)
-            coli_hc_post(h + (size_t)t * hc * dim, branch_out + (size_t)t * dim,
+            lma_hc_post(h + (size_t)t * hc * dim, branch_out + (size_t)t * dim,
                          residual + (size_t)t * hc * dim, post + (size_t)t * hc,
                          comb + (size_t)t * hc * hc, hc, dim);
         memcpy(pre_mix, pre, (size_t)n * hc * sizeof(float));   /* the FFN's, for the next block */
@@ -3258,7 +3258,7 @@ static void model_reset(Model *m) {
     kv_prefix_clear(&m->kvp);
 }
 
-static const ColiServeWireProfile v41_wire = {
+static const LmaServeWireProfile v41_wire = {
     .max_header_bytes = 511,
     .max_payload_bytes = 1u << 24,
     .max_tokens = 1 << 20,
@@ -3446,7 +3446,7 @@ static void serve_line(const char *format, ...) {
 }
 
 /* --- the dashboard's four lines -------------------------------------------
- * Same bytes colibri.c emits, so the gateway parses this engine like any other:
+ * Same bytes glm52.c emits, so the gateway parses this engine like any other:
  *   EMAP rows cols hex   the grid, after READY and STAT and after every turn
  *   HITS rows cols hex   the experts a turn routed, after DONE next to PROF
  *   PROF ...             wall, tokens, disk, wait, matmul, attention, head, forwards
@@ -3528,10 +3528,10 @@ static int serve_budget(int prompt, int requested, int context, int logprobs) {
 
 static void serve_loop(Model *m, Tok *tokenizer, const char *snap) {
     Cfg *c = &m->c;
-    coli_serve_stdio_init();
+    lma_serve_stdio_init();
     int eos_ids[8];
     int n_eos = serve_eos(m, snap, eos_ids, 8);
-    coli_serve_write_ready(stdout, rss_gb());
+    lma_serve_write_ready(stdout, rss_gb());
     serve_emap(m);
     float *logits = xmalloc((size_t)c->vocab * sizeof(float), "logits");
     /* tok_encode stops at its output capacity: one extra id distinguishes
@@ -3541,45 +3541,45 @@ static void serve_loop(Model *m, Tok *tokenizer, const char *snap) {
     int pending_h = 0, pending_w = 0;
 
     for (;;) {
-        ColiServeCommand command;
-        ColiServeReadResult result = coli_serve_read_command(stdin, &v41_wire, &command);
-        if (result == COLI_SERVE_READ_EOF || result == COLI_SERVE_READ_BAD_FRAME) break;
-        if (result == COLI_SERVE_READ_NOMEM) {
-            coli_serve_write_error(stdout, command.id, "out of memory"); break; }
-        if (result == COLI_SERVE_READ_BAD_REQUEST) {
-            if (command.kind == COLI_SERVE_COMMAND_SUBMIT)
-                coli_serve_write_error(stdout, command.id, "bad submit header");
-            coli_serve_command_dispose(&command);
+        LmaServeCommand command;
+        LmaServeReadResult result = lma_serve_read_command(stdin, &v41_wire, &command);
+        if (result == LMA_SERVE_READ_EOF || result == LMA_SERVE_READ_BAD_FRAME) break;
+        if (result == LMA_SERVE_READ_NOMEM) {
+            lma_serve_write_error(stdout, command.id, "out of memory"); break; }
+        if (result == LMA_SERVE_READ_BAD_REQUEST) {
+            if (command.kind == LMA_SERVE_COMMAND_SUBMIT)
+                lma_serve_write_error(stdout, command.id, "bad submit header");
+            lma_serve_command_dispose(&command);
             continue;
         }
-        if (command.kind == COLI_SERVE_COMMAND_IMAGE) {
+        if (command.kind == LMA_SERVE_COMMAND_IMAGE) {
             /* One image waits for the SUBMIT that names it. A second one before that
              * SUBMIT replaces the first and says so: answering about the wrong photo
              * is worse than refusing. */
             if (!m->vision) {
-                coli_serve_write_error(stdout, command.id, "this container has no vision tower");
-                coli_serve_command_dispose(&command);
+                lma_serve_write_error(stdout, command.id, "this container has no vision tower");
+                lma_serve_command_dispose(&command);
                 continue;
             }
             int patch_in = 3 * c->vision_patch * c->vision_patch;
             uint64_t expected = (uint64_t)command.grid_h * command.grid_w * patch_in * sizeof(float);
             if (command.grid_h < 1 || command.grid_w < 1 || command.payload_bytes != expected) {
-                coli_serve_write_error(stdout, command.id, "IMAGE payload does not match its grid");
-                coli_serve_command_dispose(&command);
+                lma_serve_write_error(stdout, command.id, "IMAGE payload does not match its grid");
+                lma_serve_command_dispose(&command);
                 continue;
             }
             if (pending_image) fprintf(stderr, "[v41] a second IMAGE replaced the first\n");
             free(pending_image);
-            pending_image = (float *)coli_serve_command_take_payload(&command);
+            pending_image = (float *)lma_serve_command_take_payload(&command);
             pending_h = command.grid_h; pending_w = command.grid_w;
-            coli_serve_command_dispose(&command);
+            lma_serve_command_dispose(&command);
             continue;
         }
-        if (command.kind != COLI_SERVE_COMMAND_SUBMIT) {
+        if (command.kind != LMA_SERVE_COMMAND_SUBMIT) {
             /* CANCEL and STOP for a turn that is not running: the protocol's NOT_FOUND */
-            if (command.kind == COLI_SERVE_COMMAND_CANCEL)
-                coli_serve_write_error(stdout, command.id, "NOT_FOUND");
-            coli_serve_command_dispose(&command);
+            if (command.kind == LMA_SERVE_COMMAND_CANCEL)
+                lma_serve_write_error(stdout, command.id, "NOT_FOUND");
+            lma_serve_command_dispose(&command);
             continue;
         }
         double turn_started = now_s();
@@ -3600,9 +3600,9 @@ static void serve_loop(Model *m, Tok *tokenizer, const char *snap) {
             snprintf(message, sizeof(message),
                      "CONTEXT_EXCEEDED prompt_tokens=%d requested=%d capacity=%d",
                      n_prompt, command.max_tokens, c->max_positions);
-            coli_serve_write_error(stdout, command.id,
+            lma_serve_write_error(stdout, command.id,
                                    n_prompt < 1 ? "EMPTY_PROMPT" : message);
-            coli_serve_command_dispose(&command); continue;
+            lma_serve_command_dispose(&command); continue;
         }
         if (command.max_tokens > budget)
             fprintf(stderr, "[serve] max_tokens %d clamped to %d (context %d - prompt %d); "
@@ -3615,7 +3615,7 @@ static void serve_loop(Model *m, Tok *tokenizer, const char *snap) {
          * nothing -- nothing here can rewind four caches and a ring. An image
          * refuses it outright: the placeholder ids describe the span but not the
          * picture, and the span's offsets are computed against the whole prompt.
-         * COLI_KV_PREFIX=0 disables it, COLI_PREFIX_LOG=1 reports the decision. */
+         * LMA_KV_PREFIX=0 disables it, LMA_PREFIX_LOG=1 reports the decision. */
         int reuse = 0;
         if (n_prompt >= 1 && kv_prefix_on() && !pending_image)
             reuse = kv_prefix_reuse(&m->kvp, ids, n_prompt);
@@ -3627,22 +3627,22 @@ static void serve_loop(Model *m, Tok *tokenizer, const char *snap) {
             /* Il piu profondo degli scatti valido: con due livelli annidati
              * (istruzioni, istruzioni+domanda) vince il secondo, e se le sue
              * righe non ci sono piu si ripiega sul primo. */
-            int ps = coli_pin_best(&g_pins, ids, n_prompt);
+            int ps = lma_pin_best(&g_pins, ids, n_prompt);
             while (ps >= 0) {
-                ColiPin *k = &g_pins.slot[ps];
+                LmaPin *k = &g_pins.slot[ps];
                 if (kv_prefix_holds(&m->kvp, k->ids, k->len)) {
                     kv_prefix_clear(&m->kvp);
                     kv_prefix_record(&m->kvp, k->ids, 0, k->len);
                     reuse = k->len;
                     g_pin_logit = k->logit; g_pin_use_logit = k->logit != NULL;
-                    coli_pin_touch(&g_pins, ps);
+                    lma_pin_touch(&g_pins, ps);
                     break;
                 }
                 k->len = 0;
-                ps = coli_pin_best(&g_pins, ids, n_prompt);
+                ps = lma_pin_best(&g_pins, ids, n_prompt);
             }
         }
-        if (getenv("COLI_PREFIX_LOG")) {
+        if (getenv("LMA_PREFIX_LOG")) {
             if (reuse)
                 fprintf(stderr, "[PREFIX] reusing %d of %d prompt tokens (%.0f%%)\n",
                         reuse, n_prompt, 100.0 * reuse / n_prompt);
@@ -3651,11 +3651,11 @@ static void serve_loop(Model *m, Tok *tokenizer, const char *snap) {
                         m->kvp.len, m->kvp.cap, n_prompt,
                         m->kvp.tainted ? " tainted" : "",
                         pending_image ? " (image)" : "",
-                        kv_prefix_on() ? "" : " (off: set COLI_KV_PREFIX=1)");
+                        kv_prefix_on() ? "" : " (off: set LMA_KV_PREFIX=1)");
             fflush(stderr);
         }
         if (!reuse) model_reset(m);
-        coli_serve_write_accept(stdout, command.id, n_prompt);
+        lma_serve_write_accept(stdout, command.id, n_prompt);
         float *aligned = NULL;
         uint8_t *image_mask = NULL;
         int image_at = -1, image_h = 0, image_w = 0;
@@ -3716,8 +3716,8 @@ static void serve_loop(Model *m, Tok *tokenizer, const char *snap) {
                            image_at, image_h, image_w, image_mask);
         free(aligned); free(image_mask);
         if (command.pin) {
-            coli_pin_pool_init(&g_pins, c->vocab);
-            if (coli_pin_store(&g_pins, ids, n_prompt, logits)) {
+            lma_pin_pool_init(&g_pins, c->vocab);
+            if (lma_pin_store(&g_pins, ids, n_prompt, logits)) {
                 fprintf(stderr, "[PIN] scatto a %d token\n", n_prompt);
                 fflush(stderr);
             }
@@ -3745,26 +3745,26 @@ static void serve_loop(Model *m, Tok *tokenizer, const char *snap) {
                     /* La distribuzione da cui il token e stato estratto e ancora
                      * quella in `logits`: serve_sample non la modifica. */
                     char lp[1024];
-                    coli_logprob_tail(lp, sizeof lp, logits, c->vocab, token, command.logprobs);
-                    coli_serve_write_data_lp(stdout, command.id, piece, (size_t)written, lp);
-                } else coli_serve_write_data(stdout, command.id, piece, (size_t)written);
+                    lma_logprob_tail(lp, sizeof lp, logits, c->vocab, token, command.logprobs);
+                    lma_serve_write_data_lp(stdout, command.id, piece, (size_t)written, lp);
+                } else lma_serve_write_data(stdout, command.id, piece, (size_t)written);
             }
             emitted++;
             /* #1332: look at stdin once per token so a client that walked away stops
              * paying for a turn nobody wants. A CANCEL aborts, a STOP ends it through
              * the normal DONE path -- the two are not the same frame and must not
              * share an outcome. */
-            while (coli_serve_stdin_ready()) {
-                ColiServeCommand control;
-                ColiServeReadResult inner = coli_serve_read_command(stdin, &v41_wire, &control);
-                if (inner == COLI_SERVE_READ_EOF) { done_early = 1; break; }
-                if (control.kind == COLI_SERVE_COMMAND_CANCEL &&
+            while (lma_serve_stdin_ready()) {
+                LmaServeCommand control;
+                LmaServeReadResult inner = lma_serve_read_command(stdin, &v41_wire, &control);
+                if (inner == LMA_SERVE_READ_EOF) { done_early = 1; break; }
+                if (control.kind == LMA_SERVE_COMMAND_CANCEL &&
                     !strcmp(control.id, command.id)) cancelled = 1;
-                else if (control.kind == COLI_SERVE_COMMAND_STOP &&
+                else if (control.kind == LMA_SERVE_COMMAND_STOP &&
                          !strcmp(control.id, command.id)) { limited = 0; done_early = 1; }
-                else if (control.kind == COLI_SERVE_COMMAND_SUBMIT)
-                    coli_serve_write_error(stdout, control.id, "SLOT_BUSY");
-                coli_serve_command_dispose(&control);
+                else if (control.kind == LMA_SERVE_COMMAND_SUBMIT)
+                    lma_serve_write_error(stdout, control.id, "SLOT_BUSY");
+                lma_serve_command_dispose(&control);
             }
             if (cancelled || done_early || emitted >= budget) break;
 
@@ -3793,16 +3793,16 @@ static void serve_loop(Model *m, Tok *tokenizer, const char *snap) {
                 if (written > 0) {
                     if (command.logprobs > 0) {
                         char lp[1024];
-                        coli_logprob_tail(lp, sizeof lp, logits, c->vocab, token, command.logprobs);
-                        coli_serve_write_data_lp(stdout, command.id, piece, (size_t)written, lp);
-                    } else coli_serve_write_data(stdout, command.id, piece, (size_t)written);
+                        lma_logprob_tail(lp, sizeof lp, logits, c->vocab, token, command.logprobs);
+                        lma_serve_write_data_lp(stdout, command.id, piece, (size_t)written, lp);
+                    } else lma_serve_write_data(stdout, command.id, piece, (size_t)written);
                 }
                 emitted++;
             }
         }
         free(batch); free(confidence);
         /* Per-turn accounting goes to stderr, and stderr is what the user reads
-         * their answer next to in `coli chat`: four lines a turn between the
+         * their answer next to in `lmatomic chat`: four lines a turn between the
          * question and the reply is noise, not instrumentation. Off unless asked
          * for, and the benches ask for it. */
         int stats = v41_stats();
@@ -3847,24 +3847,24 @@ static void serve_loop(Model *m, Tok *tokenizer, const char *snap) {
                     (unsigned long long)(m->spec.accepted - accepted0),
                     (unsigned long long)(m->spec.proposed - proposed0));
         if (cancelled) {
-            coli_serve_write_error(stdout, command.id, "CANCELLED");
-            coli_serve_command_dispose(&command);
+            lma_serve_write_error(stdout, command.id, "CANCELLED");
+            lma_serve_command_dispose(&command);
             continue;
         }
         double wall = now_s() - turn_started;
         uint64_t turn_hits = m->hits - hits0, turn_miss = m->miss - miss0;
-        ColiServeDone done = {
+        LmaServeDone done = {
             emitted, wall > 0 ? emitted / wall : 0.0,
             (turn_hits + turn_miss) ? 100.0 * turn_hits / (double)(turn_hits + turn_miss) : 0.0,
             rss_gb(), n_prompt, limited,
         };
-        coli_serve_write_done(stdout, command.id, &done);
+        lma_serve_write_done(stdout, command.id, &done);
         serve_line("PROF %.3f %d %d %.3f %.3f %.3f %.3f %.3f %llu\n", wall, n_prompt, emitted,
                    m->t_disk - disk0, 0.0, m->t_expert - expert0, m->t_attn - attn0,
                    m->t_engram - engram0, (unsigned long long)(m->forwards - forwards0));
         serve_hits(m);
         serve_emap(m);
-        coli_serve_command_dispose(&command);
+        lma_serve_command_dispose(&command);
     }
     free(ids); free(logits);
 }
@@ -3889,13 +3889,13 @@ int main(int argc, char **argv) {
      * logical CPU) the region cost dominates: on a 208-logical-CPU host 93% of
      * all cycles land inside libgomp and the turn runs 18.7x slower than at 32
      * threads and 11.7x slower than at the 104 physical cores this picks.
-     * colibri/inkling/kimi_k3/olmoe already call it; see
+     * lmatomic/inkling/kimi_k3/olmoe already call it; see
      * docs/experiments/dsv41-omp-team-2026-09-15.md.
-     * OMP_NUM_THREADS still wins, COLI_NO_OMP_TUNE=1 still disables it. */
-    coli_omp_tune_threads("deepseek-v41");
+     * OMP_NUM_THREADS still wins, LMA_NO_OMP_TUNE=1 still disables it. */
+    lma_omp_tune_threads("deepseek-v41");
     const char *snap = getenv("SNAP");
     if (!snap) { fprintf(stderr, "SNAP=<container dir> is required\n"); return 2; }
-    int cap = argc > 1 ? coli_arg_int(argv[1], "cache/layer") : 8;
+    int cap = argc > 1 ? lma_arg_int(argv[1], "cache/layer") : 8;
     const char *ref_path = argc > 2 ? argv[2] : NULL;
     int engram_rows = getenv("V41_ENGRAM_ROWS") ? atoi(getenv("V41_ENGRAM_ROWS")) : 65536;
     g_trace = getenv("V41_TRACE") ? atoi(getenv("V41_TRACE")) : 0;

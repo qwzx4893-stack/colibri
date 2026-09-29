@@ -25,7 +25,7 @@ const DICTS: Record<string, Record<string, string>> = {
   "id": id,
 }
 
-const STORAGE_KEY = "colibri-locale"
+const STORAGE_KEY = "lmatomic-locale"
 
 function detectLocale(): string {
   try {

@@ -16,8 +16,8 @@ from fractions import Fraction
 from pathlib import Path
 
 
-SCHEMA = "colibri.partial-mirror.v1"
-RECEIPT = ".colibri-mirror.json"
+SCHEMA = "lmatomic.partial-mirror.v1"
+RECEIPT = ".lmatomic-mirror.json"
 GIB = 1024 ** 3
 MAX_HEADER = 256 * 1024 * 1024
 COPY_CHUNK = 16 * 1024 * 1024
@@ -444,11 +444,11 @@ def verify_mirror(mirror, model=None, source_dirs=()):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("plan", "stage", "verify"))
-    parser.add_argument("--model", required=True, help="primary Colibri model directory")
+    parser.add_argument("--model", required=True, help="primary LM Atomic model directory")
     parser.add_argument("--mirror", required=True, help="partial mirror directory")
     parser.add_argument("--source-dir", action="append", default=[],
                         help="additional split-model shard directory (repeatable)")
-    parser.add_argument("--usage", help="usage history (default: MODEL/.coli_usage)")
+    parser.add_argument("--usage", help="usage history (default: MODEL/.lma_usage)")
     parser.add_argument("--budget-gib", type=float, default=0,
                         help="maximum total mirror size; required for plan/stage")
     parser.add_argument("--reserve-gib", type=float, default=10,
@@ -467,7 +467,7 @@ def main(argv=None):
     if (not math.isfinite(args.budget_gib) or args.budget_gib <= 0 or
             not math.isfinite(args.reserve_gib) or args.reserve_gib < 0):
         raise MirrorError("--budget-gib must be positive and --reserve-gib cannot be negative")
-    usage = Path(args.usage) if args.usage else model / ".coli_usage"
+    usage = Path(args.usage) if args.usage else model / ".lma_usage"
     budget = int(args.budget_gib * GIB)
     reserve = int(args.reserve_gib * GIB)
     if args.action == "plan":

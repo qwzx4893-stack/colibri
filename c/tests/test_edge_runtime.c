@@ -8,17 +8,17 @@
 
 typedef struct { int unused; } FakeEdge;
 
-static int fake_open(void **impl, ColiEdgeCapabilities *capabilities,
-                     const ColiEdgeEngineOptions *options,
+static int fake_open(void **impl, LmaEdgeCapabilities *capabilities,
+                     const LmaEdgeEngineOptions *options,
                      char *error, size_t error_size) {
     (void)options; (void)error; (void)error_size;
     FakeEdge *created = calloc(1, sizeof(*created));
     if (!created) return -1;
-    capabilities->abi_version = COLI_EDGE_ABI_VERSION;
-    capabilities->flags = COLI_EDGE_CAP_TOKENIZE |
-                          COLI_EDGE_CAP_DETOKENIZE |
-                          COLI_EDGE_CAP_GREEDY | COLI_EDGE_CAP_LOGITS |
-                          COLI_EDGE_CAP_CPU;
+    capabilities->abi_version = LMA_EDGE_ABI_VERSION;
+    capabilities->flags = LMA_EDGE_CAP_TOKENIZE |
+                          LMA_EDGE_CAP_DETOKENIZE |
+                          LMA_EDGE_CAP_GREEDY | LMA_EDGE_CAP_LOGITS |
+                          LMA_EDGE_CAP_CPU;
     snprintf(capabilities->engine_id, sizeof(capabilities->engine_id), "fake");
     snprintf(capabilities->state_schema, sizeof(capabilities->state_schema),
              "fake/f32-v1");
@@ -26,7 +26,7 @@ static int fake_open(void **impl, ColiEdgeCapabilities *capabilities,
              "fake/strict-v1");
     snprintf(capabilities->tokenizer_class,
              sizeof(capabilities->tokenizer_class), "fake/bytes-v1");
-    capabilities->state_dtype = COLI_EDGE_DTYPE_F32;
+    capabilities->state_dtype = LMA_EDGE_DTYPE_F32;
     capabilities->state_width = 4;
     capabilities->vocab_size = 256;
     capabilities->max_batch_rows = 8;
@@ -72,7 +72,7 @@ static int fake_detokenize(void *impl, const int32_t *ids, size_t count,
     return 0;
 }
 
-static int fake_embed(void *impl, const ColiEdgeEmbedRequest *request,
+static int fake_embed(void *impl, const LmaEdgeEmbedRequest *request,
                       char *error, size_t error_size) {
     (void)impl; (void)error; (void)error_size;
     float *output = request->output;
@@ -83,7 +83,7 @@ static int fake_embed(void *impl, const ColiEdgeEmbedRequest *request,
     return 0;
 }
 
-static int fake_select(void *impl, const ColiEdgeSelectRequest *request,
+static int fake_select(void *impl, const LmaEdgeSelectRequest *request,
                        char *error, size_t error_size) {
     (void)impl; (void)error; (void)error_size;
     const float *input = request->input;
@@ -97,7 +97,7 @@ static int fake_select(void *impl, const ColiEdgeSelectRequest *request,
     return 0;
 }
 
-static int fake_logits(void *impl, const ColiEdgeLogitsRequest *request,
+static int fake_logits(void *impl, const LmaEdgeLogitsRequest *request,
                        char *error, size_t error_size) {
     (void)impl; (void)error; (void)error_size;
     const float *input = request->input;
@@ -112,15 +112,15 @@ static int fake_logits(void *impl, const ColiEdgeLogitsRequest *request,
     return 0;
 }
 
-static const ColiEdgeAdapter fake_adapter = {
-    sizeof(ColiEdgeAdapter), COLI_EDGE_ABI_VERSION, "fake",
+static const LmaEdgeAdapter fake_adapter = {
+    sizeof(LmaEdgeAdapter), LMA_EDGE_ABI_VERSION, "fake",
     fake_open, fake_destroy, fake_tokenize, fake_detokenize,
     fake_embed, fake_select, fake_logits, {0}
 };
 
-static const ColiEdgeAdapter incomplete_tokenizer = {
-    .struct_size = sizeof(ColiEdgeAdapter),
-    .abi_version = COLI_EDGE_ABI_VERSION,
+static const LmaEdgeAdapter incomplete_tokenizer = {
+    .struct_size = sizeof(LmaEdgeAdapter),
+    .abi_version = LMA_EDGE_ABI_VERSION,
     .engine_id = "bad-tokenizer",
     .engine_open = fake_open,
     .engine_destroy = fake_destroy,
@@ -135,104 +135,104 @@ static int always_cancel(void *unused) { (void)unused; return 1; }
 
 int main(void) {
     char error[160] = {0};
-    assert(coli_edge_adapter_count() == 0);
-    assert(coli_edge_adapter_register(NULL) != 0);
-    assert(coli_edge_adapter_register(&incomplete_tokenizer) != 0);
-    assert(coli_edge_adapter_register(&fake_adapter) == 0);
-    assert(coli_edge_adapter_register(&fake_adapter) != 0);
-    assert(coli_edge_adapter_lookup("fake") == &fake_adapter);
-    assert(coli_edge_adapter_lookup("missing") == NULL);
+    assert(lma_edge_adapter_count() == 0);
+    assert(lma_edge_adapter_register(NULL) != 0);
+    assert(lma_edge_adapter_register(&incomplete_tokenizer) != 0);
+    assert(lma_edge_adapter_register(&fake_adapter) == 0);
+    assert(lma_edge_adapter_register(&fake_adapter) != 0);
+    assert(lma_edge_adapter_lookup("fake") == &fake_adapter);
+    assert(lma_edge_adapter_lookup("missing") == NULL);
 
-    ColiEdgeEngineOptions options = {
+    LmaEdgeEngineOptions options = {
         .struct_size = sizeof(options), .model_dir = "unused-fixture",
     };
-    ColiEdgeEngine *engine = NULL;
-    assert(coli_edge_engine_open("fake", &options, &engine,
+    LmaEdgeEngine *engine = NULL;
+    assert(lma_edge_engine_open("fake", &options, &engine,
                                  error, sizeof(error)) == 0);
     assert(engine);
 
     struct {
-        ColiEdgeCapabilities capabilities;
+        LmaEdgeCapabilities capabilities;
         uint64_t future[2];
     } capabilities;
     memset(&capabilities, 0xa5, sizeof(capabilities));
     capabilities.capabilities.struct_size = sizeof(capabilities);
-    assert(coli_edge_engine_capabilities(
+    assert(lma_edge_engine_capabilities(
                engine, &capabilities.capabilities,
                error, sizeof(error)) == 0);
     assert(capabilities.capabilities.state_width == 4);
     assert(capabilities.future[0] == 0 && capabilities.future[1] == 0);
 
     size_t count = 0;
-    assert(coli_edge_tokenize(engine, "ab", 2, NULL, 0, &count,
+    assert(lma_edge_tokenize(engine, "ab", 2, NULL, 0, &count,
                               error, sizeof(error)) == 0 && count == 2);
     int32_t ids[2] = {0};
-    assert(coli_edge_tokenize(engine, "ab", 2, ids, 1, &count,
+    assert(lma_edge_tokenize(engine, "ab", 2, ids, 1, &count,
                               error, sizeof(error)) != 0);
-    assert(coli_edge_tokenize(engine, "ab", 2, ids, 2, &count,
+    assert(lma_edge_tokenize(engine, "ab", 2, ids, 2, &count,
                               error, sizeof(error)) == 0);
     assert(ids[0] == 'a' && ids[1] == 'b');
 
     size_t bytes = 0;
-    assert(coli_edge_detokenize(engine, ids, 2, NULL, 0, &bytes,
+    assert(lma_edge_detokenize(engine, ids, 2, NULL, 0, &bytes,
                                 error, sizeof(error)) == 0 && bytes == 2);
     char text[3];
-    assert(coli_edge_detokenize(engine, ids, 2, text, sizeof(text), &bytes,
+    assert(lma_edge_detokenize(engine, ids, 2, text, sizeof(text), &bytes,
                                 error, sizeof(error)) == 0);
     assert(strcmp(text, "ab") == 0);
 
     float states[8] = {0};
-    ColiEdgeEmbedRequest embed = {
+    LmaEdgeEmbedRequest embed = {
         .struct_size = sizeof(embed), .rows = 2,
         .token_ids = ids, .token_count = 2,
         .output = states, .output_bytes = sizeof(states),
         .should_cancel = never_cancel,
     };
-    assert(coli_edge_embed(engine, &embed, error, sizeof(error)) == 0);
+    assert(lma_edge_embed(engine, &embed, error, sizeof(error)) == 0);
     assert(states[0] == 97.0f && states[7] == 101.0f);
     embed.output_bytes--;
-    assert(coli_edge_embed(engine, &embed, error, sizeof(error)) != 0);
+    assert(lma_edge_embed(engine, &embed, error, sizeof(error)) != 0);
     embed.output_bytes = sizeof(states);
     embed.should_cancel = always_cancel;
-    assert(coli_edge_embed(engine, &embed, error, sizeof(error)) != 0);
+    assert(lma_edge_embed(engine, &embed, error, sizeof(error)) != 0);
 
     int32_t selected[2] = {0};
     float scores[2] = {0};
-    ColiEdgeSelectRequest select = {
+    LmaEdgeSelectRequest select = {
         .struct_size = sizeof(select), .rows = 2,
         .input = states, .input_bytes = sizeof(states),
         .token_ids = selected, .token_capacity = 2,
         .scores = scores, .score_capacity = 2,
         .should_cancel = never_cancel,
     };
-    assert(coli_edge_select(engine, &select, error, sizeof(error)) == 0);
+    assert(lma_edge_select(engine, &select, error, sizeof(error)) == 0);
     assert(selected[0] == ((97 + 98 + 99 + 100) & 255));
     assert(scores[1] == 98.0f + 99.0f + 100.0f + 101.0f);
     select.token_capacity = 1;
-    assert(coli_edge_select(engine, &select, error, sizeof(error)) != 0);
+    assert(lma_edge_select(engine, &select, error, sizeof(error)) != 0);
     select.token_capacity = 2; select.should_cancel = always_cancel;
-    assert(coli_edge_select(engine, &select, error, sizeof(error)) != 0);
+    assert(lma_edge_select(engine, &select, error, sizeof(error)) != 0);
 
     float logits[2 * 256];
-    ColiEdgeLogitsRequest logits_request = {
+    LmaEdgeLogitsRequest logits_request = {
         .struct_size = sizeof(logits_request), .rows = 2,
         .input = states, .input_bytes = sizeof(states),
         .logits = logits, .logits_capacity = 2 * 256,
         .should_cancel = never_cancel,
     };
-    assert(coli_edge_logits(engine, &logits_request,
+    assert(lma_edge_logits(engine, &logits_request,
                             error, sizeof(error)) == 0);
     assert(logits[(97 + 98 + 99 + 100) & 255] ==
            97.0f + 98.0f + 99.0f + 100.0f);
     logits_request.logits_capacity--;
-    assert(coli_edge_logits(engine, &logits_request,
+    assert(lma_edge_logits(engine, &logits_request,
                             error, sizeof(error)) != 0);
     logits_request.logits_capacity = 2 * 256;
     logits_request.should_cancel = always_cancel;
-    assert(coli_edge_logits(engine, &logits_request,
+    assert(lma_edge_logits(engine, &logits_request,
                             error, sizeof(error)) != 0);
 
-    coli_edge_engine_close(engine);
+    lma_edge_engine_close(engine);
     puts("edge runtime tests: ok");
     return 0;
 }

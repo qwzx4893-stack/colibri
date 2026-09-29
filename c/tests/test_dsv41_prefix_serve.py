@@ -93,9 +93,9 @@ class Dsv41PrefixServeTest(PrefixReuseContract, unittest.TestCase):
     def spawn(self, log_prefix=True, reuse=True):
         # Reuse is opt-in on this engine (see the comment on kv_prefix_on), so
         # the arm that wants it has to ask. `reuse=False` still wins: the harness
-        # sets COLI_KV_PREFIX=0 after this env is merged.
+        # sets LMA_KV_PREFIX=0 after this env is merged.
         return ServeEngine(ENGINE, ["8"],
-                           {"SNAP": str(FIXTURE), "SERVE": "1", "COLI_KV_PREFIX": "1"},
+                           {"SNAP": str(FIXTURE), "SERVE": "1", "LMA_KV_PREFIX": "1"},
                            log_prefix=log_prefix, reuse=reuse)
 
     def test_a_turn_that_replays_the_reply_is_never_wrong(self):

@@ -7,7 +7,7 @@
 | Doc | Source of truth | What to scan for |
 |---|---|---|
 | `ENVIRONMENT.md` | `c/glm.c` (and other `c/*.c`) | every `getenv("...")` call — the default and the trailing `/* comment */` |
-| `SETTINGS.md` | `c/coli`, `c/openai_server.py` | every `add_parser(...)` and `add_argument(...)` |
+| `SETTINGS.md` | `c/lmatomic`, `c/openai_server.py` | every `add_parser(...)` and `add_argument(...)` |
 
 Nothing else defines these. If a knob isn't at one of those call sites, it isn't real.
 
@@ -26,19 +26,19 @@ HASH=$(git rev-parse --short upstream/dev); echo "documenting $HASH"
 # backends own their own. Scanning 'c/*.c' alone silently drops them.
 # c/tests/ is excluded: test fixtures read their own variables (EXPERT_RAW,
 # TMPDIR) that are not part of the engine's user-facing surface.
-# getenv_utf8/compat_getenv_utf8 are the Windows-safe wrappers -- COLI_PROMPT is
+# getenv_utf8/compat_getenv_utf8 are the Windows-safe wrappers -- LMA_PROMPT is
 # read through one, so a plain 'getenv(' grep reports it as removed.
 git grep -nE '(compat_)?getenv(_utf8)?\("' upstream/dev -- 'c/*.c' 'c/*.h' 'c/*.cu' 'c/*.mm' ':!c/tests/*'
 
 # CLI settings:
-git grep -nE 'add_parser\(|add_argument\(' upstream/dev -- c/coli c/openai_server.py
+git grep -nE 'add_parser\(|add_argument\(' upstream/dev -- c/lmatomic c/openai_server.py
 
 # Quick sanity: how many distinct env vars exist now?
 git grep -hoE '(compat_)?getenv(_utf8)?\("[A-Z0-9_]+"' upstream/dev -- 'c/*.c' 'c/*.h' 'c/*.cu' 'c/*.mm' ':!c/tests/*' \
   | grep -oE '"[A-Z0-9_]+"' | tr -d '"' | sort -u | wc -l
 ```
 
-**Which engine reads it matters.** There are four binaries (`colibri`,
+**Which engine reads it matters.** There are four binaries (`lmatomic`,
 `kimi_k3`, `inkling`, `olmoe`) and they do NOT share a knob set -- `K3_*` is
 kimi_k3-only, `INK_*` is inkling-only, and a variable set for the wrong engine
 is silently ignored. Record the owner when you add a row:
@@ -63,11 +63,11 @@ comm -13 /tmp/code_vars.txt /tmp/doc_vars.txt   # documented, NOT in C -> see be
 ```
 
 Before deleting anything the second `comm` reports, check the Python side --
-`COLI_API_KEY`, `COLI_DEBUG`, `COLI_TOOL_SALVAGE` and friends are real, they are
-just read by `openai_server.py`/`coli` rather than by the C engine:
+`LMA_API_KEY`, `LMA_DEBUG`, `LMA_TOOL_SALVAGE` and friends are real, they are
+just read by `openai_server.py`/`lmatomic` rather than by the C engine:
 
 ```bash
-grep -rn "$V" c/coli c/openai_server.py
+grep -rn "$V" c/lmatomic c/openai_server.py
 ```
 
 It also reports things like `O_DIRECT` and `F_NOCACHE`, which are prose in the

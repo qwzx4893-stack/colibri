@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hardware and model placement planning for colibri's disk/RAM/VRAM tiers."""
+"""Hardware and model placement planning for lmatomic's disk/RAM/VRAM tiers."""
 
 import json
 import os
@@ -22,11 +22,11 @@ GB = 1_000_000_000
 EXPERT_RE = re.compile(r"(?:model\.)?layers\.(\d+)\.(?:mlp|ffn)\.experts\.(\d+)\.")
 
 # analyze_model() scans every shard header + regex-matches ~116k tensor names on the
-# 372 GB model; it reruns on every `coli plan/doctor/tune/run --auto-tier`. Its output
+# 372 GB model; it reruns on every `lmatomic plan/doctor/tune/run --auto-tier`. Its output
 # is a pure function of each shard's and config.json's (size, mtime), so cache it to a
 # sidecar and self-invalidate on any change. Best-effort: any read/write failure falls
-# straight back to a full recompute (see analyze_model). Sits alongside .coli_usage/.coli_ssd.
-_ANALYSIS_CACHE_NAME = ".coli_analysis.json"
+# straight back to a full recompute (see analyze_model). Sits alongside .lma_usage/.lma_ssd.
+_ANALYSIS_CACHE_NAME = ".lma_analysis.json"
 _ANALYSIS_CACHE_VERSION = 8
 
 
@@ -104,10 +104,10 @@ def analyze_model(model):
             # The resolve_model() above recomputed it cheaply (config.json
             # only); the one scan-derived bit it carries for glm is the
             # indexer-presence flag, which the cache stores alongside.
-            indexer = analysis.pop("_colibri_indexer_present", None)
+            indexer = analysis.pop("_lmatomic_indexer_present", None)
             if indexer is not None and resolved.descriptor.id == "glm":
                 family_cfg = dict(resolved.family_config,
-                                  _colibri_indexer_present=indexer)
+                                  _lmatomic_indexer_present=indexer)
                 resolved = type(resolved)(resolved.descriptor, resolved.model_type,
                                           resolved.config, family_cfg,
                                           resolved.model_dir)
@@ -131,7 +131,7 @@ def analyze_model(model):
             sizes = list(_tensor_sizes(shard))
         except OSError as error:
             # Name the file. An OSError raised by read() on an already-open
-            # stream carries no filename, so `coli doctor` reported bare
+            # stream carries no filename, so `lmatomic doctor` reported bare
             # "[Errno 5] Input/output error" for a bad sector or a dropped
             # network mount — indistinguishable from a corrupt download, which
             # is what the reporter in #191 assumed and re-downloaded 372 GB to
@@ -185,7 +185,7 @@ def analyze_model(model):
         indexer_present = bool(required and all(
             f"model.layers.{layer}.self_attn.indexer.wq_b.weight" in tensor_names
             for layer in required))
-        family_cfg = dict(family_cfg, _colibri_indexer_present=indexer_present)
+        family_cfg = dict(family_cfg, _lmatomic_indexer_present=indexer_present)
         resolved = type(resolved)(resolved.descriptor, resolved.model_type,
                                   resolved.config, family_cfg, resolved.model_dir)
     result = {
@@ -210,7 +210,7 @@ def analyze_model(model):
         "resolved_family": resolved,
     }
     try:  # best-effort write; a read-only model dir must never break planning.
-        # Atomic write (tmp file + os.replace): a concurrent `coli plan` on the
+        # Atomic write (tmp file + os.replace): a concurrent `lmatomic plan` on the
         # same model dir must never observe a half-written cache -- write_text()
         # alone can leave a truncated file for a racing reader's json.loads to
         # choke on, which just falls back to a full recompute (harmless but
@@ -222,8 +222,8 @@ def analyze_model(model):
         payload = dict(result)
         resolved_family = payload.pop("resolved_family")
         family_cfg = getattr(resolved_family, "family_config", None)
-        if isinstance(family_cfg, dict) and "_colibri_indexer_present" in family_cfg:
-            payload["_colibri_indexer_present"] = family_cfg["_colibri_indexer_present"]
+        if isinstance(family_cfg, dict) and "_lmatomic_indexer_present" in family_cfg:
+            payload["_lmatomic_indexer_present"] = family_cfg["_lmatomic_indexer_present"]
         # The tmp name must be per-THREAD, not per-process: concurrent writers
         # in one process would otherwise write the same tmp file, and one
         # thread's os.replace renames it out from under the other. On Windows
@@ -349,8 +349,8 @@ def _host_unified_memory():
     return sys.platform == "darwin" and platform.machine().lower() in ("arm64", "aarch64")
 
 
-# Strict .coli_ssd grammar -- the byte-for-byte mirror of colibri.c's
-# coli_ssd_cache_parse() (keep the two in lockstep; test_resource_plan.py and
+# Strict .lma_ssd grammar -- the byte-for-byte mirror of glm52.c's
+# lma_ssd_cache_parse() (keep the two in lockstep; test_resource_plan.py and
 # test_ssd_probe.c chew the same vector file, tests/fixtures/ssd_cache_vectors.txt):
 #   v2:     b"v2 <gbs> <st_dev>"   single spaces, at most one trailing \n
 #   legacy: b"<gbs>"               the pre-fix format, never trusted
@@ -364,7 +364,7 @@ _SSD_CACHE_LEGACY = re.compile(rb"\A(\d+(?:\.\d+)?)\n?\Z")
 
 
 def parse_ssd_cache(data):
-    """Classify raw .coli_ssd bytes under the strict grammar above. Returns
+    """Classify raw .lma_ssd bytes under the strict grammar above. Returns
     ("v2", gbs, st_dev), ("legacy", gbs, None), or (None, None, None) for
     garbage. Classification only -- trust (the st_dev match) is the caller's."""
     if not data or len(data) > 64 or b"\x00" in data:
@@ -385,10 +385,10 @@ def parse_ssd_cache(data):
 
 def ssd_probe_state(model_dir):
     """Classify the cached F_NOCACHE storage probe the C engine writes to
-    <model>/.coli_ssd on its first Metal+darwin startup (colibri.c
-    coli_ssd_probe_cached, issue #379). Read-only: never re-measures, never
-    guesses -- mirrors S4's "read-and-display only" contract for `coli
-    doctor`/`coli plan`. Returns (state, gbs):
+    <model>/.lma_ssd on its first Metal+darwin startup (glm52.c
+    lma_ssd_probe_cached, issue #379). Read-only: never re-measures, never
+    guesses -- mirrors S4's "read-and-display only" contract for `lmatomic
+    doctor`/`lmatomic plan`. Returns (state, gbs):
       ("ok", gbs)        v2 cache recorded on THIS volume -- the one case the
                          engine itself would trust
       ("legacy", None)   pre-v2 bare number; the engine re-probes + upgrades
@@ -400,7 +400,7 @@ def ssd_probe_state(model_dir):
     strict grammar caps a well-formed cache at 64, so byte 65 alone already
     convicts -- no reason to slurp an arbitrarily large impostor file."""
     try:
-        with open(Path(model_dir) / ".coli_ssd", "rb") as fh:
+        with open(Path(model_dir) / ".lma_ssd", "rb") as fh:
             data = fh.read(65)
     except OSError:
         return ("absent", None)
@@ -515,7 +515,7 @@ _HIPINFO_UNITS = {"B": 1, "KB": 1024, "MB": 1024 ** 2,
 
 
 def _hipinfo_executable():
-    """Locate hipInfo.exe, preferring the runtime Colibri will actually bind.
+    """Locate hipInfo.exe, preferring the runtime LM Atomic will actually bind.
 
     rocm-smi does not exist on Windows -- neither the HIP SDK installer nor a
     source build ships it -- so the rocm-smi probe below finds nothing there and
@@ -524,7 +524,7 @@ def _hipinfo_executable():
 
     Lookup order, and why:
 
-    1. ``COLI_HIP_RUNTIME_DIR`` -- the directory the loader binds the HIP
+    1. ``LMA_HIP_RUNTIME_DIR`` -- the directory the loader binds the HIP
        runtime from (docs/windows.md). hipInfo lives beside amdhip64_7.dll
        there, so its answer describes the runtime the engine will actually
        load.
@@ -539,7 +539,7 @@ def _hipinfo_executable():
     if sys.platform != "win32":
         return None
     candidates = []
-    runtime_dir = os.environ.get("COLI_HIP_RUNTIME_DIR")
+    runtime_dir = os.environ.get("LMA_HIP_RUNTIME_DIR")
     if runtime_dir:
         candidates.append(Path(runtime_dir.strip('"')) / "hipInfo.exe")
     hip_path = os.environ.get("HIP_PATH")
@@ -686,7 +686,7 @@ def plans_placement(gpu):
     are not the same thing. ``free_bytes`` normally carries both, because a
     discrete card's free VRAM *is* the budget. It is ``None`` for a device that
     exists and is worth reporting but whose free memory has not been qualified
-    as a Colibri budget -- today, a Windows AMD part found through hipInfo,
+    as a LM Atomic budget -- today, a Windows AMD part found through hipInfo,
     where the GPU and the host draw on one physical pool and the relationship
     between the runtime's free figure and host-available memory has not been
     measured.
@@ -852,21 +852,21 @@ def _auto_tune(bottleneck_class, projected_hit, gpus, cpu_sockets, plan_has_meta
 
     # glm53 has its own loader/cache controls and does not consume the generic
     # DRAFT/PIPE/PIN/NUMA knobs below. Recommending them is worse than leaving
-    # them unset because `coli tune` then reports changes the engine ignores.
-    # The same holds for every engine but colibri.c: DRAFT, PIPE, COLI_CUDA_PIPE,
-    # COLI_NUMA and PIN_GB have no reader anywhere else.
-    if engine_group is not None and engine_group != "colibri-core":
+    # them unset because `lmatomic tune` then reports changes the engine ignores.
+    # The same holds for every engine but glm52.c: DRAFT, PIPE, LMA_CUDA_PIPE,
+    # LMA_NUMA and PIN_GB have no reader anywhere else.
+    if engine_group is not None and engine_group != "glm52-core":
         return tune
 
     # MTP: costs more than it saves when compute-bound (#389 measured 42% loss)
     # or streaming-bound (#467 measured 32% loss under CUDA at 85% hit).
-    # EXCEPTION: an explicit COLI_CUDA_MTP=1 in the environment is a documented
+    # EXCEPTION: an explicit LMA_CUDA_MTP=1 in the environment is a documented
     # opt-in to test speculation under CUDA (glm.c resolves DRAFT=-1 -> 3 only
     # when it sees the var). Exporting DRAFT=0 here preempted that auto path,
     # so the opt-in was silently inert on the Windows bare-run/auto-tier flows
     # (#467): respect it and let the engine's auto path take over. Unset still
     # gets DRAFT=0 -> MTP off, which is the measured-correct default.
-    if os.environ.get("COLI_CUDA_MTP") == "1":
+    if os.environ.get("LMA_CUDA_MTP") == "1":
         pass  # explicit opt-in: leave DRAFT to the engine's auto resolution
     elif bottleneck_class == "compute":
         tune["DRAFT"] = {"value": "0",
@@ -878,10 +878,10 @@ def _auto_tune(bottleneck_class, projected_hit, gpus, cpu_sockets, plan_has_meta
 
     # PIPE: resident pipeline mode depends on GPU count
     if has_gpu and n_gpu == 1:
-        tune["COLI_CUDA_PIPE"] = {"value": "1",
+        tune["LMA_CUDA_PIPE"] = {"value": "1",
                                   "reason": "single GPU: S=1 pipeline gate"}
     elif has_gpu and n_gpu > 1:
-        tune["COLI_CUDA_PIPE"] = {"value": "2",
+        tune["LMA_CUDA_PIPE"] = {"value": "2",
                                   "reason": "multi-GPU: residual stays on-device across layers"}
     elif not has_gpu and bottleneck_class == "disk":
         tune["PIPE"] = {"value": "1",
@@ -889,16 +889,16 @@ def _auto_tune(bottleneck_class, projected_hit, gpus, cpu_sockets, plan_has_meta
 
     # NUMA: selective interleave for GPU hosts, blanket hint for CPU-only
     if cpu_sockets > 1 and has_gpu:
-        tune["COLI_NUMA"] = {"value": "1",
+        tune["LMA_NUMA"] = {"value": "1",
                              "reason": "multi-socket + GPU: interleave expert slabs, protect DMA buffers"}
     elif cpu_sockets > 1 and not has_gpu:
-        tune["COLI_NUMA"] = {"value": "1",
+        tune["LMA_NUMA"] = {"value": "1",
                              "reason": "multi-socket CPU-only: interleave expert slabs across nodes"}
         tune["_numa_hint"] = "numactl --interleave=all may perform better on CPU-only hosts"
 
     # OMP: kill hot-thread spin when GPU/Metal owns the power budget
     if plan_has_metal:
-        tune["COLI_NO_OMP_TUNE"] = {"value": "1",
+        tune["LMA_NO_OMP_TUNE"] = {"value": "1",
                                     "reason": "Metal: OMP spin-wait steals GPU power budget"}
 
     # PIN: fully resident if RAM allows and no GPU tier competes
@@ -930,28 +930,28 @@ def _next_actions(bottleneck_class, projected_hit, probe_state, probe_gbs,
             "id": "measure-residency",
             "priority": "recommended",
             "reason": f"projected expert residency is {projected_hit:.0%}",
-            "command": "coli tune --model <model>",
+            "command": "lmatomic tune --model <model>",
         })
         if len(planning_gpus) > 1:
             actions.append({
                 "id": "profile-interconnect",
                 "priority": "recommended",
                 "reason": "multiple GPU tiers can move the bottleneck from storage to interconnect",
-                "command": "PROF=1 coli run --auto-tier --model <model> <prompt>",
+                "command": "PROF=1 lmatomic run --auto-tier --model <model> <prompt>",
             })
     elif bottleneck_class == "mixed":
         actions.append({
             "id": "profile-overlap",
             "priority": "recommended",
             "reason": "CPU expert tail and GPU work must be timed separately before retuning placement",
-            "command": "PROF=1 coli run --auto-tier --model <model> <prompt>",
+            "command": "PROF=1 lmatomic run --auto-tier --model <model> <prompt>",
         })
     elif bottleneck_class in ("compute", "memory"):
         actions.append({
             "id": "measure-kernels",
             "priority": "recommended",
             "reason": "weights are resident; kernel and memory-bandwidth timings decide the next optimization",
-            "command": "PROF=1 coli run --auto-tier --model <model> <prompt>",
+            "command": "PROF=1 lmatomic run --auto-tier --model <model> <prompt>",
         })
     return actions
 
@@ -1051,7 +1051,7 @@ def build_plan(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0,
         safe_vram += usable
         gpu_plan.append(dict(gpu, reserve_bytes=reserve, usable_bytes=usable))
     requested_vram = int(vram_gb * GB) if vram_gb > 0 else safe_vram
-    # The engine's placer (qwen36_tier.c, COLI_PLACE=auto) takes the dense
+    # The engine's placer (qwen36_tier.c, LMA_PLACE=auto) takes the dense
     # trunk first -- it is read every token -- on the first planned device,
     # if it fits that device's allowance; the experts get what is left.
     trunk_bytes = int(info.get("trunk_int8_bytes", 0) or 0)
@@ -1112,7 +1112,7 @@ def build_plan(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0,
     # The plan sizes the hot tier from *free* VRAM, so running it while an engine
     # instance already holds the GPUs silently produces a tiny tier and a
     # pessimistic hit rate that describe nothing. That is exactly when a user
-    # reaches for `coli plan` -- before changing a live deployment -- so say so
+    # reaches for `lmatomic plan` -- before changing a live deployment -- so say so
     # rather than let the numbers be read as a capacity answer.
     if planning_gpus:
         gpu_total = sum(g["total_bytes"] for g in planning_gpus)
@@ -1149,7 +1149,7 @@ def build_plan(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0,
     tune = _auto_tune(bottleneck_class, projected_hit, planning_gpus, cpu_sockets,
                       plan_has_metal=False,
                       engine_group=resolved.descriptor.engine_group)
-    # DRAFT/PIPE/PIN/NUMA stay colibri.c-only (#1585). These two are the
+    # DRAFT/PIPE/PIN/NUMA stay glm52.c-only (#1585). These two are the
     # opposite leftover: the engines that size the expert LRU from their own
     # *EXPERT_GB variable, which RAM_GB does not set.
     knob = _family_expert_cache_knob(resolved.descriptor.id, cache_bytes)
@@ -1217,10 +1217,10 @@ def build_plan(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0,
 def environment_for_plan(plan, env=None, cuda_enabled=True):
     """Apply a plan without overriding explicit user environment settings."""
     result = dict(env or {})
-    result.setdefault("COLI_POLICY", plan["policy"]["name"])
+    result.setdefault("LMA_POLICY", plan["policy"]["name"])
     result.setdefault("OMP_NUM_THREADS", str(plan["cpu"]["physical_cores"]))
     # NOTE: we intentionally do NOT set OMP_PROC_BIND / OMP_PLACES here.
-    # The engine's own hot-thread tuning (glm.c main(), the COLI_OMP_TUNED
+    # The engine's own hot-thread tuning (glm.c main(), the LMA_OMP_TUNED
     # self-exec) sets OMP_PROC_BIND=close with overwrite=0 -- it prefers
     # packing the team onto adjacent cores for the tiny back-to-back per-expert
     # matmuls. Pre-setting OMP_PROC_BIND=spread here ran first and won (the
@@ -1262,20 +1262,20 @@ def environment_for_plan(plan, env=None, cuda_enabled=True):
             planned_cap >= 1):
         # Private bridge for engines whose expert capacity is an argv value.
         # The gateway consumes and removes it before starting the engine.
-        result.setdefault("COLI_PLAN_CAP", str(planned_cap))
+        result.setdefault("LMA_PLAN_CAP", str(planned_cap))
 
     vram = plan["tiers"]["vram"]
     # Report every device, but only name the placement-qualified ones to the
-    # engine: COLI_GPU/COLI_GPUS is an instruction, not an inventory.
+    # engine: LMA_GPU/LMA_GPUS is an instruction, not an inventory.
     devices = [device["index"] for device in vram["devices"] if plans_placement(device)]
     if not cuda_enabled or not devices or vram["budget_bytes"] <= 0:
         return result
-    if result.get("COLI_CUDA", "1") == "0":
+    if result.get("LMA_CUDA", "1") == "0":
         return result
 
-    result.setdefault("COLI_CUDA", "1")
-    if "COLI_GPU" not in result and "COLI_GPUS" not in result:
-        key = "COLI_GPU" if len(devices) == 1 else "COLI_GPUS"
+    result.setdefault("LMA_CUDA", "1")
+    if "LMA_GPU" not in result and "LMA_GPUS" not in result:
+        key = "LMA_GPU" if len(devices) == 1 else "LMA_GPUS"
         result[key] = ",".join(map(str, devices))
     result.setdefault("CUDA_EXPERT_GB", f"{vram['budget_bytes'] / GB:.3f}")
     if result.get("PIN"):

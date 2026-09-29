@@ -4,7 +4,7 @@
  * modes. */
 #define _GNU_SOURCE
 #define QWEN38_NO_MAIN
-#define COLI_SEGMENT_ADAPTER
+#define LMA_SEGMENT_ADAPTER
 #include <pthread.h>
 #include "../qwen38.c"
 #include "../compat.h"   /* setenv: MinGW has none */
@@ -625,16 +625,16 @@ fail:
 static int check_segment_failure_outputs(void){
     Model partial={0};partial.c.layers=1;q38_model_free(&partial);
     char error[128];void *output=(void*)(uintptr_t)1;
-    ColiSegmentCapabilities capabilities;
-    ColiSegmentEngineOptions engine_options={
+    LmaSegmentCapabilities capabilities;
+    LmaSegmentEngineOptions engine_options={
         .struct_size=sizeof(engine_options),.model_dir="unused",
-        .context_tokens=1,.backend_mask=COLI_SEGMENT_CAP_CUDA,
+        .context_tokens=1,.backend_mask=LMA_SEGMENT_CAP_CUDA,
     };
     if(!qwen38_segment_engine_open(&output,&capabilities,&engine_options,
                                    error,sizeof error)||output)return -1;
 
     Qwen38SegmentEngine engine={0};engine.context_tokens=1;
-    ColiSegmentSessionOptions session_options={
+    LmaSegmentSessionOptions session_options={
         .struct_size=sizeof(session_options),.context_tokens=2,
     };
     output=(void*)(uintptr_t)1;

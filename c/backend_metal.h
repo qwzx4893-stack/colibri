@@ -1,5 +1,5 @@
-#ifndef COLIBRI_BACKEND_METAL_H
-#define COLIBRI_BACKEND_METAL_H
+#ifndef LMA_BACKEND_METAL_H
+#define LMA_BACKEND_METAL_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -9,22 +9,22 @@ extern "C" {
 #endif
 
 /*
- * Apple-GPU (Metal) backend for colibrì. Apple Silicon has one GPU and unified
+ * Apple-GPU (Metal) backend for LM Atomic. Apple Silicon has one GPU and unified
  * memory, so there is no device list and no host<->device copy: resident weights
  * are read zero-copy from the RAM they already occupy. The shader is compiled at
  * runtime (newLibraryWithSource:), so no Xcode / offline metal compiler is needed.
  */
 
 /* Opaque, persistent GPU handle for one resident quantized tensor. */
-typedef struct ColiMetalTensor ColiMetalTensor;
+typedef struct LmaMetalTensor LmaMetalTensor;
 
 /* Returns 1 if a Metal device is available and pipelines compiled, else 0. */
-int  coli_metal_init(void);
-void coli_metal_shutdown(void);
-int  coli_metal_available(void);
+int  lma_metal_init(void);
+void lma_metal_shutdown(void);
+int  lma_metal_available(void);
 /* Bytes of unified memory in use by wrapped tensors, and their count. */
-void coli_metal_stats(size_t *tensor_count, size_t *tensor_bytes);
-int  coli_metal_mem_info(size_t *used_bytes, size_t *total_bytes);
+void lma_metal_stats(size_t *tensor_count, size_t *tensor_bytes);
+int  lma_metal_mem_info(size_t *used_bytes, size_t *total_bytes);
 
 /* ---- Standalone elementwise / normalization ops ---------------------------------- */
 /*
@@ -32,29 +32,29 @@ int  coli_metal_mem_info(size_t *used_bytes, size_t *total_bytes);
  * Each of nrows independent rows of width D. w is shared (1 copy, [D]).
  * Returns 1 on success, 0 if Metal unavailable.
  */
-int coli_metal_rmsnorm(float *x, const float *w, int nrows, int D, float eps);
+int lma_metal_rmsnorm(float *x, const float *w, int nrows, int D, float eps);
 
 /*
  * Residual add: y[i] += a[i] for i in [0, n).
  * Returns 1 on success, 0 if Metal unavailable.
  */
-int coli_metal_add(float *y, const float *a, size_t n);
+int lma_metal_add(float *y, const float *a, size_t n);
 
 /*
  * SiLU gate-multiply: g[i] = silu(g[i]) * u[i] for i in [0, n).
  * Destroy-u variant: u is consumed (gate * up fusion for SwiGLU).
  * Returns 1 on success, 0 if Metal unavailable.
  */
-int coli_metal_silu_mul(float *g, const float *u, size_t n);
+int lma_metal_silu_mul(float *g, const float *u, size_t n);
 /* Numerical-oracle hook for GLM-5.3 clamped SwiGLU. */
-int coli_metal_silu_mul_clamped(float *g, const float *u, size_t n, float limit);
+int lma_metal_silu_mul_clamped(float *g, const float *u, size_t n, float limit);
 
 /*
  * y[S,O] = (x[S,I] @ W[O,I]^T) * scale[o]. fmt=4 (grouped int4) instead folds a
  * PER-GROUP scale into the accumulation -- see the shader comment in backend_metal.mm.
- * fmt=8 (fp8 passthrough -- see colibri.c) likewise folds its per-128x128-block
+ * fmt=8 (fp8 passthrough -- see glm52.c) likewise folds its per-128x128-block
  * scale into the accumulation.
- * fmt matches QT in colibri.c: 0=f32, 1=int8, 2=int4(packed), 3=int2(packed),
+ * fmt matches QT in glm52.c: 0=f32, 1=int8, 2=int4(packed), 3=int2(packed),
  * 4=int4(packed, same layout as 2)+per-group scale (gs = group size along I; scale
  * array is [O, ceil(I/gs)] floats instead of [O]),
  * 8=fp8-e4m3 (one raw byte/element, same layout as fmt=1) + per-128x128-
@@ -65,13 +65,13 @@ int coli_metal_silu_mul_clamped(float *g, const float *u, size_t n, float limit)
  * fmt+gs); later calls reuse them (weights are assumed stable at the same address).
  * Returns 1 on success, 0 if Metal is unavailable or fmt is invalid.
  */
-int coli_metal_matmul(ColiMetalTensor **tensor,
+int lma_metal_matmul(LmaMetalTensor **tensor,
                       float *y, const float *x,
                       const void *weights, const float *scales,
                       int fmt, int S, int I, int O, int gs);
 
-void   coli_metal_tensor_free(ColiMetalTensor *tensor);
-size_t coli_metal_tensor_bytes(const ColiMetalTensor *tensor);
+void   lma_metal_tensor_free(LmaMetalTensor *tensor);
+size_t lma_metal_tensor_bytes(const LmaMetalTensor *tensor);
 
 /*
  * Register a page-aligned host allocation (expert slab / scale slab) so the batched
@@ -80,10 +80,10 @@ size_t coli_metal_tensor_bytes(const ColiMetalTensor *tensor);
  * address. Call after (re)allocating a slab; call unregister before freeing it.
  * base must be aligned to 16384 (Apple page) and len a multiple of it.
  */
-void coli_metal_spin_start(void);   /* COLI_METAL_SPIN=1 keep-alive experiment */
-void coli_metal_spin_stop(void);
-void coli_metal_register(void *base, size_t len);
-void coli_metal_unregister(void *base);
+void lma_metal_spin_start(void);   /* LMA_METAL_SPIN=1 keep-alive experiment */
+void lma_metal_spin_stop(void);
+void lma_metal_register(void *base, size_t len);
+void lma_metal_unregister(void *base);
 
 /*
  * Fused decode (S=1) attention for one layer, entirely on the GPU in one command buffer:
@@ -98,7 +98,7 @@ void coli_metal_unregister(void *base);
  * is the expert input; sh_out the shared-expert output; idx/w/keff the routing.
  * Returns 0 -> caller runs the whole layer on the CPU path.
  */
-int coli_metal_layer_decode(float *x,
+int lma_metal_layer_decode(float *x,
     const float *in_ln, const float *post_ln,
     const void *qa_w, const float *qa_s, int qa_fmt, int qa_gs, const float *qa_ln,
     const void *qb_w, const float *qb_s, int qb_fmt, int qb_gs,
@@ -114,11 +114,11 @@ int coli_metal_layer_decode(float *x,
     float eps, float theta, float ascale,
     float *inrm_out, float *nrm_out, float *sh_out, int *idx_out, float *w_out, int *keff_out);
 
-int coli_metal_gemm(float *y, const float *x, const void *weights, const float *scales,
+int lma_metal_gemm(float *y, const float *x, const void *weights, const float *scales,
                     int fmt, int S, int I, int O, int gs);   /* large-batch sync GEMM; 0 -> CPU. gs: fmt=4 group size (0 otherwise) */
 /* Parallel top-8 expert selection (r_top8_par): run ONE top-8 selection kernel standalone
  * on host arrays — par=0 the serial r_top8, par=1 the parallel exact-match replica gated
- * in the engine by COLI_RTOP8 (default ON; COLI_RTOP8=0 opts out to the serial kernel).
+ * in the engine by LMA_RTOP8 (default ON; LMA_RTOP8=0 opts out to the serial kernel).
  * Exists so the metal-test suite (and any battery probe) can prove serial/parallel
  * equivalence on the ENGINE build's own compiled shaders, not just in the bench tool.
  * sig[S*E], bias[E], idx[S*K], w[S*K], keff[S].
@@ -130,12 +130,12 @@ int coli_metal_gemm(float *y, const float *x, const void *weights, const float *
  * same automatic fallback is wired into the engine dispatch site — "par" is a request,
  * never a guarantee, so no caller can reach the unguarded parallel path out of contract.
  * Returns 1 on success, 0 if Metal is unavailable. */
-int coli_metal_rtop8(int par, const float *sig, const float *bias, int S, int E, int K,
+int lma_metal_rtop8(int par, const float *sig, const float *bias, int S, int E, int K,
                      int Ksel, float topp, int normk, float rscale,
                      int *idx, float *w, int *keff);
-void coli_metal_attn_counts(uint64_t *ok, double *wall, double *kernel);
-void coli_metal_attn_lat(double *ksched, double *gsched);
-int coli_metal_attn_decode(const float *x,
+void lma_metal_attn_counts(uint64_t *ok, double *wall, double *kernel);
+void lma_metal_attn_lat(double *ksched, double *gsched);
+int lma_metal_attn_decode(const float *x,
     const void *qa_w, const float *qa_s, int qa_fmt, int qa_gs, const float *qa_ln,
     const void *qb_w, const float *qb_s, int qb_fmt, int qb_gs,
     const void *kva_w, const float *kva_s, int kva_fmt, int kva_gs, const float *kva_ln,
@@ -148,22 +148,22 @@ int coli_metal_attn_decode(const float *x,
  * and Rc + pos_base*qk_rope gets rope_interleave(raw R, pos_base+s, theta). Mirrors the
  * CPU cache write: rmsnorm(Lc[pos], Lc[pos], kv_a_ln, kv_lora, eps) + rope_interleave(Rc[pos], pos, cfg).
  * L_raw/R_raw are [S, kv_lora] / [S, qk_rope]. Returns 1 on success, 0 if Metal unavailable. */
-int coli_metal_kv_write(float *Lc, float *Rc, const float *L_raw, const float *R_raw,
+int lma_metal_kv_write(float *Lc, float *Rc, const float *L_raw, const float *R_raw,
     const float *kv_a_ln, int S, int pos_base, int kv_lora, int qk_rope, float eps, float theta);
 
 /*
  * Zero cache rows Lc[from*kv_lora .. (to-1)*kv_lora] and Rc[from*qk_rope .. (to-1)*qk_rope]
  * on GPU. Covered by dedicated kernel. Returns 1 on success, 0 if Metal unavailable. */
-int coli_metal_kv_clear(float *Lc, float *Rc, int from, int to, int kv_lora, int qk_rope);
+int lma_metal_kv_clear(float *Lc, float *Rc, int from, int to, int kv_lora, int qk_rope);
 
 /* Diagnostics: GPU blocks executed, CPU-fallback blocks, experts run on GPU. */
-void coli_metal_moe_counts(uint64_t *ok, uint64_t *fb, uint64_t *experts);
-void coli_metal_moe_times(double *setup, double *gpu, double *scatter);
-double coli_metal_moe_kernel_time(void);
-/* E5 (COLI_METAL_RESSET=1): returns 1 when the queue-attached residency set is active and
+void lma_metal_moe_counts(uint64_t *ok, uint64_t *fb, uint64_t *experts);
+void lma_metal_moe_times(double *setup, double *gpu, double *scatter);
+double lma_metal_moe_kernel_time(void);
+/* E5 (LMA_METAL_RESSET=1): returns 1 when the queue-attached residency set is active and
  * writes the cumulative seconds moe_submit spent committing pending set adds -- a cost that
  * sits OUTSIDE the setup/gpu/scatter breakdown above. Returns 0 (and writes 0) when off. */
-int coli_metal_resset_stats(double *flush_s);
+int lma_metal_resset_stats(double *flush_s);
 
 /*
  * Batched routed-expert SwiGLU for one MoE block, in ONE command buffer.
@@ -182,7 +182,7 @@ int coli_metal_resset_stats(double *flush_s);
  *  out         = [S, D] accumulate target
  * Returns 1 on success, 0 to signal the caller to fall back to the CPU path.
  */
-int coli_metal_moe_block(int nb, int D, int Iinter, int fmt, int qgs,
+int lma_metal_moe_block(int nb, int D, int Iinter, int fmt, int qgs,
                          const void *const *g, const void *const *u, const void *const *d,
                          const float *const *gs, const float *const *us, const float *const *ds,
                          const float *xg, const int *xoff, const int *nr,
@@ -191,7 +191,7 @@ int coli_metal_moe_block(int nb, int D, int Iinter, int fmt, int qgs,
 
 /* GLM-5.3 routed experts: same batched path, but with its clamped SwiGLU semantics.
  * gate is upper-clamped to +limit; up is clamped to [-limit,+limit]. */
-int coli_metal_moe_block_clamped(int nb, int D, int Iinter, int fmt, int qgs,
+int lma_metal_moe_block_clamped(int nb, int D, int Iinter, int fmt, int qgs,
                          const void *const *g, const void *const *u, const void *const *d,
                          const float *const *gs, const float *const *us, const float *const *ds,
                          const float *xg, const int *xoff, const int *nr,
@@ -205,13 +205,13 @@ int coli_metal_moe_block_clamped(int nb, int D, int Iinter, int fmt, int qgs,
  * the handle. begin returns NULL (nothing submitted) on unresolved slab / bad fmt / R==0;
  * end returns 0 on GPU fault (caller redoes those experts on CPU).
  */
-typedef struct ColiMetalMoeHandle ColiMetalMoeHandle;
-ColiMetalMoeHandle* coli_metal_moe_block_begin(int nb, int D, int Iinter, int fmt, int qgs,
+typedef struct LmaMetalMoeHandle LmaMetalMoeHandle;
+LmaMetalMoeHandle* lma_metal_moe_block_begin(int nb, int D, int Iinter, int fmt, int qgs,
                          const void *const *g, const void *const *u, const void *const *d,
                          const float *const *gs, const float *const *us, const float *const *ds,
                          const float *xg, const int *xoff, const int *nr,
                          const int *rows, const float *rw);
-int coli_metal_moe_block_end(ColiMetalMoeHandle *h, float *out);
+int lma_metal_moe_block_end(LmaMetalMoeHandle *h, float *out);
 
 /*
  * KDA state recurrence for one token (decode: C=1). Replaces the serial per-head
@@ -228,7 +228,7 @@ int coli_metal_moe_block_end(ColiMetalMoeHandle *h, float *out);
  *   H, hd     — number of heads, head dimension
  * Returns 1 on success, 0 if Metal unavailable.
  */
-int coli_metal_kda_state(float *S, const float *qn, const float *kn, const float *vh,
+int lma_metal_kda_state(float *S, const float *qn, const float *kn, const float *vh,
                            const float *alpha, const float *beta, float *oh,
                            int H, int hd);
 
@@ -241,7 +241,7 @@ int coli_metal_kda_state(float *S, const float *qn, const float *kn, const float
  * One kernel dispatch per projection. Threadgroup of 256 threads, one thread per dimension.
  * Returns 1 on success, 0 if Metal unavailable.
  */
-int coli_metal_kda_conv_silu(float *conv_win, float *vec, const float *taps, int P, int K);
+int lma_metal_kda_conv_silu(float *conv_win, float *vec, const float *taps, int P, int K);
 
 /*
  * KDA L2 normalization: in-place normalization of Q and K per head.
@@ -250,7 +250,7 @@ int coli_metal_kda_conv_silu(float *conv_win, float *vec, const float *taps, int
  *   eps = 1e-6, qscale = 1/sqrt(hd).
  * One kernel dispatch for all H heads. Returns 1 on success, 0 if Metal unavailable.
  */
-int coli_metal_kda_l2_norm(float *q, float *k, int H, int hd, float qscale);
+int lma_metal_kda_l2_norm(float *q, float *k, int H, int hd, float qscale);
 
 /*
  * Fused KDA token step: conv_silu(q,k,v) + l2_norm(q,k) + state recurrence,
@@ -267,7 +267,7 @@ int coli_metal_kda_l2_norm(float *q, float *k, int H, int hd, float qscale);
  *   P, K, H, hd           — projection dim, kernel width, heads, head dim
  * Returns 1 on success, 0 if Metal unavailable. Caller must zero oh[] before call.
  */
-int coli_metal_kda_fused_token(
+int lma_metal_kda_fused_token(
     float *win_q, float *qt,
     float *win_k, float *kt,
     float *win_v, float *tv,

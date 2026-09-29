@@ -1,6 +1,6 @@
 """La guardia di famiglia del convertitore GLM-5.2 (#1304).
 
-`coli convert` accetta qualunque --repo ma il convertitore serve una famiglia
+`lmatomic convert` accetta qualunque --repo ma il convertitore serve una famiglia
 sola. Su Qwen3.8 (BF16) i tensori non riconosciuti passavano upcastati a f32:
 ogni shard raddoppiava, e il reporter di #1304 si e' fermato a 424 GB scritti.
 

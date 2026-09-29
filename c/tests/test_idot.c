@@ -6,8 +6,8 @@
  * Covers: odd sizes (scalar tail), sizes below one vector, the w=-128 edge
  * (sign-trick kernels must treat |−128| as 128 unsigned, not saturate to 127),
  * and random data at qrow_i8's contract (|x| <= 127, w full int8 range). */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 static uint32_t rng_state=0x12345678u;

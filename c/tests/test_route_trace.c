@@ -4,7 +4,7 @@
  *
  * Case 7 is the important one. The header records are encoded as triples with a negative
  * layer precisely so that the pre-existing readers (telemetry.h's usage_load and
- * colibri.c's pin_load, both `while(fscanf(f,"%d %d %u",&l,&e,&c)==3)` guarded by l>=0)
+ * glm52.c's pin_load, both `while(fscanf(f,"%d %d %u",&l,&e,&c)==3)` guarded by l>=0)
  * parse them, discard them, and keep going. That contract is invisible in the code and
  * easy to break by "tidying" the header into a comment line or moving the engine hash
  * into the second field, so it is asserted here against a literal copy of that loop.
@@ -175,7 +175,7 @@ int main(void){
 
     /* 8. THE CONTRACT: a reader written against the old format must recover exactly the
      * same records from a new-format file. This is a literal copy of the loop in
-     * telemetry.h's usage_load and colibri.c's pin_load. */
+     * telemetry.h's usage_load and glm52.c's pin_load. */
     {
         zero_counts();
         rt_count(3, ids, 3);

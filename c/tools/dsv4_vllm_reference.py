@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pinned DeepSeek-V4 reference path used before native Colibri porting.
+"""Pinned DeepSeek-V4 reference path used before native LM Atomic porting.
 
 This intentionally delegates execution to the upstream vLLM implementation.
 Do not add replacement kernels here: its purpose is to preserve the exact

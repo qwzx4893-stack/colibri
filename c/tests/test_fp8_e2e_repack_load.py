@@ -1,5 +1,5 @@
 """End-to-end: REAL tools/repack_fp8_passthrough.py output fed into the REAL
-C loader (st_init/qt_from_disk in colibri.c) via a small C harness.
+C loader (st_init/qt_from_disk in glm52.c) via a small C harness.
 
 Neither test_fp8_load.c (hand-built wire-format C fixtures -- proves the C
 loader's OWN logic, but the container bytes are hand-authored, not
@@ -27,11 +27,11 @@ Three cases the round trip has to carry, all through the same real loader:
     only thing standing between fmt=8 and a silent int8-row misread, and this is
     the first test in the tree that proves the stamp does that job on a
     tool-produced container rather than a hand-authored one. Its proof-of-bite
-    is a second run over the SAME container with the `colibri.fmt` key deleted
+    is a second run over the SAME container with the `lma.fmt` key deleted
     from the header: the loader must then resolve the identical bytes to fmt=1.
-  * a ROUTED EXPERT, unstamped by design (colibri.c's routed-expert load sites
+  * a ROUTED EXPERT, unstamped by design (glm52.c's routed-expert load sites
     pass stamped_name=NULL), resolving to fmt=8 by byte arithmetic alone.
-  * the container-level `colibri.container.formats` declaration, which no engine
+  * the container-level `lma.container.formats` declaration, which no engine
     reads yet: an unknown `__metadata__` key must be IGNORED, not refused. That
     is invariant I-1's half of this PR -- an engine that does not know the key
     loads such a container exactly as it does today.
@@ -53,7 +53,7 @@ from glm_fp8_emit import save_fp8_safetensors  # reuse: real fp8 block-quantize,
 
 
 def _cc_flags():
-    """Mirror the Makefile's CFLAGS closely enough to compile colibri.c
+    """Mirror the Makefile's CFLAGS closely enough to compile glm52.c
     cleanly: -O3 + the same warning flags, plus libomp on macOS if present
     (falls back to single-threaded -- exactly like the Makefile's own
     OMPDIR probe -- if it's not, rather than failing the build). Returns
@@ -65,7 +65,7 @@ def _cc_flags():
               "-Wno-misleading-indentation", "-Wno-unused-function"]
     ldflags = ["-lm"]
     if sys.platform not in ("darwin", "win32"):
-        # -fopenmp, like the Makefile. Without it every '#pragma omp' in colibri.c
+        # -fopenmp, like the Makefile. Without it every '#pragma omp' in glm52.c
         # becomes a -Wunknown-pragmas warning (-Wall enables it), and the assertion
         # below requires an empty stderr -- so on Linux this test failed for a
         # reason that had nothing to do with what it is testing. macOS gets the
@@ -124,7 +124,7 @@ def _rewrite_metadata(path, drop_key=None, set_key=None, value=None):
 class Fp8RepackLoadE2ETest(unittest.TestCase):
     """The real tools/repack_fp8_passthrough.py -> the real C loader."""
 
-    # colibri.c is a big translation unit; build the harness once for the class
+    # glm52.c is a big translation unit; build the harness once for the class
     # rather than once per test.
     _harness_dir = None
     _harness_bin = None
@@ -202,7 +202,7 @@ class Fp8RepackLoadE2ETest(unittest.TestCase):
             "model.layers.0.mlp.shared_experts.gate_proj.weight": torch.randn(D, I_) * 0.02,
             "model.layers.0.mlp.gate_proj.weight": torch.randn(D, I_) * 0.02,
             # routed expert: selected and byte-preserved, but UNSTAMPED -- it must
-            # resolve to fmt=8 by byte arithmetic alone, because colibri.c's
+            # resolve to fmt=8 by byte arithmetic alone, because glm52.c's
             # routed-expert load sites pass stamped_name=NULL and would never see a
             # stamp even if one were written.
             "model.layers.0.mlp.experts.0.gate_proj.weight": torch.randn(I_, D) * 0.02,
@@ -227,8 +227,8 @@ class Fp8RepackLoadE2ETest(unittest.TestCase):
         # the harness anyway would only muddy which side broke.
         _, hdr = _read_header(out)
         self.assertIn("__metadata__", hdr)
-        self.assertIn("colibri.fmt", hdr["__metadata__"])
-        stamp = json.loads(hdr["__metadata__"]["colibri.fmt"])
+        self.assertIn("lma.fmt", hdr["__metadata__"])
+        stamp = json.loads(hdr["__metadata__"]["lma.fmt"])
         self.assertEqual(set(stamp.keys()),
                          set(shapes) - {"model.layers.0.mlp.experts.0.gate_proj.weight"},
                          "stamp map must cover the residents and NOT the routed expert")
@@ -248,7 +248,7 @@ class Fp8RepackLoadE2ETest(unittest.TestCase):
         self.assertNotIn("model.layers.0.input_layernorm.weight.qs", hdr)
         self.assertNotIn("model.layers.0.input_layernorm.weight", stamp)
         # I-1: the container-level declaration is an UNKNOWN key to this engine.
-        self.assertIn("colibri.container.formats", hdr["__metadata__"])
+        self.assertIn("lma.container.formats", hdr["__metadata__"])
 
         run = self._load(shapes)
         self.assertEqual(run.returncode, 0,
@@ -264,11 +264,11 @@ class Fp8RepackLoadE2ETest(unittest.TestCase):
     def test_container_declaration_stays_inert_even_when_malformed(self):
         """I-1's sharp edge. The well-formed declaration being ignored is checked
         above; this checks the KEY is inert, not just this VALUE. An engine that
-        does not know `colibri.container.formats` must ignore whatever is under
+        does not know `lma.container.formats` must ignore whatever is under
         it -- if it ever started validating the value, a container written by a
         newer tool would stop loading on an older engine, which is exactly the
         compatibility break the split between PR-A's writer half and the later
-        engine half is arranged to avoid. Contrast `colibri.fmt`, which IS
+        engine half is arranged to avoid. Contrast `lma.fmt`, which IS
         parsed and DOES refuse loudly on a malformed value (st.h's
         st_fmt_stamp_ingest) -- that asymmetry is deliberate and is what this
         test pins.
@@ -285,7 +285,7 @@ class Fp8RepackLoadE2ETest(unittest.TestCase):
         # _rewrite_metadata): not-JSON, a JSON object where an array is
         # expected, a JSON array of the wrong element type, and empty.
         for bogus in ('not json', '{"a":1}', '[42]', ''):
-            _rewrite_metadata(out, set_key="colibri.container.formats", value=bogus)
+            _rewrite_metadata(out, set_key="lma.container.formats", value=bogus)
             run = self._load({name: (256, 384)})
             self.assertEqual(run.returncode, 0,
                              f"unknown container key with value {bogus!r} must not "
@@ -302,7 +302,7 @@ class Fp8RepackLoadE2ETest(unittest.TestCase):
         byte arithmetic alone cannot tell fmt=8 from fmt=1 and qt_resolve_fmt's
         INVERSION resolves an unstamped one to fmt=1. Stamped, the loader must
         return fmt=8. PROOF-OF-BITE, on the SAME container with the SAME weight
-        bytes: delete `colibri.fmt` from the header and the loader must return
+        bytes: delete `lma.fmt` from the header and the loader must return
         fmt=1 -- so this test would notice if the stamp stopped being consulted,
         rather than passing on byte arithmetic that never needed it."""
         torch.manual_seed(9)
@@ -314,7 +314,7 @@ class Fp8RepackLoadE2ETest(unittest.TestCase):
         out = self._repack()
 
         _, hdr = _read_header(out)
-        self.assertEqual(json.loads(hdr["__metadata__"]["colibri.fmt"]),
+        self.assertEqual(json.loads(hdr["__metadata__"]["lma.fmt"]),
                          {name: "fp8-e4m3-b128"})
         self.assertEqual(hdr[name + ".qs"]["shape"], [2])
         self.assertEqual(hdr[name]["shape"], [2, 256])
@@ -324,7 +324,7 @@ class Fp8RepackLoadE2ETest(unittest.TestCase):
                          f"stamped collision-shape tensor must load fmt=8:\n{run.stdout}\n{run.stderr}")
         self.assertIn(f"ok {name}:", run.stdout)
 
-        _rewrite_metadata(out, drop_key="colibri.fmt")
+        _rewrite_metadata(out, drop_key="lma.fmt")
         bite = self._load({name: (2, 256)})
         self.assertNotEqual(bite.returncode, 0,
                             "unstamped, the identical bytes must NOT resolve to fmt=8")

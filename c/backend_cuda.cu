@@ -7,14 +7,14 @@ static_assert(FP8_BLOCK == 128, "fmt=8 on-disk containers carry ceil(dim/128)-ed
               "grids (mint tool, docs/FORMATS.md); FP8_BLOCK is container format, not a "
               "tunable -- an edit here is a format change");
 
-/* Optional fmt=8 decode candidate (COLI_CUDA_F8_WARP=2): cuda_fp8.h maps
+/* Optional fmt=8 decode candidate (LMA_CUDA_F8_WARP=2): cuda_fp8.h maps
  * __nv_cvt_fp8_to_halfraw to an sm_89+ cvt instruction, with a bit-manip
  * fallback below 890. CUDA-only; the HIP build keeps the LUT decode. */
 #if !(defined(__HIP_PLATFORM_AMD__) || defined(__HIP__)) && defined(CUDART_VERSION) && CUDART_VERSION >= 11080
 #include <cuda_fp8.h>
-#define COLI_F8_HWCVT 1
+#define LMA_F8_HWCVT 1
 #else
-#define COLI_F8_HWCVT 0
+#define LMA_F8_HWCVT 0
 #endif
 
 #include <cstdio>
@@ -30,7 +30,7 @@ static_assert(FP8_BLOCK == 128, "fmt=8 on-disk containers carry ceil(dim/128)-ed
 #include <unistd.h>
 #endif
 
-#ifdef COLI_ANS
+#ifdef LMA_ANS
 #include <dietgpu/ans/GpuANSCodec.h>
 #include <dietgpu/utils/StackDeviceMemory.h>
 #endif
@@ -46,8 +46,8 @@ struct RaggedKVEntry {
     int length,page_count,K,R;
 };
 
-#ifndef COLI_KV_PAGE_TOKENS
-#define COLI_KV_PAGE_TOKENS 64
+#ifndef LMA_KV_PAGE_TOKENS
+#define LMA_KV_PAGE_TOKENS 64
 #endif
 
 static void ragged_kv_clear(RaggedKVEntry *e) {
@@ -61,7 +61,7 @@ static void ragged_kv_clear(RaggedKVEntry *e) {
     e->length=e->page_count=0;
 }
 
-struct ColiCudaTensor {
+struct LmaCudaTensor {
     void *weights;
     float *scales;
     size_t weight_bytes;
@@ -71,7 +71,7 @@ struct ColiCudaTensor {
     size_t scale_count;        /* scale elements: ue8m0 bytes for fmt=7, floats otherwise */
     int tracked;
     int weights_owned;
-#ifdef COLI_ANS
+#ifdef LMA_ANS
     size_t archive_bytes;
     int compressed;
 #endif
@@ -79,12 +79,12 @@ struct ColiCudaTensor {
     int ragged_count;
 };
 
-static size_t tensor_scale_bytes(const ColiCudaTensor *t) {
+static size_t tensor_scale_bytes(const LmaCudaTensor *t) {
     if (!t->fmt || t->fmt == 6) return 0;
     return t->scale_count * (t->fmt == 7 ? sizeof(uint8_t) : sizeof(float));
 }
 
-#ifdef COLI_ANS
+#ifdef LMA_ANS
 struct AnsArenaChunk { uint8_t *p; size_t used,cap; };
 #endif
 typedef struct {
@@ -97,10 +97,10 @@ typedef struct {
     size_t mxfp4_weights_cap, mxfp4_scales_cap;
     void *mxfp4_expert_weights, *mxfp4_expert_scales;
     size_t mxfp4_expert_weights_cap, mxfp4_expert_scales_cap;
-    /* Staging of the resident dense matvec (coli_cuda_matmul), apart from
-     * x/y: the expert group (coli_cuda_expert_group_issue) runs on ctx->stream
+    /* Staging of the resident dense matvec (lma_cuda_matmul), apart from
+     * x/y: the expert group (lma_cuda_expert_group_issue) runs on ctx->stream
      * asynchronously while the engine's thread keeps computing -- qwen38's
-     * shared expert and the Qwen3.8 trunk go through coli_cuda_matmul between
+     * shared expert and the Qwen3.8 trunk go through lma_cuda_matmul between
      * qt_issue and qt_take. Sharing x/y there overwrote the group's input and
      * output mid-flight (silent, output-only corruption, no CUDA error). */
     float *dx, *dy; size_t dx_cap, dy_cap;
@@ -114,7 +114,7 @@ typedef struct {
     void *group_desc; size_t group_desc_cap;
     size_t tensor_count, tensor_bytes;
     int group_pending; size_t group_pending_bytes;   /* async expert-group in flight (Inc.4) */
-#ifdef COLI_ANS
+#ifdef LMA_ANS
     void *ans_raw; size_t ans_raw_cap;
     void *ans_host; size_t ans_host_cap;
     int ans_copy_pending;
@@ -129,18 +129,18 @@ typedef struct {
     int ggs,ugs,dgs;      /* per-tensor quant group size; 0 = per-row scales (#334 fmt=4) */
 } GroupDesc;
 
-static DeviceContext g_ctx[COLI_CUDA_MAX_DEVICES];
+static DeviceContext g_ctx[LMA_CUDA_MAX_DEVICES];
 static int g_nctx;
 static uint64_t g_group_calls,g_group_experts,g_group_rows;
 static double g_group_h2d_ms,g_group_kernel_ms,g_group_d2h_ms;
-static uint64_t g_device_group_calls[COLI_CUDA_MAX_DEVICES];
-static uint64_t g_device_group_experts[COLI_CUDA_MAX_DEVICES];
-static uint64_t g_device_group_rows[COLI_CUDA_MAX_DEVICES];
-static double g_device_group_h2d_ms[COLI_CUDA_MAX_DEVICES];
-static double g_device_group_kernel_ms[COLI_CUDA_MAX_DEVICES];
-static double g_device_group_d2h_ms[COLI_CUDA_MAX_DEVICES];
+static uint64_t g_device_group_calls[LMA_CUDA_MAX_DEVICES];
+static uint64_t g_device_group_experts[LMA_CUDA_MAX_DEVICES];
+static uint64_t g_device_group_rows[LMA_CUDA_MAX_DEVICES];
+static double g_device_group_h2d_ms[LMA_CUDA_MAX_DEVICES];
+static double g_device_group_kernel_ms[LMA_CUDA_MAX_DEVICES];
+static double g_device_group_d2h_ms[LMA_CUDA_MAX_DEVICES];
 static std::mutex g_group_stats_mu;
-#ifdef COLI_ANS
+#ifdef LMA_ANS
 static FILE *g_ans_sidecar;
 static int g_ans_sidecar_pack;
 #if defined(__linux__)
@@ -187,9 +187,9 @@ static int select_ctx(DeviceContext *ctx) {
  * into 98 bytes: 64 codebook indices, 8 words of (4x7 signs + 4-bit sub-scale),
  * and one fp16 super-scale. Scales live INSIDE the block, so fmt=6 tensors carry
  * no separate scale array (#452). */
-#define COLI_E8_QK      256
-#define COLI_E8_SUB      32
-#define COLI_E8_BBYTES   98
+#define LMA_E8_QK      256
+#define LMA_E8_SUB      32
+#define LMA_E8_BBYTES   98
 
 __host__ __device__ static size_t row_bytes(int fmt, int I) {
     if (fmt == 0) return (size_t)I * sizeof(float);
@@ -198,7 +198,7 @@ __host__ __device__ static size_t row_bytes(int fmt, int I) {
     if (fmt == 3) return (size_t)(I + 3) / 4;
     if (fmt == 4) return (size_t)(I + 1) / 2;   /* grouped int4: nibbles like fmt 2 */
     if (fmt == 7) return (size_t)(I + 1) / 2;   /* MXFP4: e2m1 nibbles, 2 per byte */
-    if (fmt == 6) return (size_t)(((int64_t)I + COLI_E8_QK - 1) / COLI_E8_QK) * COLI_E8_BBYTES;
+    if (fmt == 6) return (size_t)(((int64_t)I + LMA_E8_QK - 1) / LMA_E8_QK) * LMA_E8_BBYTES;
     if (fmt == 8) return (size_t)I;             /* fp8-e4m3: raw bytes, layout of fmt=1 */
     return 0;
 }
@@ -232,7 +232,7 @@ __device__ __forceinline__ float e8_fp16(const uint8_t *p){
 }
 /* Expand one 32-weight sub-block; mirrors e8_expand_sub in quant.h. */
 __device__ __forceinline__ void e8_expand_sub_dev(const uint8_t *blk, int ib, float d, float *out){
-    uint32_t word = e8_ld_u32(blk + COLI_E8_QK/4 + ib*4);
+    uint32_t word = e8_ld_u32(blk + LMA_E8_QK/4 + ib*4);
     float db = d * (0.5f + (float)((word>>28)&0xF)) * 0.5f;
     const uint8_t *idx = blk + ib*8;
     for (int l=0;l<4;l++){
@@ -297,7 +297,7 @@ __device__ static inline float mx4_weight_at(const uint8_t *q, int i) {
  * (fmt=8 was in that misread set too, then refused, until it gained its own
  * explicit branch below for the absorb path.) Meanwhile the CPU functions
  * doing the same job on the same tensor, qt_addrow and qt_matvec_rows
- * (colibri.c), both exit(1) naming the function and the fmt. Two backends,
+ * (glm52.c), both exit(1) naming the function and the fmt. Two backends,
  * identical unsupported input, one refusing and one fabricating: that
  * asymmetry is the defect, independent of any particular format's arrival.
  *
@@ -310,16 +310,16 @@ __device__ static inline float mx4_weight_at(const uint8_t *q, int i) {
  *
  * IT IS A BACKSTOP, NOT THE PRIMARY GATE -- and the gates above it are several
  * DIFFERENT checks, not one. Naming them exactly, because "every launcher checks
- * coli_cuda_weight_at_supported" would be false and a reader will verify it:
- *   - UPLOAD is the widest gate. coli_cuda_tensor_upload{,_g} refuse when
+ * lma_cuda_weight_at_supported" would be false and a reader will verify it:
+ *   - UPLOAD is the widest gate. lma_cuda_tensor_upload{,_g} refuse when
  *     row_bytes(fmt,I) == 0, which is every fmt this file has no row stride for --
  *     fmt=5 (int3-g64), every negative fmt, every unknown fmt. Those can never
- *     become a ColiCudaTensor at all, so the uploadable set is {0,1,2,3,4,6,7,8}.
+ *     become a LmaCudaTensor at all, so the uploadable set is {0,1,2,3,4,6,7,8}.
  *   - quant_matmul dispatches 6, 7, 4 and 8 in explicit branches of its own, so
  *     the generic else that calls this function sees only 0/1/2/3 out of that set.
  *   - the generic grouped-expert path refuses gf>3 || uf>3 || df>3 on the host.
  *   - the absorb call sites (the other caller of this function) are the ones
- *     gated by coli_cuda_weight_at_supported, via absorb_fmt_ok below -- one
+ *     gated by lma_cuda_weight_at_supported, via absorb_fmt_ok below -- one
  *     caller, not "every launcher".
  * Each of those is sufficient on its own for the sites it covers; this trap
  * exists because none of them is a property of THIS function. Reaching this line
@@ -330,8 +330,8 @@ __device__ static float weight_at(const void *weights, int fmt, size_t row, int 
     if (fmt == 1) return static_cast<float>(reinterpret_cast<const int8_t *>(base)[i]);
     /* fmt=8 (fp8-e4m3): raw byte, same layout as fmt=1 (row_bytes(8,I)==I), decoded
      * through the shared c_e4m3 LUT (same table quant_matmul's fmt==8 branch reads,
-     * uploaded once by coli_cuda_fp8_set_lut). Callers gate on the LUT being live
-     * before a fmt=8 tensor ever reaches this function (coli_cuda_tensor_upload
+     * uploaded once by lma_cuda_fp8_set_lut). Callers gate on the LUT being live
+     * before a fmt=8 tensor ever reaches this function (lma_cuda_tensor_upload
      * refuses the upload otherwise), so the table is always populated here. Returns
      * the decoded WEIGHT only, unscaled -- absorb_scale below applies the
      * per-128x128-block scale, exactly like every other quantized fmt returns
@@ -363,7 +363,7 @@ __device__ static float absorb_scale(const float *wscale, int fmt, int gs, int n
         /* fp8-e4m3: one f32 scale per 128x128 BLOCK, block-row-major
          * ([ceil(O/128), ceil(I/128)]), exactly quant_matmul's fmt==8 indexing
          * (scl[i >> 7] on a scale row selected by o >> 7) and matmul_fp8's CPU
-         * reference (quant.h). `ng` here is coli_cuda_tensor_upload's t->ng,
+         * reference (quant.h). `ng` here is lma_cuda_tensor_upload's t->ng,
          * which for fmt=8 is set to ceil(I/128) specifically (not the fmt=4
          * group count) -- see the upload-time assignment there. `gs` is unused
          * for fmt=8 (always 0, only fmt=4 sets it), so the block edge is the
@@ -408,14 +408,14 @@ __global__ static void offset_to_signed_s4(uint8_t *q,size_t n){
 /* Decode one e4m3 byte. Default: a __shared__ copy of c_e4m3 — per-thread
  * data-dependent indices are the __constant__ cache's documented worst case
  * (accesses to different addresses within a warp serialize), while shared
- * memory takes them at full rate. HW=1 (COLI_CUDA_F8_WARP=2, CUDA-only): the
+ * memory takes them at full rate. HW=1 (LMA_CUDA_F8_WARP=2, CUDA-only): the
  * cuda_fp8.h route. Every finite e4m3 value is exactly representable in f16,
  * so the two paths should agree bit for bit — but the on-device 256-value
  * sweep is the authority, and the LUT stays the default until the sweep
  * certifies the cvt path on the target silicon. */
 template<int HW>
 __device__ __forceinline__ float f8_dec(const float *slut, uint8_t b){
-#if COLI_F8_HWCVT
+#if LMA_F8_HWCVT
     if (HW) return __half2float(__half(__nv_cvt_fp8_to_halfraw(b, __NV_E4M3)));
 #endif
     return slut[b];
@@ -467,7 +467,7 @@ __device__ __forceinline__ void f8w_block(const float *slut,const uint8_t *gr,
 }
 
 /* Dense fmt=8 rework: quant_matmul's fmt=8 branch as its OWN kernel, so
- * COLI_CUDA_F8_WARP=0 restores the fully original dense behavior too (the
+ * LMA_CUDA_F8_WARP=0 restores the fully original dense behavior too (the
  * host picks in quant_matmul_launch). Same grid/block contract as
  * quant_matmul: one 256-thread block per (o,s). Accumulation mirrors the CPU
  * reference: f32 partial per 128-block (f8w_block), the scale applied ONCE
@@ -518,12 +518,12 @@ __global__ static void quant_matmul(float *y, const float *x, const void *weight
          * sub-blocks rather than elements -- expanding once per 32 weights
          * instead of redoing the word/parity work for every element. */
         const uint8_t *wrow = static_cast<const uint8_t *>(weights) + row;
-        int nsub = (I + COLI_E8_SUB - 1) / COLI_E8_SUB;
+        int nsub = (I + LMA_E8_SUB - 1) / LMA_E8_SUB;
         for (int sb = threadIdx.x; sb < nsub; sb += blockDim.x) {
-            const uint8_t *blk = wrow + (size_t)(sb / (COLI_E8_QK/COLI_E8_SUB)) * COLI_E8_BBYTES;
-            float w[COLI_E8_SUB];
-            e8_expand_sub_dev(blk, sb % (COLI_E8_QK/COLI_E8_SUB), e8_fp16(blk+96), w);
-            int off = sb*COLI_E8_SUB, n = I-off < COLI_E8_SUB ? I-off : COLI_E8_SUB;
+            const uint8_t *blk = wrow + (size_t)(sb / (LMA_E8_QK/LMA_E8_SUB)) * LMA_E8_BBYTES;
+            float w[LMA_E8_SUB];
+            e8_expand_sub_dev(blk, sb % (LMA_E8_QK/LMA_E8_SUB), e8_fp16(blk+96), w);
+            int off = sb*LMA_E8_SUB, n = I-off < LMA_E8_SUB ? I-off : LMA_E8_SUB;
             for (int k=0;k<n;k++) sum += xs[off+k]*w[k];
         }
     } else if (fmt == 7) {
@@ -591,7 +591,7 @@ __global__ static void quant_matmul(float *y, const float *x, const void *weight
          * geometry derives from I alone and gs/ng are ignored: this branch is
          * correct no matter which call site launched it. NaN bytes decode to NaN
          * through the LUT and propagate, same policy as the CPU path. This is
-         * the ORIGINAL dense path, kept for COLI_CUDA_F8_WARP=0; the default
+         * the ORIGINAL dense path, kept for LMA_CUDA_F8_WARP=0; the default
          * routes fmt=8 to quant_matmul_f8w instead (quant_matmul_launch). */
         const uint8_t *wrow = static_cast<const uint8_t *>(weights) + row;
         const float *scl = scales + (size_t)(o / FP8_BLOCK) * (size_t)((I + FP8_BLOCK - 1) / FP8_BLOCK);
@@ -628,7 +628,7 @@ __global__ static void quant_matmul(float *y, const float *x, const void *weight
  * Placement note: all routed experts of a layer share one gate/up input, so that
  * rotation belongs to the CALLER (once per layer). This kernel exists for the
  * down projection, whose input is the per-expert silu(gate)*up product and so
- * cannot be shared -- mirroring colibri.c's split at moe(). */
+ * cannot be shared -- mirroring glm52.c's split at moe(). */
 __global__ static void e8_rot_rows_kernel(float *rows, int dim, int off, int n){
     extern __shared__ float sh[];
     __shared__ uint8_t sbits[4096/8];
@@ -823,15 +823,15 @@ __global__ static void grouped_hidden_e8_dual(float *gate,const float *x,
     const uint8_t *gr=(const uint8_t*)d.g+(size_t)o*rb;
     const uint8_t *ur=(const uint8_t*)d.u+(size_t)o*rb;
     const float *xs=x+(size_t)(d.offset+s)*D;float ga=0,ua=0;
-    int nsub=(D+COLI_E8_SUB-1)/COLI_E8_SUB;
+    int nsub=(D+LMA_E8_SUB-1)/LMA_E8_SUB;
     for(int sb=threadIdx.x;sb<nsub;sb+=blockDim.x){
-        int ib=sb%(COLI_E8_QK/COLI_E8_SUB);
-        const uint8_t *gb=gr+(size_t)(sb/(COLI_E8_QK/COLI_E8_SUB))*COLI_E8_BBYTES;
-        const uint8_t *ub=ur+(size_t)(sb/(COLI_E8_QK/COLI_E8_SUB))*COLI_E8_BBYTES;
-        float gw[COLI_E8_SUB],uw[COLI_E8_SUB];
+        int ib=sb%(LMA_E8_QK/LMA_E8_SUB);
+        const uint8_t *gb=gr+(size_t)(sb/(LMA_E8_QK/LMA_E8_SUB))*LMA_E8_BBYTES;
+        const uint8_t *ub=ur+(size_t)(sb/(LMA_E8_QK/LMA_E8_SUB))*LMA_E8_BBYTES;
+        float gw[LMA_E8_SUB],uw[LMA_E8_SUB];
         e8_expand_sub_dev(gb,ib,e8_fp16(gb+96),gw);
         e8_expand_sub_dev(ub,ib,e8_fp16(ub+96),uw);
-        int off=sb*COLI_E8_SUB,n=D-off<COLI_E8_SUB?D-off:COLI_E8_SUB;
+        int off=sb*LMA_E8_SUB,n=D-off<LMA_E8_SUB?D-off:LMA_E8_SUB;
         for(int k=0;k<n;k++){float v=xs[off+k];ga+=v*gw[k];ua+=v*uw[k];}
     }
     __shared__ float gp[256],up[256];gp[threadIdx.x]=ga;up[threadIdx.x]=ua;__syncthreads();
@@ -843,12 +843,12 @@ __global__ static void grouped_down_e8(float *y,const float *x,const GroupDesc *
     int o=blockIdx.x,s=blockIdx.y,c=blockIdx.z;GroupDesc d=desc[c];if(s>=d.rows)return;
     size_t rb=row_bytes(6,I);const uint8_t *wr=(const uint8_t*)d.d+(size_t)o*rb;
     const float *xs=x+(size_t)(d.offset+s)*I;float sum=0;
-    int nsub=(I+COLI_E8_SUB-1)/COLI_E8_SUB;
+    int nsub=(I+LMA_E8_SUB-1)/LMA_E8_SUB;
     for(int sb=threadIdx.x;sb<nsub;sb+=blockDim.x){
-        int ib=sb%(COLI_E8_QK/COLI_E8_SUB);
-        const uint8_t *blk=wr+(size_t)(sb/(COLI_E8_QK/COLI_E8_SUB))*COLI_E8_BBYTES;
-        float w[COLI_E8_SUB];e8_expand_sub_dev(blk,ib,e8_fp16(blk+96),w);
-        int off=sb*COLI_E8_SUB,n=I-off<COLI_E8_SUB?I-off:COLI_E8_SUB;
+        int ib=sb%(LMA_E8_QK/LMA_E8_SUB);
+        const uint8_t *blk=wr+(size_t)(sb/(LMA_E8_QK/LMA_E8_SUB))*LMA_E8_BBYTES;
+        float w[LMA_E8_SUB];e8_expand_sub_dev(blk,ib,e8_fp16(blk+96),w);
+        int off=sb*LMA_E8_SUB,n=I-off<LMA_E8_SUB?I-off:LMA_E8_SUB;
         for(int k=0;k<n;k++)sum+=xs[off+k]*w[k];
     }
     __shared__ float p[256];p[threadIdx.x]=sum;__syncthreads();
@@ -981,7 +981,7 @@ __global__ static void grouped_down_f8(float *y,const float *x,const GroupDesc *
     if(!threadIdx.x)y[(size_t)(d.offset+s)*D+o]=p[0];
 }
 
-/* fmt=8 warp rework (COLI_CUDA_F8_WARP, default on): one WARP owns one
+/* fmt=8 warp rework (LMA_CUDA_F8_WARP, default on): one WARP owns one
  * (expert,output-row) pair and walks the row block-major through f8w_block —
  * weights stream once per tile of up to 4 activation rows instead of once per
  * (o,s) 256-thread block, and the accumulation is the CPU reference's (f32
@@ -1121,7 +1121,7 @@ __global__ static void attention_absorb_ragged_kernel(float *ctx,const float *q,
         a+=qs[d]*weight_at(weights,fmt,(size_t)(rbase+d)*row_bytes(fmt,K),k)*
           absorb_scale(wscale,fmt,gs,ng,rbase+d,k);qa[k]=a;}
     __syncthreads();
-    for(int t=tid;t<nt;t+=blockDim.x){float a=0;int pg=t/COLI_KV_PAGE_TOKENS,pt=t%COLI_KV_PAGE_TOKENS;
+    for(int t=tid;t<nt;t+=blockDim.x){float a=0;int pg=t/LMA_KV_PAGE_TOKENS,pt=t%LMA_KV_PAGE_TOKENS;
         const float *lt=latent[(size_t)s*page_stride+pg]+(size_t)pt*K;
         const float *rt=rope[(size_t)s*page_stride+pg]+(size_t)pt*R;for(int k=0;k<K;k++)a+=qa[k]*lt[k];
         for(int d=0;d<R;d++)a+=qs[Q+d]*rt[d];scores[t]=a*scale;}
@@ -1136,8 +1136,8 @@ __global__ static void attention_absorb_ragged_kernel(float *ctx,const float *q,
     float inv=1.f/red[0];for(int t=tid;t<nt;t+=blockDim.x)scores[t]*=inv;
     __syncthreads();
     for(int k=tid;k<K;k+=blockDim.x){float a=0;for(int t=0;t<nt;t++){
-        const float *lt=latent[(size_t)s*page_stride+t/COLI_KV_PAGE_TOKENS]+
-                        (size_t)(t%COLI_KV_PAGE_TOKENS)*K;
+        const float *lt=latent[(size_t)s*page_stride+t/LMA_KV_PAGE_TOKENS]+
+                        (size_t)(t%LMA_KV_PAGE_TOKENS)*K;
         a+=scores[t]*lt[k];}cl[k]=a;}
     __syncthreads();
     for(int v=tid;v<V;v+=blockDim.x){int row=rbase+Q+v;float a=0;size_t rb=row_bytes(fmt,K);
@@ -1151,7 +1151,7 @@ __global__ static void ragged_kv_append(float *const *latent,float *const *rope,
         int K,int R,int page_stride){
     int s=blockIdx.x,n=add[s],base=offset[s];
     for(int t=0;t<n;t++){
-        int pos=old_len[s]+t,pg=pos/COLI_KV_PAGE_TOKENS,pt=pos%COLI_KV_PAGE_TOKENS;
+        int pos=old_len[s]+t,pg=pos/LMA_KV_PAGE_TOKENS,pt=pos%LMA_KV_PAGE_TOKENS;
         float *lp=latent[(size_t)s*page_stride+pg]+(size_t)pt*K;
         float *rp=rope[(size_t)s*page_stride+pg]+(size_t)pt*R;
         for(int k=threadIdx.x;k<K;k+=blockDim.x)lp[k]=packed[base+(size_t)t*K+k];
@@ -1179,7 +1179,7 @@ static int reserve_pinned(float **ptr,size_t *cap,size_t bytes){
     if(!cuda_ok(cudaMallocHost(ptr,bytes),"pinned staging allocation"))return 0;*cap=bytes;return 1;
 }
 
-#ifdef COLI_ANS
+#ifdef LMA_ANS
 static void *ans_arena_alloc(DeviceContext *ctx,size_t bytes){
     bytes=(bytes+255)&~size_t(255);
     if(!ctx->ans_chunks)ctx->ans_chunks=new std::vector<AnsArenaChunk>;
@@ -1202,15 +1202,15 @@ static int ans_host_reserve(DeviceContext *ctx,size_t bytes){
     ctx->ans_host_cap=bytes;return 1;
 }
 static int prepare_group_weights(DeviceContext *ctx,
-        ColiCudaTensor *const *gates,ColiCudaTensor *const *ups,
-        ColiCudaTensor *const *downs,int count,GroupDesc *host){
+        LmaCudaTensor *const *gates,LmaCudaTensor *const *ups,
+        LmaCudaTensor *const *downs,int count,GroupDesc *host){
     int n=0; size_t total=0;
     for(int c=0;c<count;c++){
-        ColiCudaTensor *q[3]={gates[c],ups[c],downs[c]};
+        LmaCudaTensor *q[3]={gates[c],ups[c],downs[c]};
         for(int k=0;k<3;k++) if(q[k]->compressed){n++;total+=q[k]->weight_bytes;}
     }
     if(!n) return 1;
-    if(!g_ans_profile_printed&&std::getenv("COLI_ANS_PROFILE")){
+    if(!g_ans_profile_printed&&std::getenv("LMA_ANS_PROFILE")){
         g_ans_profile_printed=1;
         std::fprintf(stderr,
             "[ANS] load profile: %llu records | header %.2fs | read %.2fs | "
@@ -1224,7 +1224,7 @@ static int prepare_group_weights(DeviceContext *ctx,
     std::vector<uint32_t> cap; cap.reserve(n);
     size_t off=0;
     for(int c=0;c<count;c++){
-        ColiCudaTensor *q[3]={gates[c],ups[c],downs[c]};
+        LmaCudaTensor *q[3]={gates[c],ups[c],downs[c]};
         const void **dst[3]={&host[c].g,&host[c].u,&host[c].d};
         for(int k=0;k<3;k++) if(q[k]->compressed){
             void *raw=(uint8_t*)ctx->ans_raw+off;
@@ -1238,15 +1238,15 @@ static int prepare_group_weights(DeviceContext *ctx,
     return cuda_ok(cudaGetLastError(),"ANS expert decode launch");
 }
 #else
-static int prepare_group_weights(DeviceContext *,ColiCudaTensor *const *,
-        ColiCudaTensor *const *,ColiCudaTensor *const *,int,GroupDesc *){return 1;}
+static int prepare_group_weights(DeviceContext *,LmaCudaTensor *const *,
+        LmaCudaTensor *const *,LmaCudaTensor *const *,int,GroupDesc *){return 1;}
 #endif
 
 /* Publish quant.h's E8 codebook to every configured device. __constant__ memory
  * is per-device, so this walks the contexts; the engine calls it once after init
  * rather than the backend carrying a second copy of the table that could drift
  * from the CPU decoder's (#452). Safe to call before any fmt=6 upload only. */
-extern "C" int coli_cuda_e8_set_grid(const void *grid) {
+extern "C" int lma_cuda_e8_set_grid(const void *grid) {
     if (!grid || g_nctx < 1) return 0;
     for (int i = 0; i < g_nctx; i++) {
         if (!select_ctx(&g_ctx[i])) return 0;
@@ -1258,7 +1258,7 @@ extern "C" int coli_cuda_e8_set_grid(const void *grid) {
 
 /* Publish quant.h's E4M3_LUT the same way — one source of truth for the fmt=8
  * decode on CPU and GPU. Until this succeeds, fmt=8 uploads are refused. */
-extern "C" int coli_cuda_fp8_set_lut(const float *lut) {
+extern "C" int lma_cuda_fp8_set_lut(const float *lut) {
     if (!lut || g_nctx < 1) return 0;
     for (int i = 0; i < g_nctx; i++) {
         if (!select_ctx(&g_ctx[i])) return 0;
@@ -1269,7 +1269,7 @@ extern "C" int coli_cuda_fp8_set_lut(const float *lut) {
     return 1;
 }
 
-extern "C" int coli_cuda_init(const int *devices, int count) {
+extern "C" int lma_cuda_init(const int *devices, int count) {
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP__)
     /* #509: the ROCm runtime (comgr, MIOpen, roctracer) reads $TEMP as a temp-dir
      * path. A stray numeric TEMP (the engine's legacy sampling alias) makes comgr's
@@ -1294,7 +1294,7 @@ extern "C" int coli_cuda_init(const int *devices, int count) {
     }
 #endif
     int available = 0;
-    if (!devices || count < 1 || count > COLI_CUDA_MAX_DEVICES) return 0;
+    if (!devices || count < 1 || count > LMA_CUDA_MAX_DEVICES) return 0;
     if (!cuda_ok(cudaGetDeviceCount(&available), "device discovery")) return 0;
     /* Validate the whole list before creating resources or replacing state. */
     for (int i = 0; i < count; i++) {
@@ -1311,26 +1311,26 @@ extern "C" int coli_cuda_init(const int *devices, int count) {
         /* Same decision as before, routed through the shared predicate in
          * backend_cuda.h so a host-side test can pin it without nvcc; the
          * return value is unchanged (1 for the same set, 0 otherwise). */
-        int live[COLI_CUDA_MAX_DEVICES];
+        int live[LMA_CUDA_MAX_DEVICES];
         for (int i = 0; i < g_nctx; i++) live[i] = g_ctx[i].device;
-        int d = coli_cuda_init_disposition(g_nctx, count, devices, live);
-        if (d == COLI_CUDA_INIT_REFUSE)
+        int d = lma_cuda_init_disposition(g_nctx, count, devices, live);
+        if (d == LMA_CUDA_INIT_REFUSE)
             std::fprintf(stderr, "[CUDA] device list change requires shutdown first\n");
-        return d == COLI_CUDA_INIT_ACCEPT;
+        return d == LMA_CUDA_INIT_ACCEPT;
     }
     for (int i = 0; i < count; i++) {
         int device = devices[i];
         DeviceContext *ctx = &g_ctx[g_nctx];
         *ctx = {};
         ctx->device = device;
-        if (!select_ctx(ctx)) { coli_cuda_shutdown(); return 0; }
+        if (!select_ctx(ctx)) { lma_cuda_shutdown(); return 0; }
         cudaDeviceProp prop{};
-        if (!cuda_ok(cudaGetDeviceProperties(&prop, device), "device properties")) { coli_cuda_shutdown(); return 0; }
+        if (!cuda_ok(cudaGetDeviceProperties(&prop, device), "device properties")) { lma_cuda_shutdown(); return 0; }
         ctx->compute_major=prop.major;ctx->compute_minor=prop.minor;
         if(!cuda_ok(cudaStreamCreateWithFlags(&ctx->stream,cudaStreamNonBlocking),"stream creation")){
-            coli_cuda_shutdown();return 0;
+            lma_cuda_shutdown();return 0;
         }
-#ifdef COLI_ANS
+#ifdef LMA_ANS
         if(std::getenv("CUDA_RAW_EXPERTS")){
             ctx->ans_scratch = new dietgpu::StackDeviceMemory(device, 1ull << 30);
             ctx->ans_chunks = new std::vector<AnsArenaChunk>;
@@ -1343,13 +1343,13 @@ extern "C" int coli_cuda_init(const int *devices, int count) {
     return 1;
 }
 
-extern "C" int coli_cuda_available_device_count(void) {
+extern "C" int lma_cuda_available_device_count(void) {
     int available = 0;
     if (cudaGetDeviceCount(&available) != cudaSuccess) return 0;
     return available;
 }
 
-extern "C" void coli_cuda_shutdown(void) {
+extern "C" void lma_cuda_shutdown(void) {
     for (int i = 0; i < g_nctx; i++) {
         DeviceContext *ctx = &g_ctx[i];
         if (!select_ctx(ctx)) continue;
@@ -1372,7 +1372,7 @@ extern "C" void coli_cuda_shutdown(void) {
         if (ctx->host_kv) cudaFreeHost(ctx->host_kv);
         if (ctx->stream) cudaStreamDestroy(ctx->stream);
         if (ctx->group_desc) cudaFree(ctx->group_desc);
-#ifdef COLI_ANS
+#ifdef LMA_ANS
         if(ctx->ans_copy_pending)cudaStreamSynchronize(ctx->stream);
         if(ctx->ans_host)cudaFreeHost(ctx->ans_host);
         if (ctx->ans_raw) cudaFree(ctx->ans_raw);
@@ -1400,20 +1400,20 @@ extern "C" void coli_cuda_shutdown(void) {
     /* g_fp8_lut_ready is PROCESS-WIDE while the e4m3 table (c_e4m3, a
      * __constant__ device symbol whose lifetime is the CUDA primary context,
      * not this file's host-side DeviceContext structs) is PER-DEVICE. A later
-     * coli_cuda_init may select a device the previous span never published to;
+     * lma_cuda_init may select a device the previous span never published to;
      * without this reset the upload gate (g_fp8_lut_ready, checked in
-     * coli_cuda_tensor_upload) would still be satisfied from the PREVIOUS
+     * lma_cuda_tensor_upload) would still be satisfied from the PREVIOUS
      * boot and admit fmt=8 tensors whose kernels there decode against an
      * unwritten (zero) table: silent all-zero weights, the exact
      * fabricated-numbers failure mode the format gates exist to refuse.
-     * Reset so every boot must publish its own LUT (coli_cuda_fp8_set_lut)
+     * Reset so every boot must publish its own LUT (lma_cuda_fp8_set_lut)
      * before any fmt=8 upload. Shutdown is the ONLY site that needs to clear
-     * the flag: coli_cuda_init refuses a re-init that names a different
+     * the flag: lma_cuda_init refuses a re-init that names a different
      * device set (it returns early while g_nctx is non-zero, leaving the
      * existing contexts and their published table untouched), so the device
      * set can only WIDEN by passing through here first. */
     g_fp8_lut_ready = 0;
-#ifdef COLI_ANS
+#ifdef LMA_ANS
     if(g_ans_sidecar){std::fclose(g_ans_sidecar);g_ans_sidecar=nullptr;}
 #if defined(__linux__)
     if(g_ans_direct_fd>=0){close(g_ans_direct_fd);g_ans_direct_fd=-1;g_ans_direct_off=0;}
@@ -1421,13 +1421,13 @@ extern "C" void coli_cuda_shutdown(void) {
 #endif
 }
 
-extern "C" int coli_cuda_device_count(void) { return g_nctx; }
+extern "C" int lma_cuda_device_count(void) { return g_nctx; }
 
-extern "C" int coli_cuda_device_at(int index) {
+extern "C" int lma_cuda_device_at(int index) {
     return index >= 0 && index < g_nctx ? g_ctx[index].device : -1;
 }
 
-extern "C" int coli_cuda_mem_info(int device, size_t *free_bytes, size_t *total_bytes) {
+extern "C" int lma_cuda_mem_info(int device, size_t *free_bytes, size_t *total_bytes) {
     DeviceContext *ctx = find_ctx(device);
     if (!free_bytes || !total_bytes || !select_ctx(ctx)) return 0;
     return cuda_ok(cudaMemGetInfo(free_bytes, total_bytes), "memory info");
@@ -1437,13 +1437,13 @@ extern "C" int coli_cuda_mem_info(int device, size_t *free_bytes, size_t *total_
  * GB10, Jetson, integrated GPUs). On these the expert tier and the RAM cache draw
  * from the same pool, so the RAM budget must account for the tier; on a discrete GPU
  * VRAM is a separate pool and this returns 0. */
-extern "C" int coli_cuda_device_integrated(int device) {
+extern "C" int lma_cuda_device_integrated(int device) {
     cudaDeviceProp prop{};
     if (!cuda_ok(cudaGetDeviceProperties(&prop, device), "device properties")) return 0;
     return prop.integrated ? 1 : 0;
 }
 
-extern "C" void coli_cuda_stats(int device, size_t *tensor_count, size_t *tensor_bytes) {
+extern "C" void lma_cuda_stats(int device, size_t *tensor_count, size_t *tensor_bytes) {
     size_t count = 0, bytes = 0;
     for (int i = 0; i < g_nctx; i++) if (device < 0 || g_ctx[i].device == device) {
         count += g_ctx[i].tensor_count;
@@ -1453,14 +1453,14 @@ extern "C" void coli_cuda_stats(int device, size_t *tensor_count, size_t *tensor
     if (tensor_bytes) *tensor_bytes = bytes;
 }
 
-extern "C" void coli_cuda_group_stats(uint64_t *calls, uint64_t *experts, uint64_t *rows,
+extern "C" void lma_cuda_group_stats(uint64_t *calls, uint64_t *experts, uint64_t *rows,
                                         double *h2d_ms, double *kernel_ms, double *d2h_ms) {
     if(calls) *calls=g_group_calls; if(experts) *experts=g_group_experts; if(rows) *rows=g_group_rows;
     if(h2d_ms) *h2d_ms=g_group_h2d_ms; if(kernel_ms) *kernel_ms=g_group_kernel_ms;
     if(d2h_ms) *d2h_ms=g_group_d2h_ms;
 }
 
-extern "C" void coli_cuda_group_stats_device(
+extern "C" void lma_cuda_group_stats_device(
     int device, uint64_t *calls, uint64_t *experts, uint64_t *rows,
     double *h2d_ms, double *kernel_ms, double *d2h_ms) {
     std::lock_guard<std::mutex> lock(g_group_stats_mu);
@@ -1478,10 +1478,10 @@ extern "C" void coli_cuda_group_stats_device(
  * thread_local so the widely-wired upload signature (and the Windows DLL ABI)
  * stays untouched. pin_load uploads in parallel, hence thread_local. */
 static thread_local int g_upload_gs = 0;
-extern "C" int coli_cuda_tensor_upload_g(ColiCudaTensor **tensor,
+extern "C" int lma_cuda_tensor_upload_g(LmaCudaTensor **tensor,
                                          const void *weights, const float *scales,
                                          int fmt, int I, int O, int device, int gs);
-extern "C" int coli_cuda_tensor_upload(ColiCudaTensor **tensor,
+extern "C" int lma_cuda_tensor_upload(LmaCudaTensor **tensor,
                                         const void *weights, const float *scales,
                                         int fmt, int I, int O, int device) {
     if (!tensor) return 0;
@@ -1491,7 +1491,7 @@ extern "C" int coli_cuda_tensor_upload(ColiCudaTensor **tensor,
          * and with the old order (!weights checked first) every later matmul
          * on such a slot failed here — the GPU tier silently never computed
          * for host-released slab experts. */
-        ColiCudaTensor *t = *tensor;
+        LmaCudaTensor *t = *tensor;
         int want_gs = (fmt==4 && g_upload_gs>0) ? g_upload_gs : 0;
         return t->fmt == fmt && t->I == I && t->O == O && t->device == device && t->gs == want_gs;
     }
@@ -1503,8 +1503,8 @@ extern "C" int coli_cuda_tensor_upload(ColiCudaTensor **tensor,
     if (!rb || (fmt && fmt != 6 && !scales)) return 0;
     /* kernels would read a zero LUT; shared predicate, pinned by
      * tests/test_cuda_lut_gate.c without a CUDA toolchain */
-    if (!coli_cuda_fp8_gate_admits(fmt, g_fp8_lut_ready)) return 0;
-    ColiCudaTensor *t = static_cast<ColiCudaTensor *>(std::calloc(1, sizeof(*t)));
+    if (!lma_cuda_fp8_gate_admits(fmt, g_fp8_lut_ready)) return 0;
+    LmaCudaTensor *t = static_cast<LmaCudaTensor *>(std::calloc(1, sizeof(*t)));
     if (!t) return 0;
     t->fmt = fmt; t->I = I; t->O = O; t->device = device; t->weight_bytes = rb * (size_t)O;
     t->gs = (fmt==4 && g_upload_gs>0) ? g_upload_gs : 0;
@@ -1519,7 +1519,7 @@ extern "C" int coli_cuda_tensor_upload(ColiCudaTensor **tensor,
         t->scale_count = (size_t)fp8_nblk(O) * (size_t)t->ng;
     }
     if (!cuda_ok(cudaMalloc(&t->weights, t->weight_bytes), "tensor allocation")) {
-        coli_cuda_tensor_free(t);
+        lma_cuda_tensor_free(t);
         return 0;
     }
     /* Ownership is a fact of the allocation, not the copy: set it BEFORE the
@@ -1527,16 +1527,16 @@ extern "C" int coli_cuda_tensor_upload(ColiCudaTensor **tensor,
      * still 0 and free()'s ownership gate leaks the device buffer. */
     t->weights_owned=1;
     if (!cuda_ok(cudaMemcpy(t->weights, weights, t->weight_bytes, cudaMemcpyHostToDevice), "tensor upload")) {
-        coli_cuda_tensor_free(t);
+        lma_cuda_tensor_free(t);
         return 0;
     }
     if(fmt==2||fmt==4){ /* same nibble layout: offset-binary -> signed in place */
         offset_to_signed_s4<<<(unsigned)((t->weight_bytes+255)/256),256>>>((uint8_t*)t->weights,t->weight_bytes);
-        if(!cuda_ok(cudaGetLastError(),"int4 weight conversion")){coli_cuda_tensor_free(t);return 0;}}
+        if(!cuda_ok(cudaGetLastError(),"int4 weight conversion")){lma_cuda_tensor_free(t);return 0;}}
     if (fmt && fmt != 6) {
         if (!cuda_ok(cudaMalloc(&t->scales, tensor_scale_bytes(t)), "scale allocation") ||
             !cuda_ok(cudaMemcpy(t->scales, scales, tensor_scale_bytes(t), cudaMemcpyHostToDevice), "scale upload")) {
-            coli_cuda_tensor_free(t);
+            lma_cuda_tensor_free(t);
             return 0;
         }
     }
@@ -1547,28 +1547,28 @@ extern "C" int coli_cuda_tensor_upload(ColiCudaTensor **tensor,
     *tensor = t;
     return 1;
 }
-extern "C" int coli_cuda_tensor_upload_g(ColiCudaTensor **tensor,
+extern "C" int lma_cuda_tensor_upload_g(LmaCudaTensor **tensor,
                                          const void *weights, const float *scales,
                                          int fmt, int I, int O, int device, int gs){
     g_upload_gs = gs>0 ? gs : 0;
-    int r = coli_cuda_tensor_upload(tensor, weights, scales, fmt, I, O, device);
+    int r = lma_cuda_tensor_upload(tensor, weights, scales, fmt, I, O, device);
     g_upload_gs = 0;
     return r;
 }
 
-#ifdef COLI_ANS
+#ifdef LMA_ANS
 struct AnsSidecarHeader {
     uint32_t magic,raw_bytes,archive_bytes,fmt,I,O;
 };
 static FILE *ans_sidecar(void){
     if(g_ans_sidecar) return g_ans_sidecar;
-    const char *path=std::getenv("COLI_ANS_SIDECAR");
+    const char *path=std::getenv("LMA_ANS_SIDECAR");
     if(!path||!*path) return nullptr;
-    g_ans_sidecar_pack=std::getenv("COLI_ANS_PACK")&&std::atoi(std::getenv("COLI_ANS_PACK"));
+    g_ans_sidecar_pack=std::getenv("LMA_ANS_PACK")&&std::atoi(std::getenv("LMA_ANS_PACK"));
     g_ans_sidecar=std::fopen(path,g_ans_sidecar_pack?"wb":"rb");
 #if defined(__linux__)
-    if(g_ans_sidecar&&!g_ans_sidecar_pack&&std::getenv("COLI_ANS_DIRECT")&&
-       std::atoi(std::getenv("COLI_ANS_DIRECT"))){
+    if(g_ans_sidecar&&!g_ans_sidecar_pack&&std::getenv("LMA_ANS_DIRECT")&&
+       std::atoi(std::getenv("LMA_ANS_DIRECT"))){
         g_ans_direct_fd=open(path,O_RDONLY|O_DIRECT);
         if(g_ans_direct_fd<0)std::fprintf(stderr,"[ANS] O_DIRECT unavailable; using buffered sidecar\n");
     }
@@ -1577,7 +1577,7 @@ static FILE *ans_sidecar(void){
 #endif
     return g_ans_sidecar;
 }
-extern "C" int coli_cuda_tensor_upload_compressed(ColiCudaTensor **tensor,
+extern "C" int lma_cuda_tensor_upload_compressed(LmaCudaTensor **tensor,
         const void *weights,const float *scales,int fmt,int I,int O,int device){
     if(fmt!=2 || !tensor || *tensor) return 0;  /* prototype: per-row int4 experts only */
     FILE *sidecar=ans_sidecar();
@@ -1610,7 +1610,7 @@ extern "C" int coli_cuda_tensor_upload_compressed(ColiCudaTensor **tensor,
         }
         g_ans_header_s+=ans_now_s()-t0;
         DeviceContext *ctx=find_ctx(device); if(!ctx||!select_ctx(ctx)) return 0;
-        ColiCudaTensor *t=(ColiCudaTensor*)std::calloc(1,sizeof(*t)); if(!t)return 0;
+        LmaCudaTensor *t=(LmaCudaTensor*)std::calloc(1,sizeof(*t)); if(!t)return 0;
         t->fmt=fmt;t->I=I;t->O=O;t->device=device;t->weight_bytes=h.raw_bytes;
         t->scale_count=(size_t)O;t->archive_bytes=h.archive_bytes;t->compressed=1;
         t0=ans_now_s();
@@ -1627,7 +1627,7 @@ extern "C" int coli_cuda_tensor_upload_compressed(ColiCudaTensor **tensor,
             scale_off=(h.archive_bytes+255)&~size_t(255);
         if(!t->weights||!ans_host_reserve(ctx,scale_off+scale_bytes)||
            !cuda_ok(cudaMalloc(&t->scales,scale_bytes),"ANS sidecar scales")){
-            coli_cuda_tensor_free(t);return 0;
+            lma_cuda_tensor_free(t);return 0;
         }
         g_ans_stage_s+=ans_now_s()-t0;
         t0=ans_now_s();
@@ -1640,14 +1640,14 @@ extern "C" int coli_cuda_tensor_upload_compressed(ColiCudaTensor **tensor,
                     "[ANS] direct record read failed at %lld: need %zu got %lld errno %d\n",
                     (long long)g_ans_direct_off,direct_data+h.archive_bytes,
                     (long long)got,errno);
-                coli_cuda_tensor_free(t);return 0;
+                lma_cuda_tensor_free(t);return 0;
             }
             g_ans_direct_off+=(off_t)sizeof(h)+(off_t)h.archive_bytes;
         }else
 #endif
         if(std::fread(ctx->ans_host,h.archive_bytes,1,sidecar)!=1){
             std::fprintf(stderr,"[ANS] truncated sidecar record\n");
-            coli_cuda_tensor_free(t);return 0;
+            lma_cuda_tensor_free(t);return 0;
         }
         g_ans_read_s+=ans_now_s()-t0;
         std::memcpy((uint8_t*)ctx->ans_host+scale_off,scales,scale_bytes);
@@ -1661,7 +1661,7 @@ extern "C" int coli_cuda_tensor_upload_compressed(ColiCudaTensor **tensor,
                                    cudaMemcpyHostToDevice,ctx->stream),"ANS sidecar upload")||
            !cuda_ok(cudaMemcpyAsync(t->scales,(uint8_t*)ctx->ans_host+scale_off,scale_bytes,
                                    cudaMemcpyHostToDevice,ctx->stream),"ANS sidecar scale upload")){
-            coli_cuda_tensor_free(t);return 0;
+            lma_cuda_tensor_free(t);return 0;
         }
         g_ans_enqueue_s+=ans_now_s()-t0;g_ans_load_records++;
         ctx->ans_copy_pending=1;
@@ -1669,16 +1669,16 @@ extern "C" int coli_cuda_tensor_upload_compressed(ColiCudaTensor **tensor,
         *tensor=t;return 1;
     }
     if(!sidecar||!g_ans_sidecar_pack) return 0;
-    if(!coli_cuda_tensor_upload(tensor,weights,scales,fmt,I,O,device)) return 0;
-    ColiCudaTensor *t=*tensor;
+    if(!lma_cuda_tensor_upload(tensor,weights,scales,fmt,I,O,device)) return 0;
+    LmaCudaTensor *t=*tensor;
     DeviceContext *ctx=find_ctx(device);
-    if(!ctx||!ctx->ans_scratch||!select_ctx(ctx)){ coli_cuda_tensor_free(t);*tensor=nullptr;return 0; }
+    if(!ctx||!ctx->ans_scratch||!select_ctx(ctx)){ lma_cuda_tensor_free(t);*tensor=nullptr;return 0; }
     uint32_t raw=(uint32_t)t->weight_bytes;
     uint32_t bound=dietgpu::getMaxCompressedSize(raw), *dsize=nullptr;
     void *tmp=nullptr;
     if(!cuda_ok(cudaMalloc(&tmp,bound),"ANS archive allocation")||
        !cuda_ok(cudaMalloc(&dsize,sizeof(*dsize)),"ANS size allocation")){
-        if(tmp)cudaFree(tmp);if(dsize)cudaFree(dsize);coli_cuda_tensor_free(t);*tensor=nullptr;return 0;
+        if(tmp)cudaFree(tmp);if(dsize)cudaFree(dsize);lma_cuda_tensor_free(t);*tensor=nullptr;return 0;
     }
     dietgpu::ANSCodecConfig config(11,false);
     /* tensor_upload converted offset-binary nibbles on the legacy stream.
@@ -1686,7 +1686,7 @@ extern "C" int coli_cuda_tensor_upload_compressed(ColiCudaTensor **tensor,
      * legacy-stream dependency. Finish that one-time conversion before the
      * encoder reads the bytes. */
     if(!cuda_ok(cudaStreamSynchronize(0),"ANS source conversion synchronize")){
-        cudaFree(tmp);cudaFree(dsize);coli_cuda_tensor_free(t);*tensor=nullptr;return 0;
+        cudaFree(tmp);cudaFree(dsize);lma_cuda_tensor_free(t);*tensor=nullptr;return 0;
     }
     dietgpu::ansEncodeBatchStride(*ctx->ans_scratch,config,1,t->weights,raw,raw,nullptr,
                                   tmp,bound,dsize,ctx->stream);
@@ -1695,16 +1695,16 @@ extern "C" int coli_cuda_tensor_upload_compressed(ColiCudaTensor **tensor,
                    "ANS size download")&&
            cuda_ok(cudaStreamSynchronize(ctx->stream),"ANS encode synchronize")&&used>0&&used<raw;
     cudaFree(dsize);
-    if(!ok){cudaFree(tmp);coli_cuda_tensor_free(t);*tensor=nullptr;return 0;}
+    if(!ok){cudaFree(tmp);lma_cuda_tensor_free(t);*tensor=nullptr;return 0;}
     if(g_ans_sidecar_pack){
         std::vector<uint8_t> archive(used);
         AnsSidecarHeader h{0x31534e41u,raw,used,(uint32_t)fmt,(uint32_t)I,(uint32_t)O};
         ok=cuda_ok(cudaMemcpy(archive.data(),tmp,used,cudaMemcpyDeviceToHost),"ANS sidecar download")&&
            std::fwrite(&h,sizeof(h),1,sidecar)==1&&
            std::fwrite(archive.data(),archive.size(),1,sidecar)==1;
-        cudaFree(tmp);coli_cuda_tensor_free(t);*tensor=nullptr;
+        cudaFree(tmp);lma_cuda_tensor_free(t);*tensor=nullptr;
         if(!ok)return 0;
-        t=(ColiCudaTensor*)std::calloc(1,sizeof(*t));if(!t)return 0;
+        t=(LmaCudaTensor*)std::calloc(1,sizeof(*t));if(!t)return 0;
         t->fmt=fmt;t->I=I;t->O=O;t->device=device;t->weight_bytes=raw;
         t->archive_bytes=used;t->compressed=1;*tensor=t;
         return 1;
@@ -1713,11 +1713,11 @@ extern "C" int coli_cuda_tensor_upload_compressed(ColiCudaTensor **tensor,
 }
 #endif
 
-extern "C" int coli_cuda_tensor_update(ColiCudaTensor *tensor,
+extern "C" int lma_cuda_tensor_update(LmaCudaTensor *tensor,
                                           const void *weights,
                                           const float *scales) {
     if (!tensor || !weights || (tensor->fmt && tensor->fmt != 6 && !scales)) return 0;
-#ifdef COLI_ANS
+#ifdef LMA_ANS
     if(tensor->compressed) return 0;
 #endif
     DeviceContext *ctx=find_ctx(tensor->device);
@@ -1735,32 +1735,32 @@ extern "C" int coli_cuda_tensor_update(ColiCudaTensor *tensor,
         cudaMemcpyHostToDevice),"scale refresh");
 }
 
-/* Test hook: COLI_GPU_FAIL_AFTER=N makes every GPU COMPUTE entry point report
+/* Test hook: LMA_GPU_FAIL_AFTER=N makes every GPU COMPUTE entry point report
  * failure after N successful calls (N=0: every call fails), exercising the
  * engine's CPU fallbacks and host-rematerialization end-to-end without real
  * hardware faults. Uploads/queries are not gated. Unset: no effect. */
 static long g_gpu_calls;
 static int fault_injected(void) {
-    const char *fa = std::getenv("COLI_GPU_FAIL_AFTER");
+    const char *fa = std::getenv("LMA_GPU_FAIL_AFTER");
     return fa && g_gpu_calls++ >= std::atol(fa);
 }
 
-/* COLI_CUDA_F8_WARP mode, re-read per dispatch like its siblings. Strict
+/* LMA_CUDA_F8_WARP mode, re-read per dispatch like its siblings. Strict
  * parse: a non-numeric value selects the DEFAULT, not atoi's silent 0.
  * Default 1 (warp kernels) on CUDA; 0 (original kernels) on HIP — the warp
  * kernels' wave64 width-32 shuffle sub-grouping has never been validated on
  * AMD silicon, and a scoring instrument must not default onto an untested
  * reduction. Opt in explicitly with =1/=2 once hip-test certifies it. */
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP__)
-#define COLI_F8_DEFAULT 0
+#define LMA_F8_DEFAULT 0
 #else
-#define COLI_F8_DEFAULT 1
+#define LMA_F8_DEFAULT 1
 #endif
 static int f8_warp_mode(void) {
-    const char *e = std::getenv("COLI_CUDA_F8_WARP");
-    if (!e || !*e) return COLI_F8_DEFAULT;
+    const char *e = std::getenv("LMA_CUDA_F8_WARP");
+    if (!e || !*e) return LMA_F8_DEFAULT;
     char *end; long v = std::strtol(e, &end, 10);
-    return *end ? COLI_F8_DEFAULT : (int)v;
+    return *end ? LMA_F8_DEFAULT : (int)v;
 }
 
 /* One launch site for the dense matvec so fmt=8 honors the same toggle as
@@ -1775,7 +1775,7 @@ static void quant_matmul_launch(float *y, const float *x, const void *w,
         quant_matmul<<<grid, 256>>>(y, x, w, sc, fmt, S, I, O, rb, gs, ng);
 }
 
-extern "C" int coli_cuda_matmul(ColiCudaTensor **tensor,
+extern "C" int lma_cuda_matmul(LmaCudaTensor **tensor,
                                  float *y, const float *x,
                                  const void *weights, const float *scales,
                                  int fmt, int S, int I, int O, int device, int gs) {
@@ -1786,9 +1786,9 @@ extern "C" int coli_cuda_matmul(ColiCudaTensor **tensor,
      * the CPU (#298, #334). */
     if (fmt == 4 && gs <= 0) return 0;
     if (S < 1) return 0;
-    if (gs > 0) { if (!coli_cuda_tensor_upload_g(tensor, weights, scales, fmt, I, O, device, gs)) return 0; }
-    else        { if (!coli_cuda_tensor_upload(tensor, weights, scales, fmt, I, O, device)) return 0; }
-    ColiCudaTensor *t = *tensor;
+    if (gs > 0) { if (!lma_cuda_tensor_upload_g(tensor, weights, scales, fmt, I, O, device, gs)) return 0; }
+    else        { if (!lma_cuda_tensor_upload(tensor, weights, scales, fmt, I, O, device)) return 0; }
+    LmaCudaTensor *t = *tensor;
     DeviceContext *ctx = find_ctx(t->device);
     if (!select_ctx(ctx)) return 0;
     size_t rb = row_bytes(fmt, I);
@@ -1801,7 +1801,7 @@ extern "C" int coli_cuda_matmul(ColiCudaTensor **tensor,
     return 1;
 }
 
-/* MXFP4 matmul, stateless. Separate from coli_cuda_matmul on purpose: that one
+/* MXFP4 matmul, stateless. Separate from lma_cuda_matmul on purpose: that one
  * takes scales as const float* and caches an uploaded tensor, while MXFP4
  * scales are ue8m0 BYTES -- passing them through the float* parameter would
  * compile and silently reinterpret the buffer. Kimi K3's routed experts stream
@@ -1810,7 +1810,7 @@ extern "C" int coli_cuda_matmul(ColiCudaTensor **tensor,
  *
  * Returns 0 and leaves y untouched on any failure, which is the contract the
  * engine's GPU paths already use to fall back to CPU. */
-extern "C" int coli_cuda_matmul_mxfp4(float *y, const float *x,
+extern "C" int lma_cuda_matmul_mxfp4(float *y, const float *x,
                                       const uint8_t *q4, const uint8_t *e8s,
                                       int S, int I, int O) {
     if (fault_injected()) return 0;
@@ -1853,7 +1853,7 @@ static int mxfp4_project(float *y, const float *x, uint8_t *dw, uint8_t *ds,
     return cuda_ok(cudaGetLastError(), "MXFP4 expert projection");
 }
 
-extern "C" int coli_cuda_expert_mxfp4(float *y, const float *x,
+extern "C" int lma_cuda_expert_mxfp4(float *y, const float *x,
         const unsigned char *gate_w, const unsigned char *gate_s,
         const unsigned char *up_w, const unsigned char *up_s,
         const unsigned char *down_w, const unsigned char *down_s,
@@ -1887,11 +1887,11 @@ extern "C" int coli_cuda_expert_mxfp4(float *y, const float *x,
     return ok;
 }
 
-extern "C" int coli_cuda_expert_mlp(ColiCudaTensor *gate, ColiCudaTensor *up,
-                                      ColiCudaTensor *down, float *y,
+extern "C" int lma_cuda_expert_mlp(LmaCudaTensor *gate, LmaCudaTensor *up,
+                                      LmaCudaTensor *down, float *y,
                                       const float *x, int S) {
     if (fault_injected()) return 0;
-    /* same reason as coli_cuda_matmul: fmt=4 without recorded group info would
+    /* same reason as lma_cuda_matmul: fmt=4 without recorded group info would
      * misread the scales (and divide by gs==0 in the kernel). */
     if (gate && ((gate->fmt == 4 && gate->gs <= 0) ||
                  (up && up->fmt == 4 && up->gs <= 0) ||
@@ -1925,13 +1925,13 @@ extern "C" int coli_cuda_expert_mlp(ColiCudaTensor *gate, ColiCudaTensor *up,
     return 1;
 }
 
-extern "C" int coli_cuda_shared_mlp_w4a16(ColiCudaTensor *gate,ColiCudaTensor *up,
-        ColiCudaTensor *down,float *y,const float *x,int S){
+extern "C" int lma_cuda_shared_mlp_w4a16(LmaCudaTensor *gate,LmaCudaTensor *up,
+        LmaCudaTensor *down,float *y,const float *x,int S){
     if (fault_injected()) return 0;
     if(!gate||!up||!down||!x||!y||S<1||gate->fmt!=2||up->fmt!=2||down->fmt!=2||
        gate->device!=up->device||gate->device!=down->device||gate->I!=up->I||
        gate->O!=up->O||down->I!=gate->O||down->O!=gate->I)return 0;
-    DeviceContext *ctx=find_ctx(gate->device);if(!select_ctx(ctx)||!COLI_GPU_HAS_WMMA||ctx->compute_major<7)return 0;
+    DeviceContext *ctx=find_ctx(gate->device);if(!select_ctx(ctx)||!LMA_GPU_HAS_WMMA||ctx->compute_major<7)return 0;
     int D=gate->I,I=gate->O;size_t xb=(size_t)S*D*sizeof(float),ib=(size_t)S*I*sizeof(float);
     if(!reserve(&ctx->x,&ctx->x_cap,xb)||!reserve(&ctx->gate,&ctx->gate_cap,ib)||
        !reserve(&ctx->up,&ctx->up_cap,ib)||!reserve(&ctx->y,&ctx->y_cap,xb)||
@@ -1957,7 +1957,7 @@ extern "C" int coli_cuda_shared_mlp_w4a16(ColiCudaTensor *gate,ColiCudaTensor *u
 /* Single launch site for the fmt=8 group kernels, shared by the sync and the
  * issue/take dispatches so both stay one-line call sites (rebase-tolerant
  * against #935's e8_group_launch refactor of the adjacent branch).
- * COLI_CUDA_F8_WARP (docs/ENVIRONMENT.md, parsed by f8_warp_mode): 1 = warp
+ * LMA_CUDA_F8_WARP (docs/ENVIRONMENT.md, parsed by f8_warp_mode): 1 = warp
  * kernels (the CUDA default; HIP defaults to 0), 0 = the original per-(o,s)
  * kernels (field escape hatch, dense path included via quant_matmul_launch),
  * 2 = warp kernels decoding through cuda_fp8.h — a real cvt instruction only
@@ -1969,7 +1969,7 @@ static void f8_group_launch(DeviceContext *ctx,GroupDesc *dev,int I,int D,
     int mode=f8_warp_mode();
     if(mode){
         dim3 hg((unsigned)((I+7)/8),(unsigned)count),og((unsigned)((D+7)/8),(unsigned)count);
-#if COLI_F8_HWCVT
+#if LMA_F8_HWCVT
         if(mode==2){
             grouped_hidden_f8w_dual<1><<<hg,256,0,ctx->stream>>>(ctx->gate,ctx->up,ctx->x,dev,I,D);
             grouped_down_f8w<1><<<og,256,0,ctx->stream>>>(ctx->y,ctx->gate,dev,D,I);
@@ -1985,21 +1985,21 @@ static void f8_group_launch(DeviceContext *ctx,GroupDesc *dev,int I,int D,
     grouped_down_f8<<<og,256,0,ctx->stream>>>(ctx->y,ctx->gate,dev,D,I);
 }
 
-static int expert_group_impl(ColiCudaTensor *const *gates,
-                             ColiCudaTensor *const *ups,
-                             ColiCudaTensor *const *downs,
+static int expert_group_impl(LmaCudaTensor *const *gates,
+                             LmaCudaTensor *const *ups,
+                             LmaCudaTensor *const *downs,
                              const int *rows, int count,
                              float *y, const float *x,
                              int pin_small_batch) {
     if (fault_injected()) return 0;
     if (!gates || !ups || !downs || !rows || !x || !y || count < 1) return 0;
-    ColiCudaTensor *first=gates[0];
+    LmaCudaTensor *first=gates[0];
     if (!first) return 0;
     int device=first->device,D=first->I,I=first->O,total=0,max_rows=0;
     GroupDesc host[64]; if(count>64) return 0;
     int all_s4=1,all_q4=1,any_g4=0,any_e8=0,all_e8=1,any_f8=0,all_f8=1;
     for(int c=0;c<count;c++){
-        ColiCudaTensor *g=gates[c],*u=ups[c],*d=downs[c];
+        LmaCudaTensor *g=gates[c],*u=ups[c],*d=downs[c];
         if(!g||!u||!d||rows[c]<1||g->device!=device||u->device!=device||d->device!=device||
            g->I!=D||u->I!=D||g->O!=I||u->O!=I||d->I!=I||d->O!=D) return 0;
         host[c]={g->weights,u->weights,d->weights,g->scales,u->scales,d->scales,
@@ -2019,7 +2019,7 @@ static int expert_group_impl(ColiCudaTensor *const *gates,
     if((any_e8&&!all_e8)||(any_f8&&!all_f8)){
         int off=0;
         for(int c=0;c<count;c++){
-            if(!coli_cuda_expert_mlp(gates[c],ups[c],downs[c],
+            if(!lma_cuda_expert_mlp(gates[c],ups[c],downs[c],
                     y+(size_t)off*D,x+(size_t)off*D,rows[c])) return 0;
             off+=rows[c];
         }
@@ -2033,14 +2033,14 @@ static int expert_group_impl(ColiCudaTensor *const *gates,
     if(!reserve(&ctx->x,&ctx->x_cap,xb)||!reserve(&ctx->y,&ctx->y_cap,xb)||
        !reserve(&ctx->gate,&ctx->gate_cap,ib)||!reserve(&ctx->up,&ctx->up_cap,ib)||
        !reserve_bytes(&ctx->group_desc,&ctx->group_desc_cap,(size_t)count*sizeof(GroupDesc))) return 0;
-    int async=!getenv("COLI_CUDA_ASYNC")||atoi(getenv("COLI_CUDA_ASYNC"));
+    int async=!getenv("LMA_CUDA_ASYNC")||atoi(getenv("LMA_CUDA_ASYNC"));
     if(async&&(!reserve_pinned(&ctx->host_x,&ctx->host_x_cap,xb)||
                !reserve_pinned(&ctx->host_y,&ctx->host_y_cap,xb)))return 0;
     cudaError_t copy_desc=async?cudaMemcpyAsync(ctx->group_desc,host,(size_t)count*sizeof(GroupDesc),
                                                 cudaMemcpyHostToDevice,ctx->stream)
                                :cudaMemcpy(ctx->group_desc,host,(size_t)count*sizeof(GroupDesc),cudaMemcpyHostToDevice);
     if(!cuda_ok(copy_desc,"expert group descriptors"))return 0;
-    int profile=getenv("COLI_CUDA_PROFILE")&&atoi(getenv("COLI_CUDA_PROFILE"));
+    int profile=getenv("LMA_CUDA_PROFILE")&&atoi(getenv("LMA_CUDA_PROFILE"));
     cudaEvent_t ev[4]={};
     if(profile) for(int i=0;i<4;i++) if(!cuda_ok(cudaEventCreate(&ev[i]),"profile event")){
         for(int j=0;j<i;j++) cudaEventDestroy(ev[j]); profile=0; break; }   /* (#B8) don't leak the events already created */
@@ -2051,18 +2051,18 @@ static int expert_group_impl(ColiCudaTensor *const *gates,
     if(!cuda_ok(copy_x,"expert group input upload")) return 0;
     if(profile) cudaEventRecord(ev[1],ctx->stream);
     GroupDesc *dev=(GroupDesc*)ctx->group_desc;
-    int tc=getenv("COLI_CUDA_TC_INT4")&&atoi(getenv("COLI_CUDA_TC_INT4"));
+    int tc=getenv("LMA_CUDA_TC_INT4")&&atoi(getenv("LMA_CUDA_TC_INT4"));
     /* grouped_s4_wmma's body needs __CUDA_ARCH__>=750 AND the s4 fragment type:
-     * on a build where either is missing (COLI_HIP_NO_WMMA, or rocWMMA, which
+     * on a build where either is missing (LMA_HIP_NO_WMMA, or rocWMMA, which
      * has no sub-byte precision and defines __CUDA_ARCH__ 700) the launch
      * succeeds with an EMPTY kernel and the output buffer silently keeps the
      * previous call's data (#1499). So the gate mirrors the body's own guard:
      * the s4 flag from backend_gpu_compat.h plus the device's compute
      * capability, not WMMA availability alone. */
-    tc=tc&&!pin_small_batch&&COLI_GPU_HAS_WMMA&&COLI_GPU_HAS_S4_WMMA&&
+    tc=tc&&!pin_small_batch&&LMA_GPU_HAS_WMMA&&LMA_GPU_HAS_S4_WMMA&&
        (ctx->compute_major*10+ctx->compute_minor>=75)&&
        all_s4&&D%32==0&&I%32==0&&D%8==0&&I%8==0;
-    int tc_min=getenv("COLI_CUDA_TC_MIN_ROWS")?atoi(getenv("COLI_CUDA_TC_MIN_ROWS")):8;
+    int tc_min=getenv("LMA_CUDA_TC_MIN_ROWS")?atoi(getenv("LMA_CUDA_TC_MIN_ROWS")):8;
     for(int c=0;c<count&&tc;c++)tc=rows[c]>=tc_min;
     if(all_e8){
         dim3 hg((unsigned)I,(unsigned)max_rows,(unsigned)count),og((unsigned)D,(unsigned)max_rows,(unsigned)count);
@@ -2083,9 +2083,9 @@ static int expert_group_impl(ColiCudaTensor *const *gates,
         silu_mul<<<(unsigned)(((size_t)total*I+255)/256),256,0,ctx->stream>>>(ctx->gate,ctx->up,(size_t)total*I);
         quantize_s4_rows<<<total,256,0,ctx->stream>>>(ctx->qx,ctx->qscale,ctx->gate,total,I);
         grouped_s4_wmma<<<dim3((unsigned)((D+63)/64),(unsigned)count),256,0,ctx->stream>>>(ctx->y,ctx->qx,ctx->qscale,dev,I,D,2);
-    }else if(!pin_small_batch&&all_s4&&COLI_GPU_HAS_WMMA&&ctx->compute_major>=7&&getenv("COLI_CUDA_TC_W4A16")&&
-             atoi(getenv("COLI_CUDA_TC_W4A16"))&&
-             [&]{ int tc16_min=getenv("COLI_CUDA_TC_W4A16_MIN")?atoi(getenv("COLI_CUDA_TC_W4A16_MIN")):16;
+    }else if(!pin_small_batch&&all_s4&&LMA_GPU_HAS_WMMA&&ctx->compute_major>=7&&getenv("LMA_CUDA_TC_W4A16")&&
+             atoi(getenv("LMA_CUDA_TC_W4A16"))&&
+             [&]{ int tc16_min=getenv("LMA_CUDA_TC_W4A16_MIN")?atoi(getenv("LMA_CUDA_TC_W4A16_MIN")):16;
                   for(int c=0;c<count;c++) if(rows[c]>=tc16_min) return 1;
                   return 0; }()){
         /* At least one expert has enough rows for a Tensor Core tile. Groups
@@ -2096,7 +2096,7 @@ static int expert_group_impl(ColiCudaTensor *const *gates,
         /* W4A16 Tensor Core per gruppo: attivazioni fp16 per tile (lossless al
          * contrario del path W4A4), un lancio per expert dentro lo stream —
          * l'overhead di lancio e' trascurabile rispetto ai GEMM. */
-        int tc16_min=getenv("COLI_CUDA_TC_W4A16_MIN")?atoi(getenv("COLI_CUDA_TC_W4A16_MIN")):16;
+        int tc16_min=getenv("LMA_CUDA_TC_W4A16_MIN")?atoi(getenv("LMA_CUDA_TC_W4A16_MIN")):16;
         int off16=0;
         for(int c=0;c<count;c++){
             int r=rows[c];
@@ -2123,9 +2123,9 @@ static int expert_group_impl(ColiCudaTensor *const *gates,
             }
             off16+=r;
         }
-    }else if(all_s4&&(!getenv("COLI_CUDA_W4_PACKED")||atoi(getenv("COLI_CUDA_W4_PACKED")))){
+    }else if(all_s4&&(!getenv("LMA_CUDA_W4_PACKED")||atoi(getenv("LMA_CUDA_W4_PACKED")))){
         dim3 hg((unsigned)I,(unsigned)max_rows,(unsigned)count),og((unsigned)D,(unsigned)max_rows,(unsigned)count);
-        int dual=!getenv("COLI_CUDA_DUAL_PROJ")||atoi(getenv("COLI_CUDA_DUAL_PROJ"));
+        int dual=!getenv("LMA_CUDA_DUAL_PROJ")||atoi(getenv("LMA_CUDA_DUAL_PROJ"));
         if(dual)grouped_hidden_w4_dual<<<hg,256,0,ctx->stream>>>(ctx->gate,ctx->up,ctx->x,dev,I,D);
         else{   /* non-dual path has no fused epilogue: silu stays a kernel here */
             grouped_hidden_w4<<<hg,256,0,ctx->stream>>>(ctx->gate,ctx->x,dev,I,D,0);
@@ -2185,24 +2185,24 @@ static int expert_group_impl(ColiCudaTensor *const *gates,
     return 1;
 }
 
-extern "C" int coli_cuda_expert_group(ColiCudaTensor *const *gates,
-                                        ColiCudaTensor *const *ups,
-                                        ColiCudaTensor *const *downs,
+extern "C" int lma_cuda_expert_group(LmaCudaTensor *const *gates,
+                                        LmaCudaTensor *const *ups,
+                                        LmaCudaTensor *const *downs,
                                         const int *rows, int count,
                                         float *y, const float *x) {
     return expert_group_impl(gates,ups,downs,rows,count,y,x,0);
 }
 
-extern "C" int coli_cuda_expert_group_pinned(ColiCudaTensor *const *gates,
-                                               ColiCudaTensor *const *ups,
-                                               ColiCudaTensor *const *downs,
+extern "C" int lma_cuda_expert_group_pinned(LmaCudaTensor *const *gates,
+                                               LmaCudaTensor *const *ups,
+                                               LmaCudaTensor *const *downs,
                                                const int *rows, int count,
                                                float *y, const float *x,
                                                int pin_small_batch) {
     return expert_group_impl(gates,ups,downs,rows,count,y,x,pin_small_batch);
 }
 
-/* ---- Async expert group (Inc.4): issue/take split of coli_cuda_expert_group ----
+/* ---- Async expert group (Inc.4): issue/take split of lma_cuda_expert_group ----
  * The measured cost of the sync call at decode is ~0.45 ms/call of HOST-side wait
  * (stream sync + staging), vs ~0.18 ms of actual GPU work — 70% tax, paid ~5x per
  * layer because a token's 8 experts scatter across devices. issue() stages and
@@ -2212,19 +2212,19 @@ extern "C" int coli_cuda_expert_group_pinned(ColiCudaTensor *const *gates,
  * scratch buffers. Small batches only (decode/spec): bigger totals keep the sync
  * path with its TC variants. Numerics are the sync path's small-batch kernels,
  * so greedy output is byte-identical by construction. */
-extern "C" int coli_cuda_expert_group_issue(ColiCudaTensor *const *gates,
-                                              ColiCudaTensor *const *ups,
-                                              ColiCudaTensor *const *downs,
+extern "C" int lma_cuda_expert_group_issue(LmaCudaTensor *const *gates,
+                                              LmaCudaTensor *const *ups,
+                                              LmaCudaTensor *const *downs,
                                               const int *rows, int count,
                                               const float *x) {
     if (!gates || !ups || !downs || !rows || !x || count < 1 || count > 64) return 0;
-    ColiCudaTensor *first=gates[0];
+    LmaCudaTensor *first=gates[0];
     if (!first) return 0;
     int device=first->device,D=first->I,I=first->O,total=0,max_rows=0,all_s4=1,any_e8=0,all_e8=1,
         all_q4=1,any_g4=0,any_f8=0,all_f8=1;
     GroupDesc host[64];
     for(int c=0;c<count;c++){
-        ColiCudaTensor *g=gates[c],*u=ups[c],*d=downs[c];
+        LmaCudaTensor *g=gates[c],*u=ups[c],*d=downs[c];
         if(!g||!u||!d||rows[c]<1||g->device!=device||u->device!=device||d->device!=device||
            g->I!=D||u->I!=D||g->O!=I||u->O!=I||d->I!=I||d->O!=D) return 0;
         host[c]={g->weights,u->weights,d->weights,g->scales,u->scales,d->scales,
@@ -2268,11 +2268,11 @@ extern "C" int coli_cuda_expert_group_issue(ColiCudaTensor *const *gates,
         /* fp8-e4m3 groups on the async decode path: same launch helper as the
          * sync dispatch, silu fused in the dual epilogue. */
         f8_group_launch(ctx,(GroupDesc*)ctx->group_desc,I,D,max_rows,count);
-    }else if(all_s4&&(!getenv("COLI_CUDA_W4_PACKED")||atoi(getenv("COLI_CUDA_W4_PACKED")))){
+    }else if(all_s4&&(!getenv("LMA_CUDA_W4_PACKED")||atoi(getenv("LMA_CUDA_W4_PACKED")))){
         GroupDesc *dev=(GroupDesc*)ctx->group_desc;
         dim3 hg((unsigned)I,(unsigned)max_rows,(unsigned)count);
         dim3 og((unsigned)D,(unsigned)max_rows,(unsigned)count);
-        int dual=!getenv("COLI_CUDA_DUAL_PROJ")||atoi(getenv("COLI_CUDA_DUAL_PROJ"));
+        int dual=!getenv("LMA_CUDA_DUAL_PROJ")||atoi(getenv("LMA_CUDA_DUAL_PROJ"));
         if(dual) grouped_hidden_w4_dual<<<hg,256,0,ctx->stream>>>(ctx->gate,ctx->up,ctx->x,dev,I,D);
         else {
             grouped_hidden_w4<<<hg,256,0,ctx->stream>>>(ctx->gate,ctx->x,dev,I,D,0);
@@ -2326,7 +2326,7 @@ extern "C" int coli_cuda_expert_group_issue(ColiCudaTensor *const *gates,
     return 1;
 }
 
-extern "C" const float *coli_cuda_expert_group_take(int device) {
+extern "C" const float *lma_cuda_expert_group_take(int device) {
     DeviceContext *ctx=find_ctx(device);
     if(!ctx||!ctx->group_pending) return nullptr;
     ctx->group_pending=0;
@@ -2351,11 +2351,11 @@ extern "C" const float *coli_cuda_expert_group_take(int device) {
  * on. A fmt=8 tensor implies a live e4m3 LUT (upload refuses it otherwise --
  * see the predicate's caveat note in backend_cuda.h), so no extra gate is
  * needed here. */
-static int absorb_fmt_ok(const ColiCudaTensor *w){
-    return w && coli_cuda_weight_at_supported(w->fmt);
+static int absorb_fmt_ok(const LmaCudaTensor *w){
+    return w && lma_cuda_weight_at_supported(w->fmt);
 }
 
-extern "C" int coli_cuda_attention_absorb(ColiCudaTensor *w,float *ctx,const float *q,
+extern "C" int lma_cuda_attention_absorb(LmaCudaTensor *w,float *ctx,const float *q,
                                             const float *latent,const float *rope,int H,int Q,
                                             int R,int V,int K,int T,float scale){
     if (fault_injected()) return 0;
@@ -2378,7 +2378,7 @@ extern "C" int coli_cuda_attention_absorb(ColiCudaTensor *w,float *ctx,const flo
     return 1;
 }
 
-static int attention_absorb_batch_run(ColiCudaTensor *w,ColiCudaTensor *proj,float *out,
+static int attention_absorb_batch_run(LmaCudaTensor *w,LmaCudaTensor *proj,float *out,
         const float *q,const float *latent,const float *rope,int S,int H,int Q,int R,int V,
         int K,int T,float scale){
     if(!absorb_fmt_ok(w)||!out||!q||!latent||!rope||S<1||H<1||Q<1||R<1||V<1||K<1||K>512||
@@ -2409,21 +2409,21 @@ static int attention_absorb_batch_run(ColiCudaTensor *w,ColiCudaTensor *proj,flo
     return 1;
 }
 
-extern "C" int coli_cuda_attention_absorb_batch(ColiCudaTensor *w,float *ctx,const float *q,
+extern "C" int lma_cuda_attention_absorb_batch(LmaCudaTensor *w,float *ctx,const float *q,
         const float *latent,const float *rope,int S,int H,int Q,int R,int V,int K,int T,
         float scale){
     if (fault_injected()) return 0;
     return attention_absorb_batch_run(w,nullptr,ctx,q,latent,rope,S,H,Q,R,V,K,T,scale);
 }
 
-extern "C" int coli_cuda_attention_project_batch(ColiCudaTensor *w,ColiCudaTensor *proj,
+extern "C" int lma_cuda_attention_project_batch(LmaCudaTensor *w,LmaCudaTensor *proj,
         float *out,const float *q,const float *latent,const float *rope,int S,int H,int Q,
         int R,int V,int K,int T,float scale){
     if (fault_injected()) return 0;
     return attention_absorb_batch_run(w,proj,out,q,latent,rope,S,H,Q,R,V,K,T,scale);
 }
 
-extern "C" int coli_cuda_attention_project_ragged(ColiCudaTensor *w,ColiCudaTensor *proj,
+extern "C" int lma_cuda_attention_project_ragged(LmaCudaTensor *w,LmaCudaTensor *proj,
         float *out,const float *q,const void *const *keys,
         const float *const *latent,const float *const *rope,
         const int *lengths,int S,int H,int Q,int R,int V,int K,int T,float scale){
@@ -2449,7 +2449,7 @@ extern "C" int coli_cuda_attention_project_ragged(ColiCudaTensor *w,ColiCudaTens
             ragged_kv_clear(e);
             e->K=K;e->R=R;e->host_l=latent[s];e->host_r=rope[s];
         }
-        int need=(lengths[s]+COLI_KV_PAGE_TOKENS-1)/COLI_KV_PAGE_TOKENS;
+        int need=(lengths[s]+LMA_KV_PAGE_TOKENS-1)/LMA_KV_PAGE_TOKENS;
         if(need>e->page_count){
             float **nl=(float**)std::calloc((size_t)need,sizeof(*nl));
             float **nr=(float**)std::calloc((size_t)need,sizeof(*nr));
@@ -2457,8 +2457,8 @@ extern "C" int coli_cuda_attention_project_ragged(ColiCudaTensor *w,ColiCudaTens
             for(int i=0;i<e->page_count;i++){nl[i]=e->latent_pages[i];nr[i]=e->rope_pages[i];}
             int made=e->page_count;
             for(;made<need;made++){
-                if(!cuda_ok(cudaMalloc(&nl[made],(size_t)COLI_KV_PAGE_TOKENS*K*sizeof(float)),"ragged KV latent page")||
-                   !cuda_ok(cudaMalloc(&nr[made],(size_t)COLI_KV_PAGE_TOKENS*R*sizeof(float)),"ragged KV rope page"))break;
+                if(!cuda_ok(cudaMalloc(&nl[made],(size_t)LMA_KV_PAGE_TOKENS*K*sizeof(float)),"ragged KV latent page")||
+                   !cuda_ok(cudaMalloc(&nr[made],(size_t)LMA_KV_PAGE_TOKENS*R*sizeof(float)),"ragged KV rope page"))break;
             }
             if(made<need){
                 if(nl[made])cudaFree(nl[made]);if(nr[made])cudaFree(nr[made]);
@@ -2522,14 +2522,14 @@ extern "C" int coli_cuda_attention_project_ragged(ColiCudaTensor *w,ColiCudaTens
            cuda_ok(cudaStreamSynchronize(dc->stream),"ragged attention synchronize");
 }
 
-extern "C" void coli_cuda_tensor_free(ColiCudaTensor *tensor) {
+extern "C" void lma_cuda_tensor_free(LmaCudaTensor *tensor) {
     if (!tensor) return;
     DeviceContext *ctx = find_ctx(tensor->device);
     if (ctx) select_ctx(ctx);
     if (tensor->tracked && ctx) {
         /* Charge and release the same format-specific scale storage. */
         size_t storage_bytes =
-#ifdef COLI_ANS
+#ifdef LMA_ANS
             tensor->compressed ? tensor->archive_bytes :
 #endif
             tensor->weight_bytes;
@@ -2544,11 +2544,11 @@ extern "C" void coli_cuda_tensor_free(ColiCudaTensor *tensor) {
     std::free(tensor);
 }
 
-extern "C" size_t coli_cuda_tensor_bytes(const ColiCudaTensor *tensor) {
+extern "C" size_t lma_cuda_tensor_bytes(const LmaCudaTensor *tensor) {
     if (!tensor) return 0;
     /* Logical size uses the same scale layout as upload and free. */
     size_t storage_bytes =
-#ifdef COLI_ANS
+#ifdef LMA_ANS
         tensor->compressed ? tensor->archive_bytes :
 #endif
         tensor->weight_bytes;
@@ -2558,7 +2558,7 @@ extern "C" size_t coli_cuda_tensor_bytes(const ColiCudaTensor *tensor) {
 
 /* What a cudaMalloc of `bytes` actually takes off the card.
  *
- * coli_cuda_tensor_bytes() above is the LOGICAL size and must stay that way -
+ * lma_cuda_tensor_bytes() above is the LOGICAL size and must stay that way -
  * it mirrors upload and free so the three cannot drift. This is a different
  * question: the allocator rounds a request up, and nothing was charging the
  * difference to the expert budget.
@@ -2594,8 +2594,8 @@ extern "C" size_t coli_cuda_tensor_bytes(const ColiCudaTensor *tensor) {
  * pre-existing behaviour and degrades to exactly what this replaced; refusing
  * to size at all would be worse.
  */
-#define COLI_CUDA_FOOTPRINT_CACHE 16
-static struct { size_t req, real; } g_fp_cache[COLI_CUDA_FOOTPRINT_CACHE];
+#define LMA_CUDA_FOOTPRINT_CACHE 16
+static struct { size_t req, real; } g_fp_cache[LMA_CUDA_FOOTPRINT_CACHE];
 static int g_fp_cache_n = 0;
 
 /* The probe MUST allocate several buffers and divide, not one and measure it.
@@ -2614,22 +2614,22 @@ static int g_fp_cache_n = 0;
  * own test caught it: it over-reported every expert by 3x and would have
  * shrunk the tier far more than the bug it fixes.
  */
-#define COLI_CUDA_FOOTPRINT_PROBE_BYTES (24u << 20)   /* transient probe budget */
-#define COLI_CUDA_FOOTPRINT_PROBE_MAX   64
+#define LMA_CUDA_FOOTPRINT_PROBE_BYTES (24u << 20)   /* transient probe budget */
+#define LMA_CUDA_FOOTPRINT_PROBE_MAX   64
 
-extern "C" size_t coli_cuda_alloc_footprint(size_t bytes) {
+extern "C" size_t lma_cuda_alloc_footprint(size_t bytes) {
     if (!bytes) return 0;
     for (int i = 0; i < g_fp_cache_n; i++)
         if (g_fp_cache[i].req == bytes) return g_fp_cache[i].real;
 
     /* Enough allocations to cross a page boundary, capped so the probe never
      * takes a meaningful bite out of a card that is about to be filled. */
-    int want = (int)(COLI_CUDA_FOOTPRINT_PROBE_BYTES / bytes);
+    int want = (int)(LMA_CUDA_FOOTPRINT_PROBE_BYTES / bytes);
     if (want < 8) want = 8;
-    if (want > COLI_CUDA_FOOTPRINT_PROBE_MAX) want = COLI_CUDA_FOOTPRINT_PROBE_MAX;
+    if (want > LMA_CUDA_FOOTPRINT_PROBE_MAX) want = LMA_CUDA_FOOTPRINT_PROBE_MAX;
 
     size_t free_before = 0, free_after = 0, total = 0, real = bytes;
-    void *p[COLI_CUDA_FOOTPRINT_PROBE_MAX];
+    void *p[LMA_CUDA_FOOTPRINT_PROBE_MAX];
     int made = 0;
     if (cudaMemGetInfo(&free_before, &total) == cudaSuccess) {
         for (int i = 0; i < want; i++) {
@@ -2649,29 +2649,29 @@ extern "C" size_t coli_cuda_alloc_footprint(size_t bytes) {
     /* Cache even a failed probe: `real` is then the logical size, which is the
      * pre-existing behaviour, and retrying per expert on a card that just
      * refused 8 allocations would be the worst possible time to try again. */
-    if (g_fp_cache_n < COLI_CUDA_FOOTPRINT_CACHE)
+    if (g_fp_cache_n < LMA_CUDA_FOOTPRINT_CACHE)
         g_fp_cache[g_fp_cache_n++] = { bytes, real };
     return real;
 }
 
-/* Same split as coli_cuda_tensor_bytes, but per ALLOCATION rather than summed
+/* Same split as lma_cuda_tensor_bytes, but per ALLOCATION rather than summed
  * first: the weights and the scales are two separate cudaMallocs and each is
  * rounded on its own. Summing then rounding once would miss the scale array's
  * padding entirely, which is the whole term. */
-extern "C" size_t coli_cuda_tensor_vram(const ColiCudaTensor *tensor) {
+extern "C" size_t lma_cuda_tensor_vram(const LmaCudaTensor *tensor) {
     if (!tensor) return 0;
     size_t storage_bytes =
-#ifdef COLI_ANS
+#ifdef LMA_ANS
         tensor->compressed ? tensor->archive_bytes :
 #endif
         tensor->weight_bytes;
-    size_t total = coli_cuda_alloc_footprint(storage_bytes);
+    size_t total = lma_cuda_alloc_footprint(storage_bytes);
     if (tensor->fmt && tensor->fmt != 6)
-        total += coli_cuda_alloc_footprint(tensor_scale_bytes(tensor));
+        total += lma_cuda_alloc_footprint(tensor_scale_bytes(tensor));
     return total;
 }
 
-extern "C" int coli_cuda_tensor_device(const ColiCudaTensor *tensor) {
+extern "C" int lma_cuda_tensor_device(const LmaCudaTensor *tensor) {
     return tensor ? tensor->device : -1;
 }
 
@@ -2727,31 +2727,31 @@ __global__ static void pipe_rows_add(float *x,const float *partial,const int *ro
 
 /* scratch persistente per (device,slot): cresce e resta — niente cudaMalloc/Free
  * per layer (78 x ~10 alloc/richiesta erano puro churn). */
-extern "C" float *coli_cuda_pipe_scratch(int device,int slot,size_t bytes){
+extern "C" float *lma_cuda_pipe_scratch(int device,int slot,size_t bytes){
     DeviceContext *ctx=find_ctx(device);
     if(slot<0||slot>=27||!select_ctx(ctx)) return NULL;
     if(!reserve(&ctx->pipe_buf[slot],&ctx->pipe_cap[slot],bytes)) return NULL;
     return ctx->pipe_buf[slot];
 }
-extern "C" void *coli_cuda_pipe_alloc(int device,size_t bytes){
+extern "C" void *lma_cuda_pipe_alloc(int device,size_t bytes){
     DeviceContext *ctx=find_ctx(device); if(!select_ctx(ctx)) return NULL;
     void *p=NULL;
     if(!cuda_ok(cudaMalloc(&p,bytes),"pipe alloc")) return NULL;
     return p;
 }
-extern "C" void coli_cuda_pipe_free(int device,void *p){
+extern "C" void lma_cuda_pipe_free(int device,void *p){
     DeviceContext *ctx=find_ctx(device); if(!p||!select_ctx(ctx)) return;
     cudaFree(p);
 }
-extern "C" int coli_cuda_pipe_upload(int device,void *dst,const void *src,size_t bytes){
+extern "C" int lma_cuda_pipe_upload(int device,void *dst,const void *src,size_t bytes){
     DeviceContext *ctx=find_ctx(device); if(!select_ctx(ctx)) return 0;
     return cuda_ok(cudaMemcpy(dst,src,bytes,cudaMemcpyHostToDevice),"pipe upload");
 }
-extern "C" int coli_cuda_pipe_download(int device,const void *src,void *dst,size_t bytes){
+extern "C" int lma_cuda_pipe_download(int device,const void *src,void *dst,size_t bytes){
     DeviceContext *ctx=find_ctx(device); if(!select_ctx(ctx)) return 0;
     return cuda_ok(cudaMemcpy(dst,src,bytes,cudaMemcpyDeviceToHost),"pipe download");
 }
-extern "C" int coli_cuda_pipe_rmsnorm(int device,float *y_dev,const float *x_dev,
+extern "C" int lma_cuda_pipe_rmsnorm(int device,float *y_dev,const float *x_dev,
                                       const float *w_dev,int S,int D,float eps){
     if (fault_injected()) return 0;
     DeviceContext *ctx=find_ctx(device);
@@ -2759,7 +2759,7 @@ extern "C" int coli_cuda_pipe_rmsnorm(int device,float *y_dev,const float *x_dev
     pipe_rmsnorm_rows<<<S,256>>>(y_dev,x_dev,w_dev,D,eps,D,D);
     return cuda_ok(cudaGetLastError(),"pipe rmsnorm");
 }
-extern "C" int coli_cuda_pipe_rmsnorm_s(int device,float *y_dev,const float *x_dev,
+extern "C" int lma_cuda_pipe_rmsnorm_s(int device,float *y_dev,const float *x_dev,
                                         const float *w_dev,int S,int D,float eps,
                                         int xstride,int ystride){
     if (fault_injected()) return 0;
@@ -2768,7 +2768,7 @@ extern "C" int coli_cuda_pipe_rmsnorm_s(int device,float *y_dev,const float *x_d
     pipe_rmsnorm_rows<<<S,256>>>(y_dev,x_dev,w_dev,D,eps,xstride,ystride);
     return cuda_ok(cudaGetLastError(),"pipe rmsnorm strided");
 }
-extern "C" int coli_cuda_pipe_rope(int device,float *v_dev,const int *pos_dev,
+extern "C" int lma_cuda_pipe_rope(int device,float *v_dev,const int *pos_dev,
                                    int rows,int stride,int offset,int R,int heads,
                                    float theta){
     if (fault_injected()) return 0;
@@ -2777,7 +2777,7 @@ extern "C" int coli_cuda_pipe_rope(int device,float *v_dev,const int *pos_dev,
     pipe_rope_rows<<<rows,128>>>(v_dev,pos_dev,0,stride,offset,R,heads,theta);
     return cuda_ok(cudaGetLastError(),"pipe rope");
 }
-extern "C" int coli_cuda_pipe_rope_base(int device,float *v_dev,int pos_base,int rows,
+extern "C" int lma_cuda_pipe_rope_base(int device,float *v_dev,int pos_base,int rows,
                                         int stride,int offset,int R,int heads,float theta){
     if (fault_injected()) return 0;
     DeviceContext *ctx=find_ctx(device);
@@ -2789,7 +2789,7 @@ extern "C" int coli_cuda_pipe_rope_base(int device,float *v_dev,int pos_base,int
  * Router for one decode row, entirely on the layer's home device: logits GEMV
  * (E x D, tiny) + sigmoid, bias-augmented top-K selection, route-level TOPP
  * truncation, norm_topk and routed_scale — a float-faithful clone of moe()'s
- * plain routing path (colibri.c FASE A). Selection runs single-thread so the
+ * plain routing path (glm52.c FASE A). Selection runs single-thread so the
  * argmax order, tie-breaking (strict >, lowest index wins) and weight math
  * match the CPU reference exactly; only the dot/expf rounding can differ,
  * which is the documented kernel-family divergence class (#100/#163).
@@ -2840,16 +2840,16 @@ __global__ void pipe_router_select(const float *__restrict__ logit,
     for(int kk=0;kk<Ke;kk++) w[kk]*=routed_scale;
     *keff=Ke;
 }
-extern "C" int coli_cuda_pipe_router(int device,const float *x_dev,
+extern "C" int lma_cuda_pipe_router(int device,const float *x_dev,
         const void *rw_dev,const void *rb_dev,int D,int E,int Ksel,
         float topp,int norm_topk,float routed_scale,
         int *idx_host,float *w_host,int *keff_host){
     DeviceContext *ctx=find_ctx(device);
     if(!x_dev||!rw_dev||!rb_dev||D<1||E<1||E>4096||Ksel<1||Ksel>64||!select_ctx(ctx)) return 0;
     size_t pack=(size_t)Ksel*(sizeof(int)+sizeof(float))+sizeof(int);
-    float *logit=coli_cuda_pipe_scratch(device,22,(size_t)E*sizeof(float));
-    float *chc  =coli_cuda_pipe_scratch(device,23,(size_t)E*sizeof(float));
-    char  *out  =(char*)coli_cuda_pipe_scratch(device,24,pack);
+    float *logit=lma_cuda_pipe_scratch(device,22,(size_t)E*sizeof(float));
+    float *chc  =lma_cuda_pipe_scratch(device,23,(size_t)E*sizeof(float));
+    char  *out  =(char*)lma_cuda_pipe_scratch(device,24,pack);
     if(!logit||!chc||!out) return 0;
     pipe_router_logits<<<E,128>>>(x_dev,(const float*)rw_dev,(const float*)rb_dev,D,logit,chc);
     pipe_router_select<<<1,1>>>(logit,chc,E,Ksel,topp,norm_topk,routed_scale,out);
@@ -2891,17 +2891,17 @@ __global__ static void sum_slots(float *dst,const float *slots,int n,int D){
         dst[i]=acc;
     }
 }
-extern "C" int coli_cuda_expert_group_resident_issue(ColiCudaTensor *const *gates,
-        ColiCudaTensor *const *ups, ColiCudaTensor *const *downs,
+extern "C" int lma_cuda_expert_group_resident_issue(LmaCudaTensor *const *gates,
+        LmaCudaTensor *const *ups, LmaCudaTensor *const *downs,
         const float *weights, int count,
         int home_device, const float *x_src_dev, float *partial_slot_dev){
     if(!gates||!ups||!downs||!weights||count<1||count>64||!x_src_dev||!partial_slot_dev) return 0;
-    ColiCudaTensor *first=gates[0]; if(!first) return 0;
+    LmaCudaTensor *first=gates[0]; if(!first) return 0;
     int device=first->device,D=first->I,I=first->O;
     GroupDesc host[64];
     int total=0,all_s4=1;
     for(int c=0;c<count;c++){
-        ColiCudaTensor *g=gates[c],*u=ups[c],*d=downs[c];
+        LmaCudaTensor *g=gates[c],*u=ups[c],*d=downs[c];
         if(!g||!u||!d||g->device!=device||u->device!=device||d->device!=device||
            g->I!=D||u->I!=D||g->O!=I||u->O!=I||d->I!=I||d->O!=D) return 0;
         host[c]={g->weights,u->weights,d->weights,g->scales,u->scales,d->scales,
@@ -2950,7 +2950,7 @@ extern "C" int coli_cuda_expert_group_resident_issue(ColiCudaTensor *const *gate
     if(!cuda_ok(cudaEventRecord(ctx->ev_done,ctx->stream),"resident event record")) return 0;
     return cuda_ok(cudaGetLastError(),"resident group launch");
 }
-extern "C" int coli_cuda_expert_group_resident_take(int home_device,const int *devices,int n_issued,
+extern "C" int lma_cuda_expert_group_resident_take(int home_device,const int *devices,int n_issued,
                                            float *slots_dev,float *acc_dev,int D){
     if(n_issued<1||!slots_dev||!acc_dev||D<1) return 0;
     DeviceContext *home=find_ctx(home_device); if(!select_ctx(home)) return 0;
@@ -2962,7 +2962,7 @@ extern "C" int coli_cuda_expert_group_resident_take(int home_device,const int *d
     sum_slots<<<48,256>>>(acc_dev,slots_dev,n_issued,D);          /* legacy stream: ordered with pipe_* */
     return cuda_ok(cudaGetLastError(),"resident take reduce");
 }
-extern "C" int coli_cuda_pipe_copy2d(int device,float *dst,int dpitch,const float *src,
+extern "C" int lma_cuda_pipe_copy2d(int device,float *dst,int dpitch,const float *src,
                                      int spitch,int width,int height){
     DeviceContext *ctx=find_ctx(device); if(!select_ctx(ctx)) return 0;
     return cuda_ok(cudaMemcpy2D(dst,(size_t)dpitch*4,src,(size_t)spitch*4,
@@ -2971,7 +2971,7 @@ extern "C" int coli_cuda_pipe_copy2d(int device,float *dst,int dpitch,const floa
 /* attention batch + fused o_proj with DEVICE-resident q/latent/rope: the whole
  * upstream projection chain stayed on this device, so nothing is uploaded here.
  * Only the final [S,O] projection is downloaded to host. */
-extern "C" int coli_cuda_attention_project_batch_dev(ColiCudaTensor *w,ColiCudaTensor *proj,
+extern "C" int lma_cuda_attention_project_batch_dev(LmaCudaTensor *w,LmaCudaTensor *proj,
         float *out,const float *q_dev,const float *latent_dev,const float *rope_dev,
         int S,int H,int Q,int R,int V,int K,int T,float scale){
     if (fault_injected()) return 0;
@@ -2994,20 +2994,20 @@ extern "C" int coli_cuda_attention_project_batch_dev(ColiCudaTensor *w,ColiCudaT
        !cuda_ok(cudaStreamSynchronize(dc->stream),"pipe attention sync"))return 0;
     return 1;
 }
-extern "C" int coli_cuda_pipe_silu_mul(int device,float *gate_dev,const float *up_dev,
+extern "C" int lma_cuda_pipe_silu_mul(int device,float *gate_dev,const float *up_dev,
                                        size_t n){
     if (fault_injected()) return 0;
     DeviceContext *ctx=find_ctx(device); if(!n||!select_ctx(ctx)) return 0;
     silu_mul<<<(unsigned)((n+255)/256),256>>>(gate_dev,up_dev,n);
     return cuda_ok(cudaGetLastError(),"pipe silu mul");
 }
-extern "C" int coli_cuda_pipe_add(int device,float *x_dev,const float *t_dev,size_t n){
+extern "C" int lma_cuda_pipe_add(int device,float *x_dev,const float *t_dev,size_t n){
     if (fault_injected()) return 0;
     DeviceContext *ctx=find_ctx(device); if(!n||!select_ctx(ctx)) return 0;
     pipe_add_n<<<(unsigned)((n+255)/256),256>>>(x_dev,t_dev,n);
     return cuda_ok(cudaGetLastError(),"pipe add");
 }
-extern "C" int coli_cuda_pipe_rows_add(int device,float *x_dev,const float *partial_dev,
+extern "C" int lma_cuda_pipe_rows_add(int device,float *x_dev,const float *partial_dev,
                                        const int *rows_dev,int nrows,int D){
     if (fault_injected()) return 0;
     DeviceContext *ctx=find_ctx(device); if(nrows<1||D<1||!select_ctx(ctx)) return 0;
@@ -3015,8 +3015,8 @@ extern "C" int coli_cuda_pipe_rows_add(int device,float *x_dev,const float *part
     return cuda_ok(cudaGetLastError(),"pipe rows add");
 }
 /* GEMM with device-resident activations: same quant_matmul kernel as
- * coli_cuda_matmul, zero host transfers. */
-extern "C" int coli_cuda_pipe_gemm(ColiCudaTensor *t,float *y_dev,const float *x_dev,
+ * lma_cuda_matmul, zero host transfers. */
+extern "C" int lma_cuda_pipe_gemm(LmaCudaTensor *t,float *y_dev,const float *x_dev,
                                    int S){
     if (fault_injected()) return 0;
     if(!t||S<1) return 0;
@@ -3027,7 +3027,7 @@ extern "C" int coli_cuda_pipe_gemm(ColiCudaTensor *t,float *y_dev,const float *x
     return cuda_ok(cudaGetLastError(),"pipe gemm");
 }
 /* copia diretta scheda->scheda (P2P se disponibile, altrimenti staging driver) */
-extern "C" int coli_cuda_pipe_peer_copy(int dst_dev,float *dst,int src_dev,
+extern "C" int lma_cuda_pipe_peer_copy(int dst_dev,float *dst,int src_dev,
                                         const float *src,size_t bytes){
     if(!dst||!src) return 0;
     if(dst_dev==src_dev){ DeviceContext *c=find_ctx(dst_dev); if(!select_ctx(c)) return 0;
@@ -3035,7 +3035,7 @@ extern "C" int coli_cuda_pipe_peer_copy(int dst_dev,float *dst,int src_dev,
     return cuda_ok(cudaMemcpyPeer(dst,dst_dev,src,src_dev,bytes),"pipe peer copy");
 }
 /* come attention_project_batch_dev ma l'uscita di o_proj RESTA sul device (out_dev). */
-extern "C" int coli_cuda_attention_project_batch_dev_out(ColiCudaTensor *w,ColiCudaTensor *proj,
+extern "C" int lma_cuda_attention_project_batch_dev_out(LmaCudaTensor *w,LmaCudaTensor *proj,
         float *out_dev,const float *q_dev,const float *latent_dev,const float *rope_dev,
         int S,int H,int Q,int R,int V,int K,int T,float scale){
     if (fault_injected()) return 0;
@@ -3057,7 +3057,7 @@ extern "C" int coli_cuda_attention_project_batch_dev_out(ColiCudaTensor *w,ColiC
 /* absorb batch con TUTTO su device (q/latent/rope gia' residenti sulla scheda
  * dello shard, ctx resta sul device): il cuore della attention head-shardata
  * dentro il pipeline. Nessun trasferimento host. */
-extern "C" int coli_cuda_attention_absorb_batch_dev(ColiCudaTensor *w,float *ctx_dev,
+extern "C" int lma_cuda_attention_absorb_batch_dev(LmaCudaTensor *w,float *ctx_dev,
         const float *q_dev,const float *latent_dev,const float *rope_dev,
         int S,int H,int Q,int R,int V,int K,int T,float scale){
     if (fault_injected()) return 0;
@@ -3072,7 +3072,7 @@ extern "C" int coli_cuda_attention_absorb_batch_dev(ColiCudaTensor *w,float *ctx
 }
 /* absorb per il DECODE con KV gia' residente: carica solo q (poche KB),
  * latent/rope arrivano dall'ombra device. ctx torna a host (S piccolo). */
-extern "C" int coli_cuda_attention_absorb_kvdev(ColiCudaTensor *w,float *ctx,const float *q,
+extern "C" int lma_cuda_attention_absorb_kvdev(LmaCudaTensor *w,float *ctx,const float *q,
         const float *latent_dev,const float *rope_dev,int H,int Q,int R,int V,int K,int T,
         float scale){
     if (fault_injected()) return 0;
@@ -3090,7 +3090,7 @@ extern "C" int coli_cuda_attention_absorb_kvdev(ColiCudaTensor *w,float *ctx,con
        !cuda_ok(cudaStreamSynchronize(dc->stream),"kvdev absorb sync"))return 0;
     return 1;
 }
-extern "C" int coli_cuda_pipe_sync(int device){
+extern "C" int lma_cuda_pipe_sync(int device){
     DeviceContext *ctx=find_ctx(device); if(!select_ctx(ctx)) return 0;
     return cuda_ok(cudaDeviceSynchronize(),"pipe sync");
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Convert the Thinking Machines Inkling BF16 checkpoint (TML-native tensor
-names) into a colibri snapshot readable by inkling.c.
+names) into a lmatomic snapshot readable by inkling.c.
 
 Name mapping follows transformers' checkpoint_conversion_mapping for
 inkling_mm_model verbatim (conversion_mapping.py), including the CRITICAL

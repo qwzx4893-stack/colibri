@@ -27,7 +27,7 @@ def run(*args, **env):
 @unittest.skipUnless(ENGINE.exists(), "kimi_k3 is not built")
 class KimiUsageTest(unittest.TestCase):
     def assertUsage(self, out, ctx):
-        for fragment in ("<model_dir>", "--ngen", "--ids", "coli chat --model"):
+        for fragment in ("<model_dir>", "--ngen", "--ids", "lmatomic chat --model"):
             self.assertIn(fragment, out, f"{ctx}: usage is missing {fragment!r}")
 
     def test_help_flags_print_usage_and_succeed(self):
@@ -44,7 +44,7 @@ class KimiUsageTest(unittest.TestCase):
     def test_no_arguments_points_at_the_launcher_and_fails(self):
         """Senza argomenti il messaggio non e' piu' l'elenco dei flag, ed e'
         giusto cosi': chi lancia il motore a mani vuote quasi sempre voleva
-        `coli`, e un elenco di flag lo lascia dove si trova. Il contratto qui
+        `lmatomic`, e un elenco di flag lo lascia dove si trova. Il contratto qui
         e' che dica che manca il modello e nomini il launcher; l'elenco
         completo resta il contratto di --help, provato sopra.
 
@@ -58,25 +58,25 @@ class KimiUsageTest(unittest.TestCase):
         out = r.stdout + r.stderr
         self.assertIn("without a model", out,
                       "no args: does not say what is missing")
-        # The launcher is `./coli` on POSIX and `coli.cmd` on Windows
-        # (compat.h coli_print_launcher_help), so accept either spelling.
-        self.assertRegex(out, r"coli(\.cmd)? chat",
+        # The launcher is `./lmatomic` on POSIX and `lmatomic.cmd` on Windows
+        # (compat.h lma_print_launcher_help), so accept either spelling.
+        self.assertRegex(out, r"lmatomic(\.cmd)? chat",
                          "no args: does not name the launcher, which is what the "
                          "person almost certainly wanted")
         self.assertNotEqual(r.returncode, 0, "a missing model dir is a failure")
 
     def test_usage_names_the_launcher(self):
-        """Most people reaching for the raw engine want `coli chat`. It runs this
+        """Most people reaching for the raw engine want `lmatomic chat`. It runs this
         engine for them and does not need the GLM binary built — which is what
         the #783 reporter had assumed was required."""
-        self.assertIn("coli chat --model", run("--help").stdout + run("--help").stderr)
+        self.assertIn("lmatomic chat --model", run("--help").stdout + run("--help").stderr)
 
     def test_usage_documents_autopin_and_the_gpu_path(self):
         """Both are things a user cannot guess and will otherwise never find:
         Kimi's NVIDIA path is Vulkan, not CUDA (#783), and AUTOPIN=0 is the only
         way to opt out of pin seeding once a history exists."""
         out = run("--help").stdout + run("--help").stderr
-        self.assertIn("COLI_VULKAN=1", out)
+        self.assertIn("LMA_VULKAN=1", out)
         self.assertIn("AUTOPIN=0", out)
 
 

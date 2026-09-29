@@ -2,7 +2,7 @@
  * silicon.
  *
  * WHY THIS FILE EXISTS SEPARATELY FROM tests/test_cuda_fmt_guard.c. That test
- * pins the truth table of coli_cuda_weight_at_supported -- the HOST predicate
+ * pins the truth table of lma_cuda_weight_at_supported -- the HOST predicate
  * the launch-site gates consult -- and says so in its own header: "it does not
  * execute weight_at, because that is device code". So deleting the __trap() at
  * the end of weight_at left that suite entirely green. The refusal that the
@@ -39,7 +39,7 @@
  *      is what distinguishes a working harness from one that reports "aborted"
  *      unconditionally.
  *   3. THE PROBES: every probed fmt's expectation is DERIVED from the host
- *      predicate -- coli_cuda_weight_at_supported(fmt) ? decoded : trapped --
+ *      predicate -- lma_cuda_weight_at_supported(fmt) ? decoded : trapped --
  *      so what this test pins is the INVARIANT that weight_at's device dispatch
  *      agrees with the predicate the launch-site gates consult, with no silent
  *      fall-through in either direction. With the __trap() removed and the int2
@@ -68,7 +68,7 @@
  * zero-initialized c_e4m3 table -- a decode that "returns a number" from a
  * zero LUT is exactly the fabricated-numbers failure mode this file exists to
  * refuse. The child publishes the LUT through the real
- * coli_cuda_init/coli_cuda_fp8_set_lut path first, the same way any real
+ * lma_cuda_init/lma_cuda_fp8_set_lut path first, the same way any real
  * fmt=8 caller must before upload.
  *
  *   make -C c cuda-test CUDA_ARCH=native      (runs this among the CUDA tests)
@@ -134,18 +134,18 @@ static float a6_e4m3_ref(uint8_t b) {
 
 /* Publish the e4m3 LUT through the engine's own path, so weight_at's fmt=8
  * branch reads a real table instead of context-fresh zeros. Harmless for every
- * other fmt (only the fmt==8 branch reads c_e4m3). coli_cuda_fp8_set_lut walks
+ * other fmt (only the fmt==8 branch reads c_e4m3). lma_cuda_fp8_set_lut walks
  * the engine's context table (g_nctx/g_ctx), which nothing else in this file
  * populates -- the rest of the file talks to the device directly via the raw
  * CUDA runtime API, deliberately, to stay independent of the engine's
- * device-selection plumbing -- so coli_cuda_init(device 0) is called for this
+ * device-selection plumbing -- so lma_cuda_init(device 0) is called for this
  * one dependency only. Returns 0 on harness failure. */
 static int a6_publish_lut(void) {
     int dev0 = 0;
-    if (!coli_cuda_init(&dev0, 1)) return 0;
+    if (!lma_cuda_init(&dev0, 1)) return 0;
     float lut[256];
     for (int i = 0; i < 256; i++) lut[i] = a6_e4m3_ref((uint8_t)i);
-    return coli_cuda_fp8_set_lut(lut);
+    return lma_cuda_fp8_set_lut(lut);
 }
 
 /* The deliberate bad launch. weight_at is file-static device code; this is the
@@ -167,7 +167,7 @@ static int a6_probe_child(int fmt) {
      * caller's -- the engine publishes the LUT once at boot for every process
      * that might touch fmt=8, not per tensor. */
     if (!a6_publish_lut()) {
-        printf("  [child fmt=%d] coli_cuda_init/coli_cuda_fp8_set_lut failed\n", fmt);
+        printf("  [child fmt=%d] lma_cuda_init/lma_cuda_fp8_set_lut failed\n", fmt);
         return A6_EXIT_HARNESS;
     }
 
@@ -292,7 +292,7 @@ static void expect_child(const char *self, int fmt, int want, const char *why) {
     } else if (got == A6_EXIT_DECODED && want == A6_EXIT_TRAPPED) {
         printf("FAIL fmt=%-6d weight_at DECODED a format the host predicate "
                "refuses -- the device-side __trap() is not firing (dispatch "
-               "disagrees with coli_cuda_weight_at_supported)\n", fmt);
+               "disagrees with lma_cuda_weight_at_supported)\n", fmt);
     } else if (got == A6_EXIT_TRAPPED && want == A6_EXIT_DECODED) {
         printf("FAIL fmt=%-6d the launch aborted for a format the host predicate "
                "SUPPORTS -- either weight_at is missing the decode branch the "
@@ -334,7 +334,7 @@ static void inprocess_supported_control(void) {
     static const int supported[] = {0, 1, 2, 3, 4, 8};
     for (size_t fi = 0; fi < sizeof supported / sizeof supported[0]; fi++) {
         int fmt = supported[fi];
-        if (!coli_cuda_weight_at_supported(fmt)) {   /* keeps the two in step */
+        if (!lma_cuda_weight_at_supported(fmt)) {   /* keeps the two in step */
             printf("FAIL fmt=%d is in this loop but the host predicate rejects it\n", fmt);
             fails++;
             continue;
@@ -382,7 +382,7 @@ int main(int argc, char **argv) {
 
     if (!a6_publish_lut()) {
         printf("cuda fmt trap test: could not publish the e4m3 LUT "
-               "(coli_cuda_init/coli_cuda_fp8_set_lut failed) -- the fmt=8 "
+               "(lma_cuda_init/lma_cuda_fp8_set_lut failed) -- the fmt=8 "
                "control cannot run\n");
         return 1;
     }
@@ -391,7 +391,7 @@ int main(int argc, char **argv) {
     inprocess_supported_control();
 
     /* THE GUARD, predicate-driven (see the header comment): each probed fmt's
-     * expectation is derived from coli_cuda_weight_at_supported at RUN time, so
+     * expectation is derived from lma_cuda_weight_at_supported at RUN time, so
      * this test asserts that weight_at's dispatch agrees with the predicate --
      * no silent fall-through, no missing promised branch -- rather than pinning
      * a frozen fmt list that goes stale the moment a format (e.g. fmt=8 via
@@ -412,7 +412,7 @@ int main(int argc, char **argv) {
         {1 << 30, "garbage fmt"},
     };
     for (size_t i = 0; i < sizeof probes / sizeof probes[0]; i++) {
-        int want = coli_cuda_weight_at_supported(probes[i].fmt)
+        int want = lma_cuda_weight_at_supported(probes[i].fmt)
                        ? A6_EXIT_DECODED : A6_EXIT_TRAPPED;
         char why[160];
         snprintf(why, sizeof why, "%s: predicate says %s, silicon agrees",

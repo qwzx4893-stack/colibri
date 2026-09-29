@@ -102,7 +102,7 @@ class SetupScriptTest(unittest.TestCase):
     def test_setup_openmp_probe_does_not_require_tmp(self):
         setup = (HERE / "setup.sh").read_text(encoding="utf-8")
         self.assertNotIn("/tmp/_omp", setup)
-        self.assertIn('OMP_PROBE=".colibri-omp-probe-$$"', setup)
+        self.assertIn('OMP_PROBE=".lmatomic-omp-probe-$$"', setup)
         self.assertIn('rm -f "$OMP_PROBE" "$OMP_PROBE.exe"', setup)
 
 

@@ -8,7 +8,7 @@ export function appendDelta(messages: ChatMessage[], targetId: string, field: "c
 }
 
 /* Record how the generation streaming into `targetId` ended. A null finish is
-   a stream that closed without a finish_reason: colibri always sends one last,
+   a stream that closed without a finish_reason: lmatomic always sends one last,
    so the reply was cut off, and is recorded as "incomplete", not as done. */
 export function setFinish(messages: ChatMessage[], targetId: string, finish: string | null): ChatMessage[] {
   return messages.map((item) => item.id === targetId ? { ...item, finish: finish ?? "incomplete" } : item)

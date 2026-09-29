@@ -1,4 +1,4 @@
-"""`coli run` on OLMoE must hand the engine the prompt as UTF-8 whatever the locale.
+"""`lmatomic run` on OLMoE must hand the engine the prompt as UTF-8 whatever the locale.
 
 cmd_run feeds the one-shot prompt to olmoe's stdin chat loop, which reads raw
 bytes and tokenizes them as UTF-8. The pipe was opened in text mode, so Python
@@ -6,7 +6,7 @@ encoded the prompt in the locale's code page instead:
 
   * where the code page cannot encode a character of the prompt (an accented
     letter or an emoji on cp949/cp932, anything non-ASCII in the C locale),
-    `coli run` died with a UnicodeEncodeError traceback before the engine saw
+    `lmatomic run` died with a UnicodeEncodeError traceback before the engine saw
     a byte;
   * where it can (é on cp1252, Hangul on cp949), the engine received the code
     page's bytes, which are not UTF-8, and answered a garbled prompt.
@@ -24,7 +24,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
-CLI = Path(__file__).resolve().parent.parent / "coli"
+CLI = Path(__file__).resolve().parent.parent / "lmatomic"
 PROMPT = "café — 世界 \U0001F600"
 
 CHILD_ENV = {**os.environ, "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0",
@@ -45,10 +45,10 @@ DRIVER = textwrap.dedent("""
     from unittest import mock
 
     cli, engine, model, prompt = sys.argv[1], sys.argv[2], sys.argv[3], json.loads(sys.argv[4])
-    loader = SourceFileLoader("coli_run_olmoe_prompt", cli)
+    loader = SourceFileLoader("lma_run_olmoe_prompt", cli)
     spec = importlib.util.spec_from_loader(loader.name, loader)
-    coli = importlib.util.module_from_spec(spec)
-    loader.exec_module(coli)
+    lmatomic = importlib.util.module_from_spec(spec)
+    loader.exec_module(lmatomic)
 
     real_run = subprocess.run
     def run(command, **kwargs):
@@ -57,19 +57,19 @@ DRIVER = textwrap.dedent("""
     args = argparse.Namespace(model=model, prompt=[prompt], ngen=8, ram=0,
                               temp=0.0, ctx=0, cap=None)
     code = None
-    with mock.patch.object(coli, "need_model"), \\
-         mock.patch.object(coli, "banner"), \\
-         mock.patch.object(coli, "engine_for", return_value="olmoe"), \\
-         mock.patch.object(coli.subprocess, "run", run):
+    with mock.patch.object(lmatomic, "need_model"), \\
+         mock.patch.object(lmatomic, "banner"), \\
+         mock.patch.object(lmatomic, "engine_for", return_value="olmoe"), \\
+         mock.patch.object(lmatomic.subprocess, "run", run):
         try:
-            coli.cmd_run(args)
+            lmatomic.cmd_run(args)
         except SystemExit as exit_:
             code = exit_.code
     print(json.dumps({"exit": code, "locale": locale.getpreferredencoding(False)}))
 """)
 
 
-class ColiRunOlmoePromptTest(unittest.TestCase):
+class LmaRunOlmoePromptTest(unittest.TestCase):
     def test_the_engine_reads_the_prompt_as_utf8(self):
         with tempfile.TemporaryDirectory() as scratch:
             model = Path(scratch, "model")

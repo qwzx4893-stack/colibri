@@ -156,24 +156,24 @@ static void hwinfo_emit(Model *m){
     hw_probe(cpu,sizeof(cpu),&cores,&ram_total,&ram_avail);
     int ngpu=0; double vram_total=0;
     char gpu_name[128]="";
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
     ngpu=g_cuda_ndev; vram_total=m->gpu_expert_bytes/1e9;
     for(int i=0;i<g_cuda_ndev;i++){
-        size_t fr=0,to=0; coli_cuda_mem_info(g_cuda_devices[i],&fr,&to);
+        size_t fr=0,to=0; lma_cuda_mem_info(g_cuda_devices[i],&fr,&to);
         if(!i) vram_total=(double)to*g_cuda_ndev/1e9;
     }
     if(g_cuda_ndev>0)
         snprintf(gpu_name,sizeof(gpu_name),"CUDA device x%d",g_cuda_ndev);
-#elif defined(COLI_VULKAN)
+#elif defined(LMA_VULKAN)
     double used=0, budget=0;
-    ngpu=coli_vk_available()?1:0;
+    ngpu=lma_vk_available()?1:0;
     if(ngpu){
-        if(coli_vk_mem_budget(&used,&budget)) vram_total=budget;
+        if(lma_vk_mem_budget(&used,&budget)) vram_total=budget;
         snprintf(gpu_name,sizeof(gpu_name),"Vulkan device%s",
-                 coli_vk_dev2_available()?" x2":"");
-        if(coli_vk_dev2_available()){
+                 lma_vk_dev2_available()?" x2":"");
+        if(lma_vk_dev2_available()){
             double used2=0, budget2=0;
-            if(coli_vk_mem_budget2(&used2,&budget2)) vram_total+=budget2;
+            if(lma_vk_mem_budget2(&used2,&budget2)) vram_total+=budget2;
             ngpu=2;
         }
     }
@@ -190,14 +190,14 @@ static void tiers_emit(Model *m){
     int pinned=0,lru=0;
     for(int i=0;i<=c->n_layers;i++){ pinned+=m->npin?m->npin[i]:0; lru+=m->ecn?m->ecn[i]:0; }
     int vram=0; double vram_gb=0;
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
     vram=m->gpu_expert_count; vram_gb=m->gpu_expert_bytes/1e9;
-#elif defined(COLI_VULKAN)
+#elif defined(LMA_VULKAN)
     vram=g_vk_reg_n+g_vk_reg_n2;
     int64_t bytes=0;
     if(g_vk_reg) for(int i=0;i<g_vk_reg_NL;i++) for(int e=0;e<g_vk_reg_E;e++){
-        ColiVkTensor **slot=vk_reg_at(i,e);
-        for(int j=0;j<3;j++) if(slot[j]) bytes+=(int64_t)coli_vk_tensor_bytes(slot[j]);
+        LmaVkTensor **slot=vk_reg_at(i,e);
+        for(int j=0;j<3;j++) if(slot[j]) bytes+=(int64_t)lma_vk_tensor_bytes(slot[j]);
     }
     vram_gb=(double)bytes/1e9;
 #endif
@@ -233,12 +233,12 @@ static void emap_emit(Model *m){
         if(!is_row) continue;
         for(int e=0;e<cols;e++){
             int tier=0;
-#ifdef COLI_VULKAN
+#ifdef LMA_VULKAN
             if(vk_reg_served(i,e)) tier=2;
 #endif
             ESlot *P=m->pin[i];
             for(int z=0;!tier&&z<m->npin[i];z++) if(P[z].eid==e){
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
                 tier = P[z].g.cuda?2:1;
 #else
                 tier = 1;

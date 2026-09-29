@@ -25,9 +25,9 @@ WHAT IT DOES
   5. Writes ordinary safetensors shards: each weight tensor keeps its
      ORIGINAL logical name (its bytes are the chunk record), `.qs` sidecars
      pass through raw and untouched, and __metadata__ carries:
-       colibri.fmt                      = JSON {weight_name: "int4-rans256-g0"}
-       colibri.int4-rans256-g0.table    = JSON shared-table blob
-     The colibri.fmt stamp is MANDATORY for this format: entropy-coded sizes
+       lma.fmt                      = JSON {weight_name: "int4-rans256-g0"}
+       lma.int4-rans256-g0.table    = JSON shared-table blob
+     The lma.fmt stamp is MANDATORY for this format: entropy-coded sizes
      are data-dependent, so no byte-arithmetic inference exists — the stamp
      is the only signal a U8 tensor is entropy-coded at all (see
      docs/int4-rans256-g0.md, "the stamp is load-bearing").

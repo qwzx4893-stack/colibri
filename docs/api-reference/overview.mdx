@@ -1,23 +1,23 @@
 ---
 title: "API overview"
-description: "Start colibrì's persistent HTTP server and connect OpenAI- or Anthropic-compatible clients."
+description: "Start LM Atomic's persistent HTTP server and connect OpenAI- or Anthropic-compatible clients."
 ---
 
-`coli serve` keeps one model process loaded and exposes OpenAI- and Anthropic-compatible HTTP endpoints through a Python standard-library gateway.
+`lmatomic serve` keeps one model process loaded and exposes OpenAI- and Anthropic-compatible HTTP endpoints through a Python standard-library gateway.
 
 ## Start the server
 
 ```bash
-COLI_MODEL=/nvme/glm52_i4 \
-COLI_API_KEY=local-secret \
-./coli serve --host 127.0.0.1 --port 8000 --model-id glm-5.2-colibri
+LMA_MODEL=/nvme/glm52_i4 \
+LMA_API_KEY=local-secret \
+./lmatomic serve --host 127.0.0.1 --port 8000 --model-id glm-5.2-lmatomic
 ```
 
 The default base URL is `http://127.0.0.1:8000`. OpenAI-compatible clients normally use `http://127.0.0.1:8000/v1`.
 
 ## Authenticate
 
-When `COLI_API_KEY` is set, send either of these headers:
+When `LMA_API_KEY` is set, send either of these headers:
 
 ```http
 Authorization: Bearer local-secret
@@ -44,9 +44,9 @@ x-api-key: local-secret
 
 ## Concurrency and backpressure
 
-One engine process generates one sequence at a time. Concurrent HTTP requests enter a bounded FIFO queue instead of loading duplicate model copies. Configure it with `--max-queue` and `--queue-timeout`, or `COLI_MAX_QUEUE` and `COLI_QUEUE_TIMEOUT`.
+One engine process generates one sequence at a time. Concurrent HTTP requests enter a bounded FIFO queue instead of loading duplicate model copies. Configure it with `--max-queue` and `--queue-timeout`, or `LMA_MAX_QUEUE` and `LMA_QUEUE_TIMEOUT`.
 
-Saturated or expired requests receive HTTP `429`. Successful generation responses include `x-colibri-queue-wait-ms`.
+Saturated or expired requests receive HTTP `429`. Successful generation responses include `x-lmatomic-queue-wait-ms`.
 
 ## Compatibility boundaries
 

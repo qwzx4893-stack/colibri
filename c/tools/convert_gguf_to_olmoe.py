@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a GGUF OLMoE checkpoint into a colibri container for c/olmoe.c.
+"""Convert a GGUF OLMoE checkpoint into a lmatomic container for c/olmoe.c.
 
 Flow (one user-facing entry point):
     wrapper (this file) -> gguf_reader (structure) -> gguf_dequant (numbers)
@@ -32,7 +32,7 @@ Safety:
 Usage:
   python tools/convert_gguf_to_olmoe.py \\
       --input  /path/to/model.gguf      # or a dir holding exactly one .gguf
-      --output /path/to/olmoe-colibri   # created if missing
+      --output /path/to/olmoe-lmatomic  # created if missing
 """
 
 import argparse
@@ -242,7 +242,7 @@ def run(args):
     source = sources[0]
     out_dir = Path(args.output).expanduser()
 
-    print("colibri: converting a GGUF OLMoE checkpoint into a colibri container", flush=True)
+    print("lmatomic: converting a GGUF OLMoE checkpoint into a lmatomic container", flush=True)
     print("  flow:   %s" % source.name, flush=True)
     print("          -> gguf_reader (header/metadata/tensor index)", flush=True)
     print("          -> gguf_dequant + gguf_olmoe_profile (dequant, layout, int8 experts)", flush=True)
@@ -332,12 +332,12 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(
         prog="convert_gguf_to_olmoe.py",
-        description="Convert an OLMoE GGUF checkpoint into a colibri container "
+        description="Convert an OLMoE GGUF checkpoint into a lmatomic container "
                     "readable by the c/olmoe.c engine (safetensors shards + "
                     "config.json + tokenizer.json).",
         epilog=(
             "examples:\n"
-            "  convert_gguf_to_olmoe.py --input model.gguf --output ./olmoe-colibri\n"
+            "  convert_gguf_to_olmoe.py --input model.gguf --output ./olmoe-lmatomic\n"
             "  convert_gguf_to_olmoe.py --input ./gguf-dir --output ~/llm/olmoe --dry-run\n"
             "  convert_gguf_to_olmoe.py --input model.gguf --output ./olmoe --remove-source-file\n"
             "\n"
@@ -357,7 +357,7 @@ def main():
     parser.add_argument("--input", required=True, metavar="PATH",
                         help="source GGUF file, or a directory holding exactly one .gguf")
     parser.add_argument("--output", required=True, metavar="DIR",
-                        help="destination directory for the colibri container "
+                        help="destination directory for the lmatomic container "
                              "(created, including missing parents, if absent)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the conversion plan (layers, experts, output dir) "

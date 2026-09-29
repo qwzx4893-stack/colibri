@@ -81,11 +81,11 @@ int main(void) {
         fprintf(stderr, "expert slab allocation failed\n");
         return 2;
     }
-    if (!coli_metal_init() || !coli_metal_available()) {
+    if (!lma_metal_init() || !lma_metal_available()) {
         fprintf(stderr, "Metal unavailable\n");
         return 77;
     }
-    for (int e = 0; e < NB; e++) coli_metal_register(ex[e].base, SLAB);
+    for (int e = 0; e < NB; e++) lma_metal_register(ex[e].base, SLAB);
 
     const void *g[NB] = { ex[0].g, ex[1].g };
     const void *u[NB] = { ex[0].u, ex[1].u };
@@ -117,7 +117,7 @@ int main(void) {
         roff += nr[e];
     }
 
-    int ok = coli_metal_moe_block_clamped(NB, D, II, 4, GS,
+    int ok = lma_metal_moe_block_clamped(NB, D, II, 4, GS,
         g, u, d, gs, us, ds, xg, xoff, nr, rows, rw, got, S, limit);
     if (!ok) {
         fprintf(stderr, "Metal routed MoE block returned fallback\n");
@@ -140,9 +140,9 @@ int main(void) {
     printf("GLM53 routed Metal MoE oracle: %s\n", pass ? "OK" : "FAIL");
 
     for (int e = 0; e < NB; e++) {
-        coli_metal_unregister(ex[e].base);
+        lma_metal_unregister(ex[e].base);
         free(ex[e].base);
     }
-    coli_metal_shutdown();
+    lma_metal_shutdown();
     return pass ? 0 : 4;
 }

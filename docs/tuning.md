@@ -1,6 +1,6 @@
 # Tuning & runtime knobs
 
-Everything here is opt-in; the defaults are chosen so a plain `./coli chat`
+Everything here is opt-in; the defaults are chosen so a plain `./lmatomic chat`
 is safe on any machine. See also [SETTINGS.md](SETTINGS.md) and
 [ENVIRONMENT.md](ENVIRONMENT.md) for the full variable inventory.
 
@@ -21,7 +21,7 @@ is safe on any machine. See also [SETTINGS.md](SETTINGS.md) and
 | `URING=1` | Linux-only batched expert I/O (implies `PIPE=1`) |
 | `PIPE=0` | disable the async expert-load pool (default ON — overlaps `pread` with matmul, −18% disk service) |
 | `DIRECT=1` | O_DIRECT expert reads (measured **+65%** alone on a Strix Halo, [#200](https://github.com/JustVugg/colibri/issues/200)) |
-| `COLI_NUMA=1` | interleave resident weights across NUMA nodes on multi-socket hosts ([#82](https://github.com/JustVugg/colibri/issues/82)) |
+| `LMA_NUMA=1` | interleave resident weights across NUMA nodes on multi-socket hosts ([#82](https://github.com/JustVugg/colibri/issues/82)) |
 | `CACHE_ROUTE=1` | cache-aware max-rank routing (opt-in, [#199](https://github.com/JustVugg/colibri/issues/199)) |
 | `AUTOPIN=0` | disable the learning cache's auto-pin |
 | `CAP_RAISE=0` | don't auto-grow the expert cache |
@@ -29,12 +29,12 @@ is safe on any machine. See also [SETTINGS.md](SETTINGS.md) and
 | `TF=1` | teacher-forcing validation |
 
 Automatic history pinning and the adaptive LRU share the same expert RAM
-budget. Colibri caps automatic pinning to preserve the no-pin LRU capacity;
+budget. LM Atomic caps automatic pinning to preserve the no-pin LRU capacity;
 explicit `PIN` and `PIN_GB` settings remain authoritative.
 
 ## Resource policy
 
-`coli plan` reports the planned hot (VRAM), warm (RAM), and cold backing (disk)
+`lmatomic plan` reports the planned hot (VRAM), warm (RAM), and cold backing (disk)
 tiers, the reason for each placement, and the expected bottleneck. The default
 `--policy quality` and `--policy balanced` modes preserve checkpoint quantization
 and router decisions unless `--topk` or `--topp` is passed; those explicit lossy
@@ -50,19 +50,19 @@ Auto-tier plans size OpenMP from physical cores and bind workers across cores.
 Memory-bound quantized kernels can regress sharply when SMT siblings compete for
 limited memory channels. The GLM, Kimi K3, and OLMoE engines also apply that
 physical-core cap when launched directly; explicit `OMP_NUM_THREADS` and the
-`COLI_NO_OMP_TUNE` kill switch always take precedence.
+`LMA_NO_OMP_TUNE` kill switch always take precedence.
 
 > Note (#471): exporting `OMP_PROC_BIND`/`OMP_PLACES` used to interact badly with
 > the engine's one-time OpenMP tuning re-exec on Linux — the re-exec'd image
 > inherited the first image's place-0 thread binding and the whole team landed on
 > one core (~20× slowdown). The engine now resets its affinity to all online CPUs
 > right before the re-exec, so explicit `OMP_*` pinning works as documented.
-> `COLI_OMP_TUNED=1` remains the escape hatch that skips the re-exec entirely.
+> `LMA_OMP_TUNED=1` remains the escape hatch that skips the re-exec entirely.
 
 ### Hybrid CUDA/CPU OpenMP override
 
 The main GLM engine intentionally skips its active-wait OpenMP tuning when
-`COLI_CUDA` is set. Active worker teams have measured severe regressions by
+`LMA_CUDA` is set. Active worker teams have measured severe regressions by
 contending with CUDA dispatch and synchronization, so a CUDA model that still
 routes some experts through RAM is not, by itself, a reason to change that
 default.
@@ -74,7 +74,7 @@ policy:
 ```bash
 OMP_WAIT_POLICY=active GOMP_SPINCOUNT=200000 KMP_BLOCKTIME=200 \
 OMP_PROC_BIND=close OMP_DYNAMIC=FALSE \
-COLI_CUDA=1 ./coli run --model /models/glm52_i4 "Benchmark prompt"
+LMA_CUDA=1 ./lmatomic run --model /models/glm52_i4 "Benchmark prompt"
 ```
 
 The OpenMP runtime reads these variables before `main()`, so they must be set
@@ -89,24 +89,24 @@ interleaved run order; report CPU expert time, GPU critical time, disk wait,
 and end-to-end throughput. Reject it if GPU time grows or the CPU window was
 already hidden behind the GPU. Do not use active waiting on Apple Silicon: CPU
 spin has measured slower there by stealing the shared CPU/GPU power budget.
-`COLI_NO_OMP_TUNE=1` remains the explicit passive-policy kill switch.
+`LMA_NO_OMP_TUNE=1` remains the explicit passive-policy kill switch.
 
 ```bash
-coli plan --model /models/glm52_i4 --policy quality
-coli run --auto-tier --policy quality "Explain MoE offloading"
+lmatomic plan --model /models/glm52_i4 --policy quality
+lmatomic run --auto-tier --policy quality "Explain MoE offloading"
 # Explicit research-only router reduction:
-coli run --policy experimental-fast --topk 4 "Benchmark prompt"
+lmatomic run --policy experimental-fast --topk 4 "Benchmark prompt"
 ```
 
 ## Measured machine profiles
 
-`coli plan` chooses a safe starting point from capacity and topology.
-`coli tune` measures the remaining scheduling choices on the actual model and
+`lmatomic plan` chooses a safe starting point from capacity and topology.
+`lmatomic tune` measures the remaining scheduling choices on the actual model and
 machine, then saves a hardware/model/engine-specific profile:
 
 ```bash
-coli tune --model /models/glm52_i4
-coli run --model /models/glm52_i4 --auto-tier "Explain MoE offloading"
+lmatomic tune --model /models/glm52_i4
+lmatomic run --model /models/glm52_i4 --auto-tier "Explain MoE offloading"
 ```
 
 GLM generates one calibration continuation and teacher-forces it for every
@@ -139,8 +139,8 @@ resource winner is rechecked against the current plan at every launch, so a
 profile measured with more free RAM is ignored rather than overcommitted later.
 Use `--no-tune-profile` to bypass a saved profile.
 
-Profiles live under `$XDG_CONFIG_HOME/colibri/tuning` (normally
-`~/.config/colibri/tuning`) or `%LOCALAPPDATA%\colibri\tuning` on Windows. A
+Profiles live under `$XDG_CONFIG_HOME/lmatomic/tuning` (normally
+`~/.config/lmatomic/tuning`) or `%LOCALAPPDATA%\LM Atomic\tuning` on Windows. A
 change to the engine binary, model metadata, CPU topology, or GPU inventory
 produces a new fingerprint instead of reusing stale measurements.
 
@@ -161,20 +161,20 @@ quality` leaves live replacement off by default; `REPIN=0` always disables it.
 
 ## The learning cache
 
-The engine records which experts your usage actually routes to (`.coli_usage`
+The engine records which experts your usage actually routes to (`.lma_usage`
 next to the model, updated every turn) and at startup automatically pins the
-hottest ones in spare RAM — colibrì literally gets faster the more you use it.
+hottest ones in spare RAM — LM Atomic literally gets faster the more you use it.
 `PIN=auto` seeds the pin directly from the live usage history
 ([#301](https://github.com/JustVugg/colibri/pull/301)).
 
 **The expert cache auto-sizes to your RAM** (since 2026-07-10): the engine
 *raises* the LRU cap to fill your `--ram` budget instead of only lowering it.
-If you benchmarked colibrì before that date, rerun — your numbers were capped.
+If you benchmarked LM Atomic before that date, rerun — your numbers were capped.
 
 **Live tier adaptation** (`--repin N`, opt-in): at safe turn boundaries, a
 decaying session heat map replaces cold pinned experts with hotter streamed
 experts. A 25% hysteresis and a four-swap limit prevent tier thrashing.
-Persistent `.coli_usage` remains the long-term signal and is not decayed.
+Persistent `.lma_usage` remains the long-term signal and is not decayed.
 
 The history's on-disk format, what happens when one engine is handed another
 engine's history, and how `PIN=<file>` differs from `PIN=auto` in how much it
@@ -199,7 +199,7 @@ Speculative decoding requires that the draft and verify paths compute the same
 function — `SPEC_PIN=1` (default since [#294](https://github.com/JustVugg/colibri/pull/294))
 pins every forward issued while drafts are live to the platform's S=1 kernel
 family. For byte-exact reproducibility across runs: `DRAFT=0`, plus `IDOT=0
-COLI_CUDA=0` if you also want kernel-family/GPU independence. Acceptance
+LMA_CUDA=0` if you also want kernel-family/GPU independence. Acceptance
 percentages are not comparable across engine versions under `--topp`
 ([#163](https://github.com/JustVugg/colibri/issues/163) has the full story).
 
@@ -240,7 +240,7 @@ drop share when the flag is active, so a miscalibrated tau is visible rather
 than silent.
 
 ```bash
-DEGRADE_ZERO=1 DEGRADE_TAU=0.03 COLI_MODEL=/nvme/glm52_i4 ./coli chat
+DEGRADE_ZERO=1 DEGRADE_TAU=0.03 LMA_MODEL=/nvme/glm52_i4 ./lmatomic chat
 ```
 
 See [ENVIRONMENT.md](ENVIRONMENT.md) for the full variable reference and
@@ -249,8 +249,8 @@ measurement methodology.
 
 ## Conversations reopen warm
 
-`coli chat` persists the compressed MLA KV-cache to disk after every turn
-(`.coli_kv`, ~182 KB/token, appended incrementally, crash-safe). Close the chat,
+`lmatomic chat` persists the compressed MLA KV-cache to disk after every turn
+(`.lma_kv`, ~182 KB/token, appended incrementally, crash-safe). Close the chat,
 reopen it tomorrow — the model still remembers the whole conversation and **zero
 re-prefill happens**: validated byte-identical to an uninterrupted session.
 `:reset` clears it, `KVSAVE=0` disables it.

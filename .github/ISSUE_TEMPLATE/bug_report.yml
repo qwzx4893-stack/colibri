@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible defect in Colibri.
+description: Report a reproducible defect in LM Atomic.
 title: "[Bug]: "
 body:
   - type: markdown

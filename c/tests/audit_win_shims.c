@@ -28,7 +28,7 @@ int main(void){
     HANDLE h = (HANDLE)_get_osfhandle(fd);
     DWORD br; DeviceIoControl(h, FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &br, NULL);
     off_t off = (off_t)5 * 1024 * 1024 * 1024;  /* 5 GiB */
-    const char magic[] = "COLIBRI64";
+    const char magic[] = "LMATOMIC64";
     OVERLAPPED ov = {0};
     ov.Offset = (DWORD)(off & 0xFFFFFFFFULL); ov.OffsetHigh = (DWORD)(off >> 32);
     if(!WriteFile(h, magic, sizeof(magic), &br, &ov)){ printf("write@5GB FAIL\n"); close(fd); remove(p); return 1; }

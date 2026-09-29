@@ -1,5 +1,5 @@
 /* Ownership / lifecycle regression tests for DeepSeek V4 engine + session.
- * Built with -DCOLI_V4_TEST_HOOKS against objects under build/ownership/. */
+ * Built with -DLMA_V4_TEST_HOOKS against objects under build/ownership/. */
 #include "../deepseek_v4_internal.h"
 #include "../compat.h"
 
@@ -10,11 +10,11 @@
 #include <unistd.h>
 
 /* Stubs for symbols referenced by RUNTIME but unused in these tests. */
-int coli_v4_expert_store_open_planned(
-    ColiV4Engine *engine,
-    const ColiDeepSeekV4Config *config,
-    const ColiDeepSeekV4ExpertStoreOptions *options,
-    ColiExpertStore **store,
+int lma_v4_expert_store_open_planned(
+    LmaV4Engine *engine,
+    const LmaDeepSeekV4Config *config,
+    const LmaDeepSeekV4ExpertStoreOptions *options,
+    LmaExpertStore **store,
     char *error,
     size_t error_size) {
     (void)engine;
@@ -26,8 +26,8 @@ int coli_v4_expert_store_open_planned(
     return -1;
 }
 
-void coli_v4_layer_resident_reference_free(
-    ColiV4Engine *engine, ColiDeepSeekV4LayerWeights *weights) {
+void lma_v4_layer_resident_reference_free(
+    LmaV4Engine *engine, LmaDeepSeekV4LayerWeights *weights) {
     (void)engine;
     (void)weights;
 }
@@ -109,7 +109,7 @@ static int write_tokenizer(const char *directory) {
 
 static int make_fixture(char *directory, size_t directory_size) {
     /* Native MinGW binaries do not resolve the MSYS /tmp mount. */
-    char template[] = "colibri-v4-own-XXXXXX";
+    char template[] = "lmatomic-v4-own-XXXXXX";
     if (!mkdtemp(template)) return -1;
     if (strlen(template) + 1 > directory_size) return -1;
     memcpy(directory, template, strlen(template) + 1);
@@ -135,23 +135,23 @@ static int test_index_closed_on_expert_fail(void) {
     char directory[128], error[256];
     if (make_fixture(directory, sizeof(directory))) return 1;
 
-    coli_v4_test_fail_expert_store_open = 1;
-    coli_v4_test_skip_expert_store_open = 0;
-    coli_v4_test_closed_owned_index = 0;
+    lma_v4_test_fail_expert_store_open = 1;
+    lma_v4_test_skip_expert_store_open = 0;
+    lma_v4_test_closed_owned_index = 0;
 
-    ColiV4Engine *engine = NULL;
-    ColiV4EngineOpenOptions options = {.target_model_dir = directory};
-    int rc = coli_v4_engine_open(&engine, &options, error, sizeof(error));
-    coli_v4_test_fail_expert_store_open = 0;
+    LmaV4Engine *engine = NULL;
+    LmaV4EngineOpenOptions options = {.target_model_dir = directory};
+    int rc = lma_v4_engine_open(&engine, &options, error, sizeof(error));
+    lma_v4_test_fail_expert_store_open = 0;
     if (rc == 0 || engine) {
         fprintf(stderr, "expected expert-open failure, got success\n");
-        coli_v4_engine_destroy(engine);
+        lma_v4_engine_destroy(engine);
         cleanup_fixture(directory);
         return 1;
     }
-    if (coli_v4_test_closed_owned_index != 1) {
+    if (lma_v4_test_closed_owned_index != 1) {
         fprintf(stderr, "expected owned index close once, got %d\n",
-                coli_v4_test_closed_owned_index);
+                lma_v4_test_closed_owned_index);
         cleanup_fixture(directory);
         return 1;
     }
@@ -167,11 +167,11 @@ static int test_engine_owns_model_path(void) {
     char *path = strdup(directory);
     if (!path) return 1;
 
-    coli_v4_test_fail_expert_store_open = 0;
-    coli_v4_test_skip_expert_store_open = 1;
-    ColiV4Engine *engine = NULL;
-    ColiV4EngineOpenOptions options = {.target_model_dir = path};
-    if (coli_v4_engine_open(&engine, &options, error, sizeof(error))) {
+    lma_v4_test_fail_expert_store_open = 0;
+    lma_v4_test_skip_expert_store_open = 1;
+    LmaV4Engine *engine = NULL;
+    LmaV4EngineOpenOptions options = {.target_model_dir = path};
+    if (lma_v4_engine_open(&engine, &options, error, sizeof(error))) {
         fprintf(stderr, "engine open failed: %s\n", error);
         free(path);
         cleanup_fixture(directory);
@@ -179,22 +179,22 @@ static int test_engine_owns_model_path(void) {
     }
     free(path);
 
-    const char *owned = coli_v4_engine_target_model_dir(engine);
+    const char *owned = lma_v4_engine_target_model_dir(engine);
     if (!owned || strcmp(owned, directory) != 0) {
         fprintf(stderr, "engine lost model path after caller free\n");
-        coli_v4_engine_destroy(engine);
+        lma_v4_engine_destroy(engine);
         cleanup_fixture(directory);
         return 1;
     }
-    if (!coli_v4_engine_config(engine) ||
-        coli_v4_engine_config(engine)->hidden_size != 128) {
+    if (!lma_v4_engine_config(engine) ||
+        lma_v4_engine_config(engine)->hidden_size != 128) {
         fprintf(stderr, "engine config unusable after caller free\n");
-        coli_v4_engine_destroy(engine);
+        lma_v4_engine_destroy(engine);
         cleanup_fixture(directory);
         return 1;
     }
-    coli_v4_engine_destroy(engine);
-    coli_v4_test_skip_expert_store_open = 0;
+    lma_v4_engine_destroy(engine);
+    lma_v4_test_skip_expert_store_open = 0;
     cleanup_fixture(directory);
     puts("ownership: engine copies model path: ok");
     return 0;
@@ -204,41 +204,41 @@ static int test_session_lifetime_accounting(void) {
     char directory[128], error[256];
     if (make_fixture(directory, sizeof(directory))) return 1;
 
-    coli_v4_test_skip_expert_store_open = 1;
-    ColiV4Engine *engine = NULL;
-    ColiV4EngineOpenOptions options = {.target_model_dir = directory};
-    if (coli_v4_engine_open(&engine, &options, error, sizeof(error))) {
+    lma_v4_test_skip_expert_store_open = 1;
+    LmaV4Engine *engine = NULL;
+    LmaV4EngineOpenOptions options = {.target_model_dir = directory};
+    if (lma_v4_engine_open(&engine, &options, error, sizeof(error))) {
         fprintf(stderr, "engine open failed: %s\n", error);
         cleanup_fixture(directory);
         return 1;
     }
 
-    ColiV4Session *session = coli_v4_test_session_bare_create(engine);
+    LmaV4Session *session = lma_v4_test_session_bare_create(engine);
     if (!session) {
         fprintf(stderr, "bare session create failed\n");
-        coli_v4_engine_destroy(engine);
+        lma_v4_engine_destroy(engine);
         cleanup_fixture(directory);
         return 1;
     }
     if (engine->active_sessions != 1) {
         fprintf(stderr, "expected active_sessions=1 after attach, got %d\n",
                 engine->active_sessions);
-        coli_v4_test_session_bare_destroy(session);
-        coli_v4_engine_destroy(engine);
+        lma_v4_test_session_bare_destroy(session);
+        lma_v4_engine_destroy(engine);
         cleanup_fixture(directory);
         return 1;
     }
 
-    coli_v4_test_session_bare_destroy(session);
+    lma_v4_test_session_bare_destroy(session);
     if (engine->active_sessions != 0) {
         fprintf(stderr, "expected active_sessions=0 after detach, got %d\n",
                 engine->active_sessions);
-        coli_v4_engine_destroy(engine);
+        lma_v4_engine_destroy(engine);
         cleanup_fixture(directory);
         return 1;
     }
-    coli_v4_engine_destroy(engine);
-    coli_v4_test_skip_expert_store_open = 0;
+    lma_v4_engine_destroy(engine);
+    lma_v4_test_skip_expert_store_open = 0;
     cleanup_fixture(directory);
     puts("ownership: session lifetime accounting: ok");
     return 0;
@@ -253,9 +253,9 @@ static int test_session_tokenizer_freed(void) {
              directory);
 
     for (int round = 0; round < 2; round++) {
-        /* Mirror coli_v4_session_create / coli_v4_session_destroy tokenizer
+        /* Mirror lma_v4_session_create / lma_v4_session_destroy tokenizer
          * ownership without pulling the full attention/runtime link set. */
-        ColiV4Session session;
+        LmaV4Session session;
         memset(&session, 0, sizeof(session));
         tok_load(&session.tokenizer, tokenizer_path);
         session.tokenizer_ready = 1;
@@ -308,16 +308,16 @@ static int test_incomplete_full_dspark_profile_not_reserved(void) {
         return 1;
     }
 
-    coli_v4_test_skip_expert_store_open = 1;
-    ColiV4Engine *engine = NULL;
-    ColiV4EngineOpenOptions options = {.target_model_dir = directory};
-    int result = coli_v4_engine_open(&engine, &options, error, sizeof(error));
+    lma_v4_test_skip_expert_store_open = 1;
+    LmaV4Engine *engine = NULL;
+    LmaV4EngineOpenOptions options = {.target_model_dir = directory};
+    int result = lma_v4_engine_open(&engine, &options, error, sizeof(error));
     uint64_t reserved = engine
         ? engine->runtime.dspark_reserve_bytes : 0;
     int passed = !result && engine &&
                  reserved == 0;
-    if (engine) coli_v4_engine_destroy(engine);
-    coli_v4_test_skip_expert_store_open = 0;
+    if (engine) lma_v4_engine_destroy(engine);
+    lma_v4_test_skip_expert_store_open = 0;
     restore_setting("V4_DRAFT", saved_draft);
     restore_setting("V4_MTP", saved_mtp);
     cleanup_fixture(directory);

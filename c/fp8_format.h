@@ -1,6 +1,6 @@
 /* fmt=8 (fp8-e4m3-b128) block geometry -- the single definition site for the
  * 128x128 scale-block edge, shared by the CPU side (quant.h: matmul_fp8,
- * e4m3 dequant plumbing; colibri.c: qt_addrow/qt_matvec_rows, qt_from_disk)
+ * e4m3 dequant plumbing; glm52.c: qt_addrow/qt_matvec_rows, qt_from_disk)
  * and the CUDA backend's three converted sites (backend_cuda.cu:
  * absorb_scale, quant_matmul's fmt=8 branch, the upload-time ng/scale_count
  * computation); the f8-warp and f8-group kernels there keep their own
@@ -20,8 +20,8 @@
  * test_backend_cuda.cu's fmt=8 reference keep their own literals, on
  * purpose). An edit to FP8_BLOCK is a format change, not a tunable -- those
  * tests cannot catch a wrong edit on their own. */
-#ifndef COLI_FP8_FORMAT_H
-#define COLI_FP8_FORMAT_H
+#ifndef LMA_FP8_FORMAT_H
+#define LMA_FP8_FORMAT_H
 
 #include <stdint.h>
 
@@ -32,4 +32,4 @@
  * for device compilation on purpose, to keep the header plain C). */
 static inline int64_t fp8_nblk(int n){ return ((int64_t)n + FP8_BLOCK - 1) / FP8_BLOCK; }
 
-#endif /* COLI_FP8_FORMAT_H */
+#endif /* LMA_FP8_FORMAT_H */

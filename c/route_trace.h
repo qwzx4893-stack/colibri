@@ -1,5 +1,5 @@
 /* route_trace.h — engine-agnostic routing telemetry: the ROUTE_TRACE stream and the
- * .coli_usage expert history, in one place so every engine emits the same bytes.
+ * .lma_usage expert history, in one place so every engine emits the same bytes.
  *
  * Why a separate header and not part of telemetry.h: telemetry.h is bound to GLM's
  * structures ("include after Model/Cfg/QT/ESlot/shards ... requires qt_bytes(), now_s(),
@@ -16,7 +16,7 @@
  * compat.h itself is self-contained (system headers only, no engine types), which is why
  * st.h can include it too.
  *
- * ---- history format (.coli_usage) ----
+ * ---- history format (.lma_usage) ----
  * Text, one record per line: "<layer> <expert> <count>", sparse (non-zero only).
  * Two header records carry the dimensions and the writing engine's identity:
  *
@@ -45,8 +45,8 @@
  *
  * ---- trace format (ROUTE_TRACE=<path>) ----
  * One line per (moe call, batch row): "<call> <row> <layer> <id>:<gate.4f> ...".
- * Byte-identical to what colibri.c emitted before this header; tools/route_pairs.py and
- * the .coli_pairs pipeline consume it unchanged.
+ * Byte-identical to what glm52.c emitted before this header; tools/route_pairs.py and
+ * the .lma_pairs pipeline consume it unchanged.
  */
 #ifndef ROUTE_TRACE_H
 #define ROUTE_TRACE_H
@@ -85,7 +85,7 @@ static int rt_call;                             /* moe-call counter, first trace
  * index n_layers. Engines without one simply never touch it. A failed row allocation
  * leaves that row NULL and is handled the same way an engine's own failed calloc is. */
 /* Open the trace stream. Separate from rt_init because it needs no dimensions, so an
- * engine that reads ROUTE_TRACE before it has parsed its config (colibri.c does) keeps
+ * engine that reads ROUTE_TRACE before it has parsed its config (glm52.c does) keeps
  * the message exactly where it was. Idempotent; a failed open is not retried. */
 static void rt_trace_open(void){
     static int tried;
@@ -310,7 +310,7 @@ static int64_t rt_load(const char *path){
 }
 
 /* atomic write of the current counters. quiet=0 prints the one-line summary. */
-/* COLI_USAGE_DECAY: the persistent history is a cumulative, never-decayed histogram,
+/* LMA_USAGE_DECAY: the persistent history is a cumulative, never-decayed histogram,
  * so its responsiveness falls as it grows. Measured on a host with 18.2M recorded
  * selections: a typical turn contributes ~38k, i.e. it moves the ranking by 0.2%, and
  * the pinned set can no longer follow a change of workload. Multiplying the counters
@@ -321,7 +321,7 @@ static int64_t rt_load(const char *path){
  * counters that dominate the ranking, not the long tail. */
 static void rt_decay(void){
     static double d = -1.0;
-    if(d < 0.0){ const char *e = getenv("COLI_USAGE_DECAY"); d = e ? atof(e) : 1.0;
+    if(d < 0.0){ const char *e = getenv("LMA_USAGE_DECAY"); d = e ? atof(e) : 1.0;
                  if(d <= 0.0 || d > 1.0) d = 1.0; }
     if(d >= 1.0 || !rt_c) return;
     for(int i = 0; i <= rt_nl; i++){
@@ -407,29 +407,29 @@ static int rt_save(const char *path, int quiet){
  * handler returns, the flag is set and never looked at again, and
  * `systemctl stop` hangs until its TimeoutStopSec turns into SIGKILL. Without
  * it the read returns NULL/EINTR, which every serve loop already treats as
- * "the gateway is gone" -- the path they take on a clean shutdown. colibri.c
+ * "the gateway is gone" -- the path they take on a clean shutdown. glm52.c
  * carries the same reasoning for its own handler (#810).
  *
  * SIGINT is left alone. On these engines it is still the default, immediate
  * death: making Ctrl-C wait for an in-flight turn, which on a disk-streaming
- * engine is minutes, would read as a hang. colibri.c can afford a soft SIGINT
+ * engine is minutes, would read as a hang. glm52.c can afford a soft SIGINT
  * because it can end the current turn; these cannot, so they keep the
  * behaviour their users already expect. */
 #if defined(__APPLE__) || defined(__linux__) || defined(__FreeBSD__)
 #include <signal.h>
-static volatile sig_atomic_t coli_rt_term_flag = 0;
-static void coli_rt_term_handler(int sig) { (void)sig; coli_rt_term_flag = 1; }
+static volatile sig_atomic_t lma_rt_term_flag = 0;
+static void lma_rt_term_handler(int sig) { (void)sig; lma_rt_term_flag = 1; }
 /* Call once, just before entering a serve loop. */
-static inline void coli_rt_term_arm(void) {
+static inline void lma_rt_term_arm(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = coli_rt_term_handler;
+    sa.sa_handler = lma_rt_term_handler;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;                       /* see above: SA_RESTART would hang the stop */
     sigaction(SIGTERM, &sa, NULL);
 }
 #else
-static inline void coli_rt_term_arm(void) {}   /* Windows: no sigaction, behaviour unchanged */
+static inline void lma_rt_term_arm(void) {}   /* Windows: no sigaction, behaviour unchanged */
 #endif
 
 #endif /* ROUTE_TRACE_H */

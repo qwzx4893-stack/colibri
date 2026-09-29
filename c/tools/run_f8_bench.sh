@@ -6,7 +6,7 @@
 #   bash c/tools/run_f8_bench.sh                    # -arch=native (default)
 #   bash c/tools/run_f8_bench.sh CUDA_ARCH=sm_121   # explicit arch
 #
-# The bench times the old per-(o,s) fmt=8 kernels against the COLI_CUDA_F8_WARP
+# The bench times the old per-(o,s) fmt=8 kernels against the LMA_CUDA_F8_WARP
 # rework (LUT decode and, where the toolchain has cuda_fp8.h, the cvt decode)
 # at S in {1,4,8,32} on the census expert shapes, reporting weight-goodput
 # GB/s and % of the BENCH_PEAK_GBPS roofline.

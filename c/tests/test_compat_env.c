@@ -28,7 +28,7 @@ static void ck(int cond, const char *what) {
     fails++;
 }
 
-static const char *NAME = "COLI_COMPAT_ENV_PROBE";
+static const char *NAME = "LMA_COMPAT_ENV_PROBE";
 
 int main(void) {
     printf("compat env shims\n");

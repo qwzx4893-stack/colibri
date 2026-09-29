@@ -1,5 +1,5 @@
-#ifndef COLIBRI_TENSOR_H
-#define COLIBRI_TENSOR_H
+#ifndef LMA_TENSOR_H
+#define LMA_TENSOR_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -11,25 +11,25 @@ extern "C" {
 /* Storage/execution formats understood by a model backend.  A view describes
  * bytes owned by a model or ExpertStore; it never owns or frees those bytes. */
 typedef enum {
-    COLI_TENSOR_F32 = 0,
-    COLI_TENSOR_Q8_ROW,
-    COLI_TENSOR_Q4_ROW,
-    COLI_TENSOR_Q2_ROW,
-    COLI_TENSOR_FP8_E4M3_BLOCK,
-    COLI_TENSOR_FP4_NATIVE_BLOCK,
-    COLI_TENSOR_INT8_BLOCK,
-    COLI_TENSOR_INT4_BLOCK
-} ColiTensorFormat;
+    LMA_TENSOR_F32 = 0,
+    LMA_TENSOR_Q8_ROW,
+    LMA_TENSOR_Q4_ROW,
+    LMA_TENSOR_Q2_ROW,
+    LMA_TENSOR_FP8_E4M3_BLOCK,
+    LMA_TENSOR_FP4_NATIVE_BLOCK,
+    LMA_TENSOR_INT8_BLOCK,
+    LMA_TENSOR_INT4_BLOCK
+} LmaTensorFormat;
 
 typedef enum {
-    COLI_SCALE_NONE = 0,
-    COLI_SCALE_F32,
-    COLI_SCALE_UE8M0
-} ColiScaleFormat;
+    LMA_SCALE_NONE = 0,
+    LMA_SCALE_F32,
+    LMA_SCALE_UE8M0
+} LmaScaleFormat;
 
 typedef struct {
-    ColiTensorFormat format;
-    ColiScaleFormat scale_format;
+    LmaTensorFormat format;
+    LmaScaleFormat scale_format;
     const void *data;
     const void *scales;
     size_t data_bytes;
@@ -42,7 +42,7 @@ typedef struct {
      * NULL on the CPU-only paths; owned and freed by the backend tier, never by
      * the view. */
     void *gpu;
-} ColiTensorView;
+} LmaTensorView;
 
 #ifdef __cplusplus
 }

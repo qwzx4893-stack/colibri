@@ -1,15 +1,15 @@
 """Makefile.deepseek-v4 must rebuild its objects when the build flags change.
 
-The unit objects are named after the unit (COLI_V4_UNIT_MATH.o), not after the
+The unit objects are named after the unit (LMA_V4_UNIT_MATH.o), not after the
 flags they were compiled with, and three builds share those names in c/: the
-engine (`CUDA=1` adds -DCOLI_V4_GPU_TIER), the parent's `make test-c` (no GPU
+engine (`CUDA=1` adds -DLMA_V4_GPU_TIER), the parent's `make test-c` (no GPU
 tier) and `make test-asan` (EXTRA_CFLAGS). Timestamps cannot tell them apart,
 so without a record of the flags make reports "is up to date" and links the
 other build's objects (#1702):
 
     make -f Makefile.deepseek-v4 deepseek-v4 CUDA=1
     make test-c
-    -> undefined reference to `coli_v4_gpu_matvec_grouped'
+    -> undefined reference to `lma_v4_gpu_matvec_grouped'
 
 and, the silent direction, `make test-c` followed by the CUDA=1 engine build
 links CPU-only units into an engine that was asked for the GPU tier.
@@ -29,7 +29,7 @@ from pathlib import Path
 
 C_DIR = Path(__file__).resolve().parent.parent
 MAKE = shutil.which("make")
-UNIT = "COLI_V4_UNIT_MATH.o"
+UNIT = "LMA_V4_UNIT_MATH.o"
 
 FAKE_CC = """#!/bin/sh
 # Stand-in compiler: creates the -o target and compiles nothing.
@@ -89,14 +89,14 @@ class DeepseekV4BuildFlagsTest(unittest.TestCase):
 
     def test_same_flags_do_not_rebuild(self):
         """The guard: a fix that always recompiles would pass the tests below."""
-        self.assertTrue(self.build("EXTRA_CFLAGS=-DCOLI_TEST_FLAGS_A"))
-        self.assertFalse(self.build("EXTRA_CFLAGS=-DCOLI_TEST_FLAGS_A"),
+        self.assertTrue(self.build("EXTRA_CFLAGS=-DLMA_TEST_FLAGS_A"))
+        self.assertFalse(self.build("EXTRA_CFLAGS=-DLMA_TEST_FLAGS_A"),
                          f"{UNIT} was recompiled with unchanged flags")
 
     def test_changed_flags_rebuild(self):
         """EXTRA_CFLAGS is how the parent's test-asan reaches this Makefile."""
-        self.assertTrue(self.build("EXTRA_CFLAGS=-DCOLI_TEST_FLAGS_A"))
-        self.assertTrue(self.build("EXTRA_CFLAGS=-DCOLI_TEST_FLAGS_B"),
+        self.assertTrue(self.build("EXTRA_CFLAGS=-DLMA_TEST_FLAGS_A"))
+        self.assertTrue(self.build("EXTRA_CFLAGS=-DLMA_TEST_FLAGS_B"),
                         f"{UNIT} was reused after EXTRA_CFLAGS changed: the "
                         "objects of one build configuration leak into another")
 

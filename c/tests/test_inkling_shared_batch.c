@@ -3,7 +3,7 @@
  * int4-g64 sidecar), compares against the old scalar path bit for bit, and
  * proves that the number of weight traversals is per chunk rather than per
  * prompt position. */
-#define COLI_INKLING_SHARED_BATCH_TEST 1
+#define LMA_INKLING_SHARED_BATCH_TEST 1
 #define main inkling_main_unused
 #include "../inkling.c"
 #undef main

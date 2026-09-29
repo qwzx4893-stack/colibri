@@ -1,4 +1,4 @@
-/* kv_persist.h — .coli_kv on-disk KV cache persistence.
+/* kv_persist.h — .lma_kv on-disk KV cache persistence.
  * Conversations reopen warm across engine restarts: the compressed MLA KV-cache
  * is appended incrementally after every turn, crash-safe (nrec written last).
  * Include after Model/KVState/Cfg are defined; requires now_s() and g_draft. */
@@ -21,7 +21,7 @@ static void kv_hdr(Model *m, int32_t *h, int nrec){
 
 static int64_t kv_rec_bytes(Model *m){
     Cfg *c=&m->c;
-    int64_t rec = 4 + (g_tq ? (int64_t)c->n_layers*(coli_kvq_row_bytes(c->kv_lora,g_tq_bits,g_tq_codec)+coli_kvq_row_bytes(c->qk_rope,g_tq_bits,g_tq_codec)+8)
+    int64_t rec = 4 + (g_tq ? (int64_t)c->n_layers*(lma_kvq_row_bytes(c->kv_lora,g_tq_bits,g_tq_codec)+lma_kvq_row_bytes(c->qk_rope,g_tq_bits,g_tq_codec)+8)
                             : g_kv8 ? (int64_t)c->n_layers*(c->kv_lora+c->qk_rope+8)
                             : (int64_t)c->n_layers*(c->kv_lora+c->qk_rope)*4);
     if(m->has_dsa) for(int i=0;i<c->n_layers;i++) if(m->Ic[i]) rec+=(int64_t)c->index_hd*4;
@@ -85,15 +85,15 @@ static void kv_disk_append(Model *m, const int *hist, int len){
         *(int32_t*)b = hist[p]; b+=4;
         for(int i=0;i<c->n_layers;i++){
             if(g_tq){                      /* v3: byte polari (righe strette) + raggio per riga */
-                int lbb=coli_kvq_row_bytes(c->kv_lora,g_tq_bits,g_tq_codec), rbb=coli_kvq_row_bytes(c->qk_rope,g_tq_bits,g_tq_codec);
-                memcpy(b, coli_kv_row8(m->Lc8[i],p,lbb), (size_t)lbb); b+=lbb;
+                int lbb=lma_kvq_row_bytes(c->kv_lora,g_tq_bits,g_tq_codec), rbb=lma_kvq_row_bytes(c->qk_rope,g_tq_bits,g_tq_codec);
+                memcpy(b, lma_kv_row8(m->Lc8[i],p,lbb), (size_t)lbb); b+=lbb;
                 memcpy(b, &m->Lsc[i][p], 4); b+=4;
-                memcpy(b, coli_kv_row8(m->Rc8[i],p,rbb), (size_t)rbb); b+=rbb;
+                memcpy(b, lma_kv_row8(m->Rc8[i],p,rbb), (size_t)rbb); b+=rbb;
                 memcpy(b, &m->Rsc[i][p], 4); b+=4;
             } else if(g_kv8){             /* v2: fp8 + scala per riga, stesso staging */
-                memcpy(b, coli_kv_row8(m->Lc8[i],p,c->kv_lora), (size_t)c->kv_lora); b+=c->kv_lora;
+                memcpy(b, lma_kv_row8(m->Lc8[i],p,c->kv_lora), (size_t)c->kv_lora); b+=c->kv_lora;
                 memcpy(b, &m->Lsc[i][p], 4); b+=4;
-                memcpy(b, coli_kv_row8(m->Rc8[i],p,c->qk_rope), (size_t)c->qk_rope); b+=c->qk_rope;
+                memcpy(b, lma_kv_row8(m->Rc8[i],p,c->qk_rope), (size_t)c->qk_rope); b+=c->qk_rope;
                 memcpy(b, &m->Rsc[i][p], 4); b+=4;
             } else {
                 memcpy(b, m->Lc[i]+(int64_t)p*c->kv_lora, (size_t)c->kv_lora*4); b+=c->kv_lora*4;
@@ -129,7 +129,7 @@ static inline void kv8_sanitize_row(uint8_t *b, int n, float *sc){
     if(!(*sc>0.f && *sc<3.4e38f)){ memset(b,0,(size_t)n); *sc=1.f; return; }
     for(int i=0;i<n;i++) if((b[i]&0x7F)==0x7F) b[i]=0;
 }
-/* v3: raggio non finito o negativo -> riga inerte (coli_kvq_dequant_row rende zero). */
+/* v3: raggio non finito o negativo -> riga inerte (lma_kvq_dequant_row rende zero). */
 static inline void kv_tq_sanitize(float *radius){
     if(!(*radius>=0.f && *radius<3.4e38f)) *radius=0.f;
 }
@@ -146,15 +146,15 @@ static int kv_disk_load(Model *m, int *hist, int maxctx){
         else if(!memcmp(mg,KV_MAGIC3,8)) dt=2; }
     if(dt<0 || fread(h,4,8,f)!=8 ||
        h[0]!=w[0]||h[1]!=w[1]||h[2]!=w[2]||h[3]!=w[3]||h[4]!=w[4]||h[5]!=w[5]){
-        fprintf(stderr,"[KV] ignoring .coli_kv from a different model or version\n"); fclose(f); return 0; }
+        fprintf(stderr,"[KV] ignoring .lma_kv from a different model or version\n"); fclose(f); return 0; }
     if(dt==1 && !g_kv8){
-        fprintf(stderr,"[KV] .coli_kv is fp8 (saved under KV8=1): starting over (set KV8=1 to resume it)\n");
+        fprintf(stderr,"[KV] .lma_kv is fp8 (saved under KV8=1): starting over (set KV8=1 to resume it)\n");
         fclose(f); return 0; }
     if(dt==2 && !g_tq){
-        fprintf(stderr,"[KV] .coli_kv is PolarQuant (saved under KV_TQ): starting over (set KV_TQ to resume it)\n");
+        fprintf(stderr,"[KV] .lma_kv is PolarQuant (saved under KV_TQ): starting over (set KV_TQ to resume it)\n");
         fclose(f); return 0; }
     if(dt==2 && g_tq && h[7]!=((g_tq_codec<<8)|g_tq_bits)){   /* h[7] = codec<<8 | bit width */
-        fprintf(stderr,"[KV] .coli_kv KV_TQ (codec %d, %d-bit) != current (codec %d, %d-bit): starting over\n",
+        fprintf(stderr,"[KV] .lma_kv KV_TQ (codec %d, %d-bit) != current (codec %d, %d-bit): starting over\n",
             (h[7]>>8)&0xFF, h[7]&0xFF, g_tq_codec, g_tq_bits);
         fclose(f); return 0; }
     int nrec=h[6];
@@ -169,29 +169,29 @@ static int kv_disk_load(Model *m, int *hist, int maxctx){
         int32_t tk; if(fread(&tk,4,1,f)!=1){ nrec=p; break; } hist[p]=tk;
         for(int i=0;i<c->n_layers;i++){
             if(dt==2){                                /* v3: byte polari + raggio, gia' nel formato in RAM */
-                int lbb=coli_kvq_row_bytes(c->kv_lora,g_tq_bits,g_tq_codec), rbb=coli_kvq_row_bytes(c->qk_rope,g_tq_bits,g_tq_codec);
-                if(fread(coli_kv_row8(m->Lc8[i],p,lbb), 1, lbb, f)!=(size_t)lbb ||
+                int lbb=lma_kvq_row_bytes(c->kv_lora,g_tq_bits,g_tq_codec), rbb=lma_kvq_row_bytes(c->qk_rope,g_tq_bits,g_tq_codec);
+                if(fread(lma_kv_row8(m->Lc8[i],p,lbb), 1, lbb, f)!=(size_t)lbb ||
                    fread(&m->Lsc[i][p], 4, 1, f)!=1 ||
-                   fread(coli_kv_row8(m->Rc8[i],p,rbb), 1, rbb, f)!=(size_t)rbb ||
+                   fread(lma_kv_row8(m->Rc8[i],p,rbb), 1, rbb, f)!=(size_t)rbb ||
                    fread(&m->Rsc[i][p], 4, 1, f)!=1){ nrec=p; goto out; }
                 kv_tq_sanitize(&m->Lsc[i][p]); kv_tq_sanitize(&m->Rsc[i][p]);
             } else if(dt==1){                          /* v2: fp8+scala, gia' nel formato in RAM */
-                if(fread(coli_kv_row8(m->Lc8[i],p,c->kv_lora), 1, c->kv_lora, f)!=(size_t)c->kv_lora ||
+                if(fread(lma_kv_row8(m->Lc8[i],p,c->kv_lora), 1, c->kv_lora, f)!=(size_t)c->kv_lora ||
                    fread(&m->Lsc[i][p], 4, 1, f)!=1 ||
-                   fread(coli_kv_row8(m->Rc8[i],p,c->qk_rope), 1, c->qk_rope, f)!=(size_t)c->qk_rope ||
+                   fread(lma_kv_row8(m->Rc8[i],p,c->qk_rope), 1, c->qk_rope, f)!=(size_t)c->qk_rope ||
                    fread(&m->Rsc[i][p], 4, 1, f)!=1){ nrec=p; goto out; }
-                kv8_sanitize_row(coli_kv_row8(m->Lc8[i],p,c->kv_lora), c->kv_lora, &m->Lsc[i][p]);
-                kv8_sanitize_row(coli_kv_row8(m->Rc8[i],p,c->qk_rope), c->qk_rope, &m->Rsc[i][p]);
+                kv8_sanitize_row(lma_kv_row8(m->Lc8[i],p,c->kv_lora), c->kv_lora, &m->Lsc[i][p]);
+                kv8_sanitize_row(lma_kv_row8(m->Rc8[i],p,c->qk_rope), c->qk_rope, &m->Rsc[i][p]);
             } else if(g_tq){                          /* v1 f32 sotto KV_TQ: PolarQuant al volo */
                 if(fread(stage, 4, c->kv_lora, f)!=(size_t)c->kv_lora){ nrec=p; goto out; }
-                m->Lsc[i][p]=coli_kvq_quant_row(stage, coli_kv_row8(m->Lc8[i],p,coli_kvq_row_bytes(c->kv_lora,g_tq_bits,g_tq_codec)), c->kv_lora, g_tq_bits, g_tq_codec);
+                m->Lsc[i][p]=lma_kvq_quant_row(stage, lma_kv_row8(m->Lc8[i],p,lma_kvq_row_bytes(c->kv_lora,g_tq_bits,g_tq_codec)), c->kv_lora, g_tq_bits, g_tq_codec);
                 if(fread(stage, 4, c->qk_rope, f)!=(size_t)c->qk_rope){ nrec=p; goto out; }
-                m->Rsc[i][p]=coli_kvq_quant_row(stage, coli_kv_row8(m->Rc8[i],p,coli_kvq_row_bytes(c->qk_rope,g_tq_bits,g_tq_codec)), c->qk_rope, g_tq_bits, g_tq_codec);
+                m->Rsc[i][p]=lma_kvq_quant_row(stage, lma_kv_row8(m->Rc8[i],p,lma_kvq_row_bytes(c->qk_rope,g_tq_bits,g_tq_codec)), c->qk_rope, g_tq_bits, g_tq_codec);
             } else if(g_kv8){                          /* v1 f32 sotto KV8: fp8 al volo */
                 if(fread(stage, 4, c->kv_lora, f)!=(size_t)c->kv_lora){ nrec=p; goto out; }
-                m->Lsc[i][p]=coli_kv8_quant_row(stage, coli_kv_row8(m->Lc8[i],p,c->kv_lora), c->kv_lora);
+                m->Lsc[i][p]=lma_kv8_quant_row(stage, lma_kv_row8(m->Lc8[i],p,c->kv_lora), c->kv_lora);
                 if(fread(stage, 4, c->qk_rope, f)!=(size_t)c->qk_rope){ nrec=p; goto out; }
-                m->Rsc[i][p]=coli_kv8_quant_row(stage, coli_kv_row8(m->Rc8[i],p,c->qk_rope), c->qk_rope);
+                m->Rsc[i][p]=lma_kv8_quant_row(stage, lma_kv_row8(m->Rc8[i],p,c->qk_rope), c->qk_rope);
             } else {
                 if(fread(m->Lc[i]+(int64_t)p*c->kv_lora, 4, c->kv_lora, f)!=(size_t)c->kv_lora ||
                    fread(m->Rc[i]+(int64_t)p*c->qk_rope, 4, c->qk_rope, f)!=(size_t)c->qk_rope){ nrec=p; goto out; }
@@ -210,7 +210,7 @@ out:
             /* upgrade v1->v2/v3: il file f32 non puo' ricevere append quantizzati.
              * disk_nrec=0 e il file resta INTATTO: al primo append il magic lo riscrive. */
             k->disk_nrec=0;
-            fprintf(stderr,"[KV] f32 .coli_kv quantized in RAM; will be rewritten as %s at next save\n",
+            fprintf(stderr,"[KV] f32 .lma_kv quantized in RAM; will be rewritten as %s at next save\n",
                 g_tq?"PolarQuant (v3)":"fp8 (v2)");
             return nrec;
         }

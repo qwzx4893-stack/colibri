@@ -20,19 +20,19 @@ typedef struct {
     size_t length, offset;
 } MemoryStream;
 
-static void fake_capabilities(ColiSegmentCapabilities *capabilities) {
-    capabilities->abi_version = COLI_SEGMENT_ABI_VERSION;
-    capabilities->flags = COLI_SEGMENT_CAP_TOKEN_IDS |
-                          COLI_SEGMENT_CAP_SNAPSHOT |
-                          COLI_SEGMENT_CAP_RANGE_NATIVE |
-                          COLI_SEGMENT_CAP_MULTI_SESSION |
-                          COLI_SEGMENT_CAP_CPU;
+static void fake_capabilities(LmaSegmentCapabilities *capabilities) {
+    capabilities->abi_version = LMA_SEGMENT_ABI_VERSION;
+    capabilities->flags = LMA_SEGMENT_CAP_TOKEN_IDS |
+                          LMA_SEGMENT_CAP_SNAPSHOT |
+                          LMA_SEGMENT_CAP_RANGE_NATIVE |
+                          LMA_SEGMENT_CAP_MULTI_SESSION |
+                          LMA_SEGMENT_CAP_CPU;
     snprintf(capabilities->engine_id, sizeof(capabilities->engine_id), "fake");
     snprintf(capabilities->state_schema, sizeof(capabilities->state_schema),
              "fake-state-v1");
     snprintf(capabilities->numeric_class, sizeof(capabilities->numeric_class),
              "fake-f32-strict-v1");
-    capabilities->state_dtype = COLI_SEGMENT_DTYPE_F32;
+    capabilities->state_dtype = LMA_SEGMENT_DTYPE_F32;
     capabilities->state_width = 4;
     capabilities->max_batch_rows = 8;
     capabilities->max_context_tokens = 32;
@@ -40,8 +40,8 @@ static void fake_capabilities(ColiSegmentCapabilities *capabilities) {
 }
 
 static int fake_engine_open(void **engine_impl,
-                            ColiSegmentCapabilities *capabilities,
-                            const ColiSegmentEngineOptions *options,
+                            LmaSegmentCapabilities *capabilities,
+                            const LmaSegmentEngineOptions *options,
                             char *error, size_t error_size) {
     (void)error; (void)error_size;
     FakeEngine *engine = (FakeEngine *)calloc(1, sizeof(*engine));
@@ -57,7 +57,7 @@ static int fake_engine_open(void **engine_impl,
 static void fake_engine_destroy(void *engine_impl) { free(engine_impl); }
 
 static int fake_session_create(void *engine_impl, void **session_impl,
-                               const ColiSegmentSessionOptions *options,
+                               const LmaSegmentSessionOptions *options,
                                char *error, size_t error_size) {
     FakeEngine *engine = (FakeEngine *)engine_impl;
     if (options->context_tokens > engine->context) {
@@ -74,7 +74,7 @@ static int fake_session_create(void *engine_impl, void **session_impl,
 static void fake_session_destroy(void *session_impl) { free(session_impl); }
 
 static int fake_session_run(void *session_impl,
-                            const ColiSegmentRunRequest *request,
+                            const LmaSegmentRunRequest *request,
                             char *error, size_t error_size) {
     FakeSession *session = (FakeSession *)session_impl;
     size_t count = (size_t)request->rows * 4;
@@ -109,7 +109,7 @@ static int memory_read(void *user_data, void *data, size_t size) {
     return 0;
 }
 
-static int fake_snapshot(void *session_impl, ColiSegmentWriteFn write_fn,
+static int fake_snapshot(void *session_impl, LmaSegmentWriteFn write_fn,
                          void *write_user_data,
                          char *error, size_t error_size) {
     (void)error; (void)error_size;
@@ -117,7 +117,7 @@ static int fake_snapshot(void *session_impl, ColiSegmentWriteFn write_fn,
     return write_fn(write_user_data, &session->position, sizeof(session->position));
 }
 
-static int fake_restore(void *session_impl, ColiSegmentReadFn read_fn,
+static int fake_restore(void *session_impl, LmaSegmentReadFn read_fn,
                         void *read_user_data,
                         char *error, size_t error_size) {
     (void)error; (void)error_size;
@@ -125,9 +125,9 @@ static int fake_restore(void *session_impl, ColiSegmentReadFn read_fn,
     return read_fn(read_user_data, &session->position, sizeof(session->position));
 }
 
-static const ColiSegmentAdapter fake_adapter = {
+static const LmaSegmentAdapter fake_adapter = {
     .struct_size = sizeof(fake_adapter),
-    .abi_version = COLI_SEGMENT_ABI_VERSION,
+    .abi_version = LMA_SEGMENT_ABI_VERSION,
     .engine_id = "fake",
     .engine_open = fake_engine_open,
     .engine_destroy = fake_engine_destroy,
@@ -138,9 +138,9 @@ static const ColiSegmentAdapter fake_adapter = {
     .session_restore = fake_restore,
 };
 
-static const ColiSegmentAdapter incomplete_snapshot_adapter = {
+static const LmaSegmentAdapter incomplete_snapshot_adapter = {
     .struct_size = sizeof(incomplete_snapshot_adapter),
-    .abi_version = COLI_SEGMENT_ABI_VERSION,
+    .abi_version = LMA_SEGMENT_ABI_VERSION,
     .engine_id = "bad-snapshot",
     .engine_open = fake_engine_open,
     .engine_destroy = fake_engine_destroy,
@@ -155,40 +155,40 @@ static int always_cancel(void *unused) { (void)unused; return 1; }
 
 int main(void) {
     char error[160] = "";
-    assert(coli_segment_adapter_count() == 0);
-    assert(coli_segment_adapter_register(NULL) != 0);
-    assert(coli_segment_adapter_register(&incomplete_snapshot_adapter) != 0);
-    assert(coli_segment_adapter_register(&fake_adapter) == 0);
-    assert(coli_segment_adapter_register(&fake_adapter) != 0);
-    assert(coli_segment_adapter_count() == 1);
-    assert(coli_segment_adapter_lookup("fake") == &fake_adapter);
-    assert(coli_segment_adapter_lookup("missing") == NULL);
+    assert(lma_segment_adapter_count() == 0);
+    assert(lma_segment_adapter_register(NULL) != 0);
+    assert(lma_segment_adapter_register(&incomplete_snapshot_adapter) != 0);
+    assert(lma_segment_adapter_register(&fake_adapter) == 0);
+    assert(lma_segment_adapter_register(&fake_adapter) != 0);
+    assert(lma_segment_adapter_count() == 1);
+    assert(lma_segment_adapter_lookup("fake") == &fake_adapter);
+    assert(lma_segment_adapter_lookup("missing") == NULL);
 
-    ColiSegmentEngineOptions open_options = {
+    LmaSegmentEngineOptions open_options = {
         .struct_size = sizeof(open_options),
         .model_dir = "unused-fixture",
         .layer_begin = 1,
         .layer_end = 4,
         .context_tokens = 16,
     };
-    ColiSegmentEngine *engine = NULL;
-    assert(coli_segment_engine_open("fake", &open_options, &engine,
+    LmaSegmentEngine *engine = NULL;
+    assert(lma_segment_engine_open("fake", &open_options, &engine,
                                     error, sizeof(error)) == 0);
     assert(engine);
 
-    ColiSegmentCapabilities capabilities = {.struct_size = sizeof(capabilities)};
-    assert(coli_segment_engine_capabilities(engine, &capabilities,
+    LmaSegmentCapabilities capabilities = {.struct_size = sizeof(capabilities)};
+    assert(lma_segment_engine_capabilities(engine, &capabilities,
                                             error, sizeof(error)) == 0);
     assert(capabilities.state_width == 4 && capabilities.num_layers == 6);
-    assert(capabilities.flags & COLI_SEGMENT_CAP_RANGE_NATIVE);
+    assert(capabilities.flags & LMA_SEGMENT_CAP_RANGE_NATIVE);
 
     struct {
-        ColiSegmentCapabilities capabilities;
+        LmaSegmentCapabilities capabilities;
         uint64_t future_fields[2];
     } future_capabilities;
     memset(&future_capabilities, 0xa5, sizeof(future_capabilities));
     future_capabilities.capabilities.struct_size = sizeof(future_capabilities);
-    assert(coli_segment_engine_capabilities(
+    assert(lma_segment_engine_capabilities(
                engine, &future_capabilities.capabilities,
                error, sizeof(error)) == 0);
     assert(future_capabilities.capabilities.state_width == 4);
@@ -196,24 +196,24 @@ int main(void) {
     assert(future_capabilities.future_fields[1] == 0);
 
     capabilities.struct_size = 0;
-    assert(coli_segment_engine_capabilities(engine, &capabilities,
+    assert(lma_segment_engine_capabilities(engine, &capabilities,
                                             error, sizeof(error)) != 0);
 
-    ColiSegmentSessionOptions session_options = {
+    LmaSegmentSessionOptions session_options = {
         .struct_size = sizeof(session_options),
         .context_tokens = 16,
     };
-    ColiSegmentSession *session = NULL, *second = NULL;
-    assert(coli_segment_session_create(engine, &session_options, &session,
+    LmaSegmentSession *session = NULL, *second = NULL;
+    assert(lma_segment_session_create(engine, &session_options, &session,
                                        error, sizeof(error)) == 0);
-    assert(coli_segment_session_create(engine, &session_options, &second,
+    assert(lma_segment_session_create(engine, &session_options, &second,
                                        error, sizeof(error)) == 0);
-    assert(coli_segment_engine_close(engine, error, sizeof(error)) != 0);
+    assert(lma_segment_engine_close(engine, error, sizeof(error)) != 0);
 
     float input[8] = {0, 1, 2, 3, 4, 5, 6, 7};
     float output[8] = {0};
     int32_t tokens[2] = {7, 9};
-    ColiSegmentRunRequest run = {
+    LmaSegmentRunRequest run = {
         .struct_size = sizeof(run),
         .rows = 2,
         .position = 0,
@@ -225,41 +225,41 @@ int main(void) {
         .output_bytes = sizeof(output),
         .should_cancel = never_cancel,
     };
-    assert(coli_segment_run(session, &run, error, sizeof(error)) == 0);
+    assert(lma_segment_run(session, &run, error, sizeof(error)) == 0);
     for (size_t i = 0; i < 8; i++) assert(output[i] == input[i] + 3.0f);
 
     MemoryStream stream = {0};
-    assert(coli_segment_snapshot(session, memory_write, &stream,
+    assert(lma_segment_snapshot(session, memory_write, &stream,
                                  error, sizeof(error)) == 0);
     assert(stream.length == sizeof(uint64_t));
     stream.offset = 0;
-    assert(coli_segment_restore(second, memory_read, &stream,
+    assert(lma_segment_restore(second, memory_read, &stream,
                                 error, sizeof(error)) == 0);
 
     memset(output, 0, sizeof(output));
     run.position = 2;
-    assert(coli_segment_run(second, &run, error, sizeof(error)) == 0);
+    assert(lma_segment_run(second, &run, error, sizeof(error)) == 0);
     for (size_t i = 0; i < 8; i++) assert(output[i] == input[i] + 3.0f);
 
     run.position = 4;
     run.should_cancel = always_cancel;
-    assert(coli_segment_run(second, &run, error, sizeof(error)) != 0);
+    assert(lma_segment_run(second, &run, error, sizeof(error)) != 0);
     run.should_cancel = never_cancel;
     run.token_count = 0;
     run.token_ids = NULL;
-    assert(coli_segment_run(second, &run, error, sizeof(error)) != 0);
+    assert(lma_segment_run(second, &run, error, sizeof(error)) != 0);
     run.token_count = 2;
-    assert(coli_segment_run(second, &run, error, sizeof(error)) != 0);
+    assert(lma_segment_run(second, &run, error, sizeof(error)) != 0);
     run.token_ids = tokens;
     run.position = 15;
-    assert(coli_segment_run(second, &run, error, sizeof(error)) != 0);
+    assert(lma_segment_run(second, &run, error, sizeof(error)) != 0);
     run.position = 4;
     run.input_bytes--;
-    assert(coli_segment_run(second, &run, error, sizeof(error)) != 0);
+    assert(lma_segment_run(second, &run, error, sizeof(error)) != 0);
 
-    coli_segment_session_destroy(second);
-    coli_segment_session_destroy(session);
-    assert(coli_segment_engine_close(engine, error, sizeof(error)) == 0);
+    lma_segment_session_destroy(second);
+    lma_segment_session_destroy(session);
+    assert(lma_segment_engine_close(engine, error, sizeof(error)) == 0);
     puts("segment runtime tests: ok");
     return 0;
 }

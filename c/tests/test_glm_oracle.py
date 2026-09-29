@@ -16,7 +16,7 @@ import tempfile
 import unittest
 
 C_DIR = Path(__file__).resolve().parents[1]
-ENGINE = C_DIR / ("colibri.exe" if os.name == "nt" else "colibri")
+ENGINE = C_DIR / ("glm52.exe" if os.name == "nt" else "glm52")
 SNAP = C_DIR / "glm_tiny"
 REFERENCE = C_DIR / "ref_glm.json"
 
@@ -26,7 +26,7 @@ class GlmOracleTest(unittest.TestCase):
     def setUpClass(cls):
         if not (ENGINE.is_file() and (SNAP / "model.safetensors").is_file()
                 and REFERENCE.is_file()):
-            raise unittest.SkipTest("build colibri and generate the GLM tiny oracle first")
+            raise unittest.SkipTest("build lmatomic and generate the GLM tiny oracle first")
         cls.reference = json.loads(REFERENCE.read_text(encoding="utf-8"))
         cls.vocab = json.loads((SNAP / "config.json").read_text(encoding="utf-8"))["vocab_size"]
         # Keep the independent fixture for the numerical gate. Use observed TF
@@ -41,13 +41,13 @@ class GlmOracleTest(unittest.TestCase):
         keep = {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE",
                 "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "ASAN_OPTIONS", "UBSAN_OPTIONS"}
         env = {k: v for k, v in os.environ.items() if k in keep}
-        env.update(SNAP=str(SNAP if snapshot is None else snapshot), COLI_TEMP="0", OMP_NUM_THREADS="4")
+        env.update(SNAP=str(SNAP if snapshot is None else snapshot), LMA_TEMP="0", OMP_NUM_THREADS="4")
         if tf:
             env["TF"] = "1"
         if strict is not None:
             env["ORACLE_STRICT"] = strict
         env.update(extra_env or {})
-        with tempfile.TemporaryDirectory(prefix="colibri-oracle-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="lmatomic-oracle-") as tmp:
             path = Path(tmp) / "ref.json"
             path.write_text(raw if raw is not None else json.dumps(
                 cls.reference if reference is None else reference), encoding="utf-8")
@@ -201,7 +201,7 @@ class GlmOracleTest(unittest.TestCase):
 
     def test_other_modes_cannot_bypass_strict_comparison(self):
         for mode in ("REPLAY", "CONSIST", "SERVE", "SCORE", "ABLATE_SCORE", "EXPERT_WORKER",
-                     "I4_ACC512_TEST", "I3_AVX512_TEST", "COLI_ANS_PACK", "COLI_PROMPT"):
+                     "I4_ACC512_TEST", "I3_AVX512_TEST", "LMA_ANS_PACK", "LMA_PROMPT"):
             with self.subTest(mode=mode):
                 result = self.run_oracle(extra_env={mode: "1"})
                 self.assert_failed(result)
@@ -226,7 +226,7 @@ class GlmOracleTest(unittest.TestCase):
     def test_nonfinite_model_logits_fail_both_modes(self):
         # The tiny generator stores an F32 lm_head in one safetensors shard.
         # Poison a single output row, including when it would not win argmax.
-        with tempfile.TemporaryDirectory(prefix="colibri-oracle-weights-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="lmatomic-oracle-weights-") as tmp:
             snapshot = Path(tmp)
             shutil.copy2(SNAP / "config.json", snapshot / "config.json")
             weights = (SNAP / "model.safetensors").read_bytes()
@@ -256,7 +256,7 @@ class GlmOracleTest(unittest.TestCase):
         ref["full_ids"] = ref["prompt_ids"] + [last]
         ref["tf_pred"] = ref["tf_pred"][:3]
         ref = self.observed_tf_reference(ref)
-        with tempfile.TemporaryDirectory(prefix="colibri-oracle-position-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="lmatomic-oracle-position-") as tmp:
             snapshot = Path(tmp)
             shutil.copy2(SNAP / "config.json", snapshot / "config.json")
             weights = bytearray((SNAP / "model.safetensors").read_bytes())
@@ -283,5 +283,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     ENGINE, SNAP, REFERENCE = (p.resolve() for p in (args.engine, args.snapshot, args.reference))
     if not (ENGINE.is_file() and (SNAP / "model.safetensors").is_file() and REFERENCE.is_file()):
-        parser.error("build colibri and generate the GLM tiny oracle first")
+        parser.error("build lmatomic and generate the GLM tiny oracle first")
     unittest.main(argv=[__file__, "-v"])

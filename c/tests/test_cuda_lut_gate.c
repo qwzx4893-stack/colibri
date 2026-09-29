@@ -34,9 +34,9 @@ static void ck(int cond, const char *what) {
 typedef struct { int nctx; int ready; int dev[8]; } Gate;
 
 static int g_init(Gate *g, const int *want, int count) {
-    int d = coli_cuda_init_disposition(g->nctx, count, want, g->dev);
-    if (d == COLI_CUDA_INIT_REFUSE) return 0;          /* touches nothing */
-    if (d == COLI_CUDA_INIT_ACCEPT) return 1;          /* touches nothing */
+    int d = lma_cuda_init_disposition(g->nctx, count, want, g->dev);
+    if (d == LMA_CUDA_INIT_REFUSE) return 0;          /* touches nothing */
+    if (d == LMA_CUDA_INIT_ACCEPT) return 1;          /* touches nothing */
     for (int i = 0; i < count; i++) g->dev[i] = want[i];
     g->nctx = count;                                   /* flag NOT written here */
     return 1;
@@ -44,36 +44,36 @@ static int g_init(Gate *g, const int *want, int count) {
 static void g_set_lut(Gate *g) { if (g->nctx > 0) g->ready = 1; }
 static void g_shutdown(Gate *g) { g->nctx = 0; g->ready = 0; }
 static int g_upload(Gate *g, int fmt) {
-    return g->nctx > 0 && coli_cuda_fp8_gate_admits(fmt, g->ready);
+    return g->nctx > 0 && lma_cuda_fp8_gate_admits(fmt, g->ready);
 }
 
 int main(void) {
     /* --- the disposition table, directly ------------------------------- */
     {
         int live1[1] = {0}, want1[1] = {0}, want2[2] = {0, 1}, wantB[1] = {1};
-        ck(coli_cuda_init_disposition(0, 1, want1, live1) == COLI_CUDA_INIT_BUILD,
+        ck(lma_cuda_init_disposition(0, 1, want1, live1) == LMA_CUDA_INIT_BUILD,
            "nothing live -> BUILD");
-        ck(coli_cuda_init_disposition(1, 1, want1, live1) == COLI_CUDA_INIT_ACCEPT,
+        ck(lma_cuda_init_disposition(1, 1, want1, live1) == LMA_CUDA_INIT_ACCEPT,
            "same set -> ACCEPT");
-        ck(coli_cuda_init_disposition(1, 2, want2, live1) == COLI_CUDA_INIT_REFUSE,
+        ck(lma_cuda_init_disposition(1, 2, want2, live1) == LMA_CUDA_INIT_REFUSE,
            "widening set -> REFUSE");
-        ck(coli_cuda_init_disposition(1, 1, wantB, live1) == COLI_CUDA_INIT_REFUSE,
+        ck(lma_cuda_init_disposition(1, 1, wantB, live1) == LMA_CUDA_INIT_REFUSE,
            "same size, different device -> REFUSE");
         int live2[2] = {0, 1};
-        ck(coli_cuda_init_disposition(2, 1, want1, live2) == COLI_CUDA_INIT_REFUSE,
+        ck(lma_cuda_init_disposition(2, 1, want1, live2) == LMA_CUDA_INIT_REFUSE,
            "narrowing set -> REFUSE");
-        ck(coli_cuda_init_disposition(2, 2, want2, live2) == COLI_CUDA_INIT_ACCEPT,
+        ck(lma_cuda_init_disposition(2, 2, want2, live2) == LMA_CUDA_INIT_ACCEPT,
            "same two-device set -> ACCEPT");
     }
 
     /* --- the upload gate ------------------------------------------------ */
     for (int fmt = -3; fmt <= 9; fmt++) {
         if (fmt == 8) continue;
-        ck(coli_cuda_fp8_gate_admits(fmt, 0) && coli_cuda_fp8_gate_admits(fmt, 1),
+        ck(lma_cuda_fp8_gate_admits(fmt, 0) && lma_cuda_fp8_gate_admits(fmt, 1),
            "non-fmt=8 is admitted regardless of the LUT flag");
     }
-    ck(!coli_cuda_fp8_gate_admits(8, 0), "fmt=8 refused while the LUT is unpublished");
-    ck(coli_cuda_fp8_gate_admits(8, 1), "fmt=8 admitted once the LUT is published");
+    ck(!lma_cuda_fp8_gate_admits(8, 0), "fmt=8 refused while the LUT is unpublished");
+    ck(lma_cuda_fp8_gate_admits(8, 1), "fmt=8 admitted once the LUT is published");
 
     /* --- the three lifecycle edges, as sequences ------------------------ */
     {

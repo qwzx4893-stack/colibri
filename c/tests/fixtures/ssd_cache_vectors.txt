@@ -1,6 +1,6 @@
-# .coli_ssd cache-grammar vectors (#379/#386) -- the SINGLE source of truth for
+# .lma_ssd cache-grammar vectors (#379/#386) -- the SINGLE source of truth for
 # the strict grammar both readers must implement byte-for-byte:
-#   C:      colibri.c  coli_ssd_cache_parse()   (chewed by tests/test_ssd_probe.c)
+#   C:      glm52.c  lma_ssd_cache_parse()   (chewed by tests/test_ssd_probe.c)
 #   Python: resource_plan.py  parse_ssd_cache() (chewed by tests/test_resource_plan.py)
 # Add a vector here and BOTH suites pick it up; a reader change that is not
 # mirrored in the other language fails its half of the suite.

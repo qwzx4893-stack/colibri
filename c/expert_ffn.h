@@ -38,8 +38,8 @@
  * with a scalar fallback that defines the numerics every SIMD path must
  * reproduce (f32 paths: same per-lane accumulation order; i8 paths: exact
  * integer sums, so identical by construction). */
-#ifndef COLI_EXPERT_FFN_H
-#define COLI_EXPERT_FFN_H
+#ifndef LMA_EXPERT_FFN_H
+#define LMA_EXPERT_FFN_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -411,4 +411,4 @@ static inline void xf_moe_run(float *out, const float *x, int S, int K, int H, i
     }
 }
 
-#endif /* COLI_EXPERT_FFN_H */
+#endif /* LMA_EXPERT_FFN_H */

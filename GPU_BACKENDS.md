@@ -1,6 +1,6 @@
 # GPU backends: CUDA and HIP/ROCm
 
-colibrì's GPU expert backend is **one source file** (`c/backend_cuda.cu`) compiled
+LM Atomic's GPU expert backend is **one source file** (`c/backend_cuda.cu`) compiled
 for either vendor through `c/backend_gpu_compat.h` — the same one-shim-header
 pattern `compat.h` uses for the Windows port. Compiled by nvcc the shim is a
 pass-through to `cuda_runtime.h` (the NVIDIA path is byte-identical to the
@@ -17,7 +17,7 @@ only — never `#ifdef __HIP__` (or CUDA-specific code) in `backend_cuda.cu`.
 |---|---|---|---|
 | CUDA (`CUDA=1`) | Linux x86-64 | CUDA toolkit (nvcc), `CUDA_HOME=/usr/local/cuda` default | `make -C c glm CUDA=1 [CUDA_ARCH=native\|sm_XX]` |
 | HIP (`HIP=1`) | Linux x86-64 | ROCm (hipcc), `ROCM_HOME=/opt/rocm` default; tested on ROCm 7.2 | `make -C c glm HIP=1 [HIP_ARCH=native\|gfxXXXX]` |
-| HIP DLL (`HIP_DLL=1`) — build **and** runtime; validated on one configuration | Windows x86-64 | HIP SDK (hipcc) + a compatible MSVC x64 host toolchain; `HIP_SDK_ROOT` from `HIP_PATH` | `make -C c hip-dll HIP_DLL=1 HIP_SDK_ROOT=<sdk-root> HIP_ARCH=gfxNNNN` → `c/coli_hip.dll` |
+| HIP DLL (`HIP_DLL=1`) — build **and** runtime; validated on one configuration | Windows x86-64 | HIP SDK (hipcc) + a compatible MSVC x64 host toolchain; `HIP_SDK_ROOT` from `HIP_PATH` | `make -C c hip-dll HIP_DLL=1 HIP_SDK_ROOT=<sdk-root> HIP_ARCH=gfxNNNN` → `c/lma_hip.dll` |
 
 `CUDA=1` and `HIP=1` are mutually exclusive and both opt-in: the default build
 remains pure, dependency-free CPU. Both are **directly linked** paths and remain
@@ -33,13 +33,13 @@ explicit `gfxNNNN` — see below.
 
 Mirrors the Windows CUDA split: MinGW gcc cannot compile `.cu`, and Windows
 hipcc targets the MSVC ABI, so the backend is built into a standalone
-`coli_hip.dll` instead of being linked into the host. The same
-`c/backend_cuda.cu` and the same `coli_cuda_*` ABI the Linux HIP path already
+`lma_hip.dll` instead of being linked into the host. The same
+`c/backend_cuda.cu` and the same `lma_cuda_*` ABI the Linux HIP path already
 reuses are used unchanged.
 
-The host loads `coli_hip.dll` at runtime through the same loader seam the
+The host loads `lma_hip.dll` at runtime through the same loader seam the
 Windows CUDA split uses, and binds the HIP runtime **explicitly**: the directory
-holding `amdhip64_7.dll` is named by `COLI_HIP_RUNTIME_DIR`, and the loader
+holding `amdhip64_7.dll` is named by `LMA_HIP_RUNTIME_DIR`, and the loader
 fails closed if the mapped module is not that exact file or if a second module
 of the same basename is already present. It never silently accepts a copy from
 `System32`, from `PATH`, or from an unrelated ROCm install.
@@ -51,10 +51,10 @@ The two halves are built separately.
 
 *Host build mode* — prepares the host for the DLL split. Needs **no HIP SDK**
 and **no `HIP_ARCH`**, because it only compiles `c/backend_loader.c` and links
-`colibri.exe`; `amdhip64` is never linked into the host:
+`glm52.exe`; `amdhip64` is never linked into the host:
 
 ```sh
-make -C c colibri.exe HIP_DLL=1
+make -C c glm52.exe HIP_DLL=1
 ```
 
 *Backend DLL* — requires a selected SDK and an explicit architecture:
@@ -66,7 +66,7 @@ make -C c hip-dll \
     HIP_ARCH=gfxNNNN
 ```
 
-It produces `c/coli_hip.dll`; the linker may also emit `c/coli_hip.lib` (and
+It produces `c/lma_hip.dll`; the linker may also emit `c/lma_hip.lib` (and
 `.exp`/`.pdb` on toolchains that generate them). All are ignored by git and
 removed by `make -C c clean`.
 
@@ -116,7 +116,7 @@ Validated on **one** configuration: AMD Radeon(TM) 8060S Graphics reporting
   falls back to CPU and the process still exits 0. Read the first fallback
   diagnostics and the final fallback count together with the resident set.
 - **Lifecycle.** Normal one-shot model exits rely on Windows process teardown
-  rather than an explicit `coli_cuda_shutdown` call. This matches the existing
+  rather than an explicit `lma_cuda_shutdown` call. This matches the existing
   host path and is not presented as explicit backend shutdown.
 - There is **no hosted CI coverage** for the Windows HIP build or runtime — no
   hosted runner provides a Windows HIP toolchain or an AMD GPU.
@@ -128,7 +128,7 @@ Validated on **one** configuration: AMD Radeon(TM) 8060S Graphics reporting
 
 ## Runtime configuration (identical for both vendors)
 
-- `COLI_CUDA=1` + `COLI_GPU=N` (or `COLI_GPUS=0,1,...`) — enable, select devices
+- `LMA_CUDA=1` + `LMA_GPU=N` (or `LMA_GPUS=0,1,...`) — enable, select devices
 - `CUDA_EXPERT_GB=G` — VRAM budget for the expert tier (clamped to free VRAM
   minus projected dense set and 2 GB headroom per device)
 - `CUDA_RELEASE_HOST=1` — GPU-tier experts drop their host backing after
@@ -138,8 +138,8 @@ Validated on **one** configuration: AMD Radeon(TM) 8060S Graphics reporting
   path needs one whose host copy was released — validated under total GPU
   failure below.
 - `CUDA_DENSE=1` — experimental resident-dense path (unchanged)
-- `COLI_CUDA_TC_W4A16=1` — opt-in W4A16 tensor-core path. **NVIDIA-only**:
-  the WMMA kernels are compile-gated (`COLI_GPU_HAS_WMMA` in the compat
+- `LMA_CUDA_TC_W4A16=1` — opt-in W4A16 tensor-core path. **NVIDIA-only**:
+  the WMMA kernels are compile-gated (`LMA_GPU_HAS_WMMA` in the compat
   header) because gfx GPUs report `compute_major >= 7` and a runtime check
   alone would select empty kernel bodies under HIP. On AMD, all compute uses
   the portable kernels; rocWMMA matrix-core support is a possible follow-up.

@@ -19,8 +19,8 @@
  *
  * Defense 2 is what makes this robust against checkpoints we don't control:
  * even with BOTH configs mutilated, a control token cannot leak into a reply. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include "../compat.h"   /* setenv/unsetenv: MinGW has neither */
@@ -133,7 +133,7 @@ int main(void){
     /* 6. Private chat uses SERVE=1 for the byte protocol but has no Python
      *    StopFilter. Only the batched gateway may reduce the engine stop set. */
     { Cfg c; memset(&c,0,sizeof c); c.stop_ids[0]=100; c.n_stop=1;
-      setenv("SERVE","1",1); unsetenv("SERVE_BATCH"); unsetenv("COLI_SERVE_ALL_STOPS");
+      setenv("SERVE","1",1); unsetenv("SERVE_BATCH"); unsetenv("LMA_SERVE_ALL_STOPS");
       stops_arm_tok(&c,100,&T);
       fail|=expect("private chat keeps <|user|>",101,1);
       fail|=expect("private chat keeps <|observation|>",102,1);
@@ -145,11 +145,11 @@ int main(void){
       fail|=expect("batched gateway filters <|user|>",101,0);
       if(g_nstop!=1){ fprintf(stderr,"  FAIL batched gateway: expected 1 stop, got %d\n",g_nstop); fail=1; }
 
-      setenv("COLI_SERVE_ALL_STOPS","1",1);
+      setenv("LMA_SERVE_ALL_STOPS","1",1);
       stops_arm_tok(&c,100,&T);
       fail|=expect("gateway override restores <|user|>",101,1);
       if(g_nstop!=5){ fprintf(stderr,"  FAIL gateway override: expected 5 stops, got %d\n",g_nstop); fail=1; }
-      unsetenv("COLI_SERVE_ALL_STOPS"); unsetenv("SERVE_BATCH"); unsetenv("SERVE");
+      unsetenv("LMA_SERVE_ALL_STOPS"); unsetenv("SERVE_BATCH"); unsetenv("SERVE");
       if(!fail) printf("  private chat keeps 5 stops; batched gateway filters to EOS   ok\n"); }
 
     rm_file(dir,"config.json"); rm_file(dir,"generation_config.json"); rm_file(dir,"tokenizer.json");

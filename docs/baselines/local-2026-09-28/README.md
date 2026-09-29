@@ -19,8 +19,8 @@ hardware are stated beside every number.
 ## A. Real model: OLMoE-1B-7B-0924-Instruct (the one real MoE this build can run)
 
 The model already on the machine (LM Studio: `Fabliq-8B-Agent-FromBase-Reasoning`, GGUF
-Q5_K_M, architecture `lfm2moe`) has no Colibri engine, so it could not be used. OLMoE
-is the smallest MoE family Colibri supports, and `tools/convert_gguf_to_olmoe.py` is its
+Q5_K_M, architecture `lfm2moe`) has no LM Atomic engine, so it could not be used. OLMoE
+is the smallest MoE family LM Atomic supports, and `tools/convert_gguf_to_olmoe.py` is its
 supported GGUF path.
 
 | | |
@@ -29,7 +29,7 @@ supported GGUF path.
 | Container | `convert_gguf_to_olmoe.py` (dense F16, routed experts re-quantized to int8 row-wise), 7.4 GB in 5 shards, 1m55s |
 | Architecture | 16 layers, 64 routed experts, top-8, ~1.3B active of ~6.9B |
 | Engine | `olmoe.exe`, CPU only (no GPU tier exists for this family) |
-| Serving | `coli serve` (HTTP gateway + one engine process), `KV_SLOTS=1`, greedy, `max_tokens=64`, concurrency 1 |
+| Serving | `lmatomic serve` (HTTP gateway + one engine process), `KV_SLOTS=1`, greedy, `max_tokens=64`, concurrency 1 |
 | Expert cache | auto: 32 of 64 slots/layer (6.6 GB budget), 6 MB per expert, no pin set |
 
 Workload: `workload.jsonl` (three chat prompts of 26 / 188 / 790 prompt tokens).
@@ -60,8 +60,8 @@ engine RSS 5.0 GB, disk read 529 MB/s average / 875 MB/s peak, total CPU 28% ave
 38% peak (20 logical CPUs), GPU unused. The run is bound by expert reads plus int8 expert
 matmul, not by CPU saturation.
 
-`coli doctor` reports 4% projected expert residency at its own RAM budget and recommends
-`coli tune`; that step was not applied, so these are default-configuration numbers.
+`lmatomic doctor` reports 4% projected expert residency at its own RAM budget and recommends
+`lmatomic tune`; that step was not applied, so these are default-configuration numbers.
 
 ## B. GPU: synthetic GLM-5.2-shaped fixture (CPU vs CUDA)
 
@@ -71,9 +71,9 @@ top-8, random weights; real MLA/MoE/streaming shapes). Generated with the pinned
 torch 2.13.0+cpu / transformers 5.16.1. Not a language model: it measures placement and
 speed, not quality.
 
-`python c/tools/benchmark_cuda_fixture.py --model <fixture> --engine ./colibri.exe --gpu 0
+`python c/tools/benchmark_cuda_fixture.py --model <fixture> --engine ./glm52.exe --gpu 0
 --runs 3 --threads 14 --pin-gb 1 --cuda-expert-gb 2` on the CUDA_DLL host (`make
-colibri.exe CUDA_DLL=1 && make cuda-dll`), replay of 8 fixed tokens, warm page cache.
+glm52.exe CUDA_DLL=1 && make cuda-dll`), replay of 8 fixed tokens, warm page cache.
 Raw: `glm_bench_cpu_vs_cuda.json`.
 
 | mode | median tok/s | routed experts run on |
@@ -92,7 +92,7 @@ figure for this fixture).
 Correctness of the GPU paths is checked separately against transformers, not with this
 fixture (random weights make argmax ties): the tiny GLM oracle (`make_glm_oracle.py`) is
 32/32 teacher-forced and 20/20 greedy on CPU, with dense tensors on the GPU, with routed
-experts pinned in VRAM (`routed CPU 0 rows`), and with `COLI_CUDA_PIPE=2`.
+experts pinned in VRAM (`routed CPU 0 rows`), and with `LMA_CUDA_PIPE=2`.
 `make cuda-test` (nvcc + MSVC, real GPU) passes: q8/q4/q2/f32/e8 matmul, ragged attention
 (rms 0), fp8 warp kernels (rel. RMS 3.5e-7, 0 mismatches), absorb determinism, upload
 rollback, fmt trap.
@@ -103,13 +103,13 @@ rollback, fmt trap.
 # CPU engines and unit tests
 make -C c check          # or: make -C c test-c   (about 165 gates on Windows since the test discovery fix)
 # OLMoE baseline
-python c/tools/convert_gguf_to_olmoe.py --input olmoe-1b-7b-0924-instruct-q4_k_m.gguf --output olmoe-colibri
-python c/coli serve --model olmoe-colibri --port 8123 --model-id olmoe
+python c/tools/convert_gguf_to_olmoe.py --input olmoe-1b-7b-0924-instruct-q4_k_m.gguf --output olmoe-lmatomic
+python c/lmatomic serve --model olmoe-lmatomic --port 8123 --model-id olmoe
 python c/tools/benchmark_http_serving.py ...   # as above
 # GPU (from an x64 Native Tools prompt with CUDA on PATH)
-make -C c colibri.exe CUDA_DLL=1 && make -C c cuda-dll && make -C c cuda-test
+make -C c glm52.exe CUDA_DLL=1 && make -C c cuda-dll && make -C c cuda-test
 python c/tools/make_glm_bench_model.py --output glm_bench_medium --device cpu
-python c/tools/benchmark_cuda_fixture.py --model glm_bench_medium --engine ./colibri.exe --gpu 0
+python c/tools/benchmark_cuda_fixture.py --model glm_bench_medium --engine ./glm52.exe --gpu 0
 ```
 
 ## Limits of this baseline

@@ -6,19 +6,19 @@
 # every sample; judge by the median, not the best.
 #
 # Usage:  SNAP=/path/to/model [REPS=3] [PIPE=2] tools/bench_ux.sh [engine-binary]
-# The engine env (COLI_CUDA, PIN, ...) is inherited from the caller so the same
+# The engine env (LMA_CUDA, PIN, ...) is inherited from the caller so the same
 # script exercises CPU-only, CUDA and pipeline configurations.
 #
 # Discipline (docs/experiments/glm52-6x5090-2026-07-12.md):
 #   - TEMP=0 DRAFT=0 always: greedy, no speculation, one variable at a time.
 #   - Same binary for every configuration under comparison.
-#   - .coli_usage drifts placement between runs: compare medians of >=3 reps,
+#   - .lma_usage drifts placement between runs: compare medians of >=3 reps,
 #     or snapshot/restore the usage file around the battery.
 set -u
 GLM="${1:-./glm}"
 REPS="${REPS:-3}"
 export TEMP=0 DRAFT=0
-[ -n "${PIPE:-}" ] && export COLI_CUDA_PIPE="$PIPE"
+[ -n "${PIPE:-}" ] && export LMA_CUDA_PIPE="$PIPE"
 
 SHORT_PROMPT="Explain why the sky is blue in simple terms."
 LONGDOC_PROMPT=$(python3 - <<'PY'
@@ -45,7 +45,7 @@ scenario(){ # name prompt ngen
   done
 }
 
-echo "== bench_ux: reps=$REPS pipe=${COLI_CUDA_PIPE:-unset} $(date +%F' '%T) =="
+echo "== bench_ux: reps=$REPS pipe=${LMA_CUDA_PIPE:-unset} $(date +%F' '%T) =="
 scenario chat     "$SHORT_PROMPT"   96
 scenario longdoc  "$LONGDOC_PROMPT" 96
 echo "== bench_ux done $(date +%T) =="

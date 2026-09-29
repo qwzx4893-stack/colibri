@@ -1,5 +1,5 @@
 {
-  description = "colibrì — run large MoE models (GLM-5.2, OLMoE, DeepSeek V4 Flash) on a consumer machine";
+  description = "LM Atomic — run large MoE models (GLM-5.2, OLMoE, DeepSeek V4 Flash) on a consumer machine";
 
   # flake.lock (committed) pins these branch inputs to exact commit SHAs,
   # so builds are reproducible; refresh with `nix flake update`.
@@ -33,7 +33,7 @@
         isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 
         # Real version from the engine's single source of truth (c/version.py).
-        colibriVersion = let
+        lmatomicVersion = let
           m = builtins.match ''.*__version__ = "([^"]+)".*'' (builtins.readFile ./c/version.py);
         in
           if m == null
@@ -42,8 +42,8 @@
 
         # Apple clang has no OpenMP runtime and the Makefile only finds libomp via
         # `brew`, absent here; expose omp.h + libomp as OMPDIR or macOS goes single-threaded.
-        colibriOmp = pkgs.symlinkJoin {
-          name = "colibri-openmp";
+        lmatomicOmp = pkgs.symlinkJoin {
+          name = "lmatomic-openmp";
           paths = [pkgs.llvmPackages.openmp pkgs.llvmPackages.openmp.dev];
         };
 
@@ -60,11 +60,11 @@
         # Metal backend — Apple clang provides neither on its own.
         buildArgs =
           "ARCH=${archBaseline}"
-          + pkgs.lib.optionalString isDarwin " OMPDIR=${colibriOmp} METAL=1";
+          + pkgs.lib.optionalString isDarwin " OMPDIR=${lmatomicOmp} METAL=1";
 
-        colibri = pkgs.stdenv.mkDerivation {
-          pname = "colibri";
-          version = colibriVersion;
+        lmatomic = pkgs.stdenv.mkDerivation {
+          pname = "lmatomic";
+          version = lmatomicVersion;
           src = ./.;
 
           nativeBuildInputs = with pkgs; [makeWrapper];
@@ -83,48 +83,48 @@
           buildPhase = ''
             runHook preBuild
             # `make install` builds and stages every engine it produces —
-            # colibri (GLM), olmoe, and deepseek_v4 where COLI_V4_SUPPORTED —
-            # beside coli under $out/lib/colibri so coli's HERE-relative
+            # lmatomic (GLM), olmoe, and deepseek_v4 where LMA_V4_SUPPORTED —
+            # beside lmatomic under $out/lib/lmatomic so lmatomic's HERE-relative
             # engine_for() finds each. inkling/kimi_k3 aren't in `install` yet.
             make -C c install ${buildArgs} \
-              DESTDIR=$out PREFIX= BINDIR=/bin LIBEXECDIR=/lib/colibri
+              DESTDIR=$out PREFIX= BINDIR=/bin LIBEXECDIR=/lib/lmatomic
             runHook postBuild
           '';
 
           installPhase = ''
             runHook preInstall
 
-            # `make install` handled the engines, coli and the support
+            # `make install` handled the engines, lmatomic and the support
             # modules; two fixups remain:
 
             # 1. `make install`'s file lists miss two things packaged Python
             #    needs: v4_dsml.py (openai_server.py imports it unconditionally,
-            #    so `coli serve` / `coli web` would ModuleNotFoundError) and
-            #    tools/iq3xxs_grid.json (iq3_pack.py loads it for `coli convert
+            #    so `lmatomic serve` / `lmatomic web` would ModuleNotFoundError) and
+            #    tools/iq3xxs_grid.json (iq3_pack.py loads it for `lmatomic convert
             #    --xbits e8`, with no fallback). Back them in — each guard
             #    defers to a future `make install` that stages them itself.
-            [ -e "$out/lib/colibri/v4_dsml.py" ] || \
-              install -m 644 c/v4_dsml.py "$out/lib/colibri/"
-            [ -e "$out/lib/colibri/v41_dsml.py" ] || \
-              install -m 644 c/v41_dsml.py "$out/lib/colibri/"
-            [ -e "$out/lib/colibri/tools/iq3xxs_grid.json" ] || \
-              install -m 644 c/tools/iq3xxs_grid.json "$out/lib/colibri/tools/"
+            [ -e "$out/lib/lmatomic/v4_dsml.py" ] || \
+              install -m 644 c/v4_dsml.py "$out/lib/lmatomic/"
+            [ -e "$out/lib/lmatomic/v41_dsml.py" ] || \
+              install -m 644 c/v41_dsml.py "$out/lib/lmatomic/"
+            [ -e "$out/lib/lmatomic/tools/iq3xxs_grid.json" ] || \
+              install -m 644 c/tools/iq3xxs_grid.json "$out/lib/lmatomic/tools/"
 
-            # 2. coli dispatches relative to its own dir, so it must sit beside
-            #    the engines; that also frees $out/bin/coli for the wrapper. The
-            #    engine is re-exposed as $out/bin/colibri for `nix run .#engine`.
-            mv $out/bin/coli $out/lib/colibri/coli
-            ln -s ../lib/colibri/colibri $out/bin/colibri
+            # 2. lmatomic dispatches relative to its own dir, so it must sit beside
+            #    the engines; that also frees $out/bin/lmatomic for the wrapper. The
+            #    GLM engine binary is re-exposed as $out/bin/glm52 for `nix run .#engine`.
+            mv $out/bin/lmatomic $out/lib/lmatomic/lmatomic
+            ln -s ../lib/lmatomic/glm52 $out/bin/glm52
 
-            # Wrap coli through pythonEnv. COLI_ENGINE is deliberately NOT set:
-            # c/coli's engine_for() routes EVERY model to GLM whenever
-            # COLI_ENGINE is present, defeating per-model dispatch. Left unset,
-            # coli resolves each engine beside itself (colibri / olmoe /
-            # deepseek_v4 under $out/lib/colibri). PYTHONPATH makes `import
+            # Wrap lmatomic through pythonEnv. LMA_ENGINE is deliberately NOT set:
+            # c/lmatomic's engine_for() routes EVERY model to GLM whenever
+            # LMA_ENGINE is present, defeating per-model dispatch. Left unset,
+            # lmatomic resolves each engine beside itself (lmatomic / olmoe /
+            # deepseek_v4 under $out/lib/lmatomic). PYTHONPATH makes `import
             # openai_server` / `resource_plan` / `doctor` / `v4_dsml` resolve.
-            makeWrapper ${pythonEnv}/bin/python $out/bin/coli \
-              --add-flags "$out/lib/colibri/coli" \
-              --set PYTHONPATH "$out/lib/colibri:${pythonEnv}/${pkgs.python3.sitePackages}"
+            makeWrapper ${pythonEnv}/bin/python $out/bin/lmatomic \
+              --add-flags "$out/lib/lmatomic/lmatomic" \
+              --set PYTHONPATH "$out/lib/lmatomic:${pythonEnv}/${pkgs.python3.sitePackages}"
             runHook postInstall
           '';
 
@@ -134,20 +134,20 @@
 
           # Offline verification that the multi-engine layout is correct: the
           # engines reached $out, the backfilled convert data asset is present,
-          # the wrapper starts (`coli --version` argparse-exits before any model
+          # the wrapper starts (`lmatomic --version` argparse-exits before any model
           # load), and the serve import surface (openai_server -> v4_dsml)
-          # resolves. Not versionCheckHook: coli's version string is
+          # resolves. Not versionCheckHook: lmatomic's version string is
           # unrelated to this derivation's `version`.
           doInstallCheck = true;
           installCheckPhase = ''
             runHook preInstallCheck
             # An install check must not mutate $out; block the .pyc these imports write.
             export PYTHONDONTWRITEBYTECODE=1
-            test -x $out/lib/colibri/colibri
-            test -x $out/lib/colibri/olmoe
-            test -f $out/lib/colibri/tools/iq3xxs_grid.json
-            $out/bin/coli --version
-            PYTHONPATH=$out/lib/colibri ${pythonEnv}/bin/python -c 'import openai_server'
+            test -x $out/lib/lmatomic/lmatomic
+            test -x $out/lib/lmatomic/olmoe
+            test -f $out/lib/lmatomic/tools/iq3xxs_grid.json
+            $out/bin/lmatomic --version
+            PYTHONPATH=$out/lib/lmatomic ${pythonEnv}/bin/python -c 'import openai_server'
             runHook postInstallCheck
           '';
 
@@ -156,33 +156,33 @@
             homepage = "https://github.com/JustVugg/colibri";
             license = licenses.asl20;
             platforms = with platforms; linux ++ darwin;
-            mainProgram = "coli";
+            mainProgram = "lmatomic";
           };
         };
       in {
         packages = {
-          default = colibri;
-          inherit colibri;
+          default = lmatomic;
+          inherit lmatomic;
         };
 
         apps = {
           default = {
             type = "app";
-            program = pkgs.lib.getExe colibri;
+            program = pkgs.lib.getExe lmatomic;
           };
           # `nix run .#engine` runs the engine binary directly, skipping the
-          # coli launcher. Named "engine", not "colibri", so it doesn't shadow
-          # packages.colibri (whose mainProgram is coli).
+          # lmatomic launcher. Named "engine", not "lmatomic", so it doesn't shadow
+          # packages.lmatomic (whose mainProgram is lmatomic).
           engine = {
             type = "app";
-            program = "${colibri}/bin/colibri";
+            program = "${lmatomic}/bin/glm52";
           };
         };
 
         formatter = pkgs.alejandra;
 
         devShells.default = pkgs.mkShell {
-          inputsFrom = [colibri];
+          inputsFrom = [lmatomic];
 
           packages = with pkgs; [
             pythonEnv
@@ -193,13 +193,13 @@
           ];
 
           shellHook = ''
-            echo "🐦 colibrì dev shell"
+            echo "🐦 LM Atomic dev shell"
             echo "  gcc: $(gcc --version | head -1)"
             echo "  python: $(python3 --version)"
             echo ""
-            echo "Build the engine:   make -C c colibri"
-            echo "Run the converter:  python c/coli convert --model /path/to/glm52_i4"
-            echo "Chat:               COLI_MODEL=/path/to/glm52_i4 ./c/colibri ..."
+            echo "Build the engine:   make -C c glm52"
+            echo "Run the converter:  python c/lmatomic convert --model /path/to/glm52_i4"
+            echo "Chat:               LMA_MODEL=/path/to/glm52_i4 ./c/glm52 ..."
           '';
         };
       }

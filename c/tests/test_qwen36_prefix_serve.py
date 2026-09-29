@@ -39,7 +39,7 @@ class Qwen36PrefixServeTest(PrefixReuseContract, unittest.TestCase):
 
     def spawn(self, log_prefix=True, reuse=True):
         return ServeEngine(ENGINE, ["8", "8"],
-                           {"SNAP": str(FIXTURE), "SERVE": "1", "COLI_DENSE_I8": "0"},
+                           {"SNAP": str(FIXTURE), "SERVE": "1", "LMA_DENSE_I8": "0"},
                            log_prefix=log_prefix, reuse=reuse)
 
 

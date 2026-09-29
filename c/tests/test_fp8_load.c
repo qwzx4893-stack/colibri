@@ -4,11 +4,11 @@
  * development of this branch, before dev's own #465 (E8/IQ3) claimed that
  * ordinal upstream and merged it into dev as a REAL fmt=6 (see quant.h's E8
  * constants and e8_ helper functions, and qt_resolve_fmt's ns==4-tag early
- * check); re-tagged fmt=100 (PRIVATE ORDINAL BLOCK, see colibri.c's QT struct
+ * check); re-tagged fmt=100 (PRIVATE ORDINAL BLOCK, see glm52.c's QT struct
  * comment) from that point forward -- there was never a build in this branch's
  * history where this format was reachable as fmt=6 -- graduated to fmt=7 when
  * the maintainer assigned that ordinal on #524, and renumbered to fmt=8 after
- * #705 merged claiming 7 for MXFP4 (see colibri.c's QT comment).
+ * #705 merged claiming 7 for MXFP4 (see glm52.c's QT comment).
  *
  * Part A: qt_resolve_fmt disambiguation suite -- THE DESIGN LANDMINE. fmt=8
  * weight bytes are byte-identical to fmt=1 (int8): both are O*I raw bytes.
@@ -63,7 +63,7 @@
  * check_wire_split() but fails test_wire_site_regression() (proven by
  * actually running that exact mutation -- see the report).
  *
- * Part D: metadata-stamp TRUST-VERIFY-REFUSE (qt_verify_fmt_stamp, colibri.c)
+ * Part D: metadata-stamp TRUST-VERIFY-REFUSE (qt_verify_fmt_stamp, glm52.c)
  * and stamp-RESOLVES-ambiguity (qt_resolve_fmt's `stamped_name` parameter) --
  * this PR (registry + metadata stamp) makes the stamp load-bearing: Parts A
  * and A2's collision cases gain stamped variants below (a stamp naming
@@ -104,8 +104,8 @@
 #define mlock test_mlock_seam
 #define munlock test_munlock_seam
 #endif
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 #ifndef _WIN32
 #undef mlock
@@ -573,7 +573,7 @@ static void check_fp8_bytes(int O, int I, const char *tag){
     if(!(O==1 && I==1)) CHECK(got_total != old_wrong);
 }
 
-/* qt_wire_mmap()/qt_unwire_mmap() (colibri.c) both compute weight_b/scale_b via
+/* qt_wire_mmap()/qt_unwire_mmap() (glm52.c) both compute weight_b/scale_b via
  * qt_wire_split(t,&weight_b,&scale_b) -- this calls that EXACT shared function
  * directly (no mlock syscall: same reasoning as check_fp8_bytes above, mem_wire's
  * actual RLIMIT_MEMLOCK behavior is environment-dependent and not what changed)
@@ -724,8 +724,8 @@ static void test_wire_site_regression(void){
  * The two fused-decode gates (attention_rows / layer_forward_rows) are only
  * reachable at model scale (GLM-5.2 dims + a live Metal context), so the
  * honest toy-scale decomposition is: (1) unit-test the predicate's truth
- * table -- metal_fused_fmt_ok is defined unconditionally in colibri.c for
- * exactly this reason -- and (2) pin, by reading colibri.c's own source,
+ * table -- metal_fused_fmt_ok is defined unconditionally in glm52.c for
+ * exactly this reason -- and (2) pin, by reading glm52.c's own source,
  * that BOTH gate sites actually consult the predicate on every fused-path
  * tensor and that the old fail-open `l-><t>.fmt!=8` idiom is gone. The pin
  * is a source-text assertion, disclosed as such: it proves wiring, not
@@ -753,8 +753,8 @@ static void test_metal_fused_allowlist(void){
      * two-format+mode term there, not the allowlist), and BOTH gate sites
      * consult the helper against the mask of tensors their kernel binds.
      * (test_kvb_notice.c pins the helper's own truth table.) */
-    FILE *f = fopen("colibri.c", "r");
-    if(!f){ printf("FAIL Part F grep-pin: cannot open colibri.c (cwd not c/?)\n"); CHECK(0); return; }
+    FILE *f = fopen("glm52.c", "r");
+    if(!f){ printf("FAIL Part F grep-pin: cannot open glm52.c (cwd not c/?)\n"); CHECK(0); return; }
     static char src[16*1024*1024];
     size_t n = fread(src, 1, sizeof(src)-1, f); src[n]=0; fclose(f);
     CHECK(n > 100000);                      /* sanity: we read the real file */
@@ -873,8 +873,8 @@ static void test_fmt7_unreachable_sweep(void){
 #endif
 }
 
-/* ---- Part D: metadata-stamp TRUST-VERIFY-REFUSE (qt_verify_fmt_stamp, colibri.c) ----
- * The stamp lives in the safetensors __metadata__["colibri.fmt"] value -- itself
+/* ---- Part D: metadata-stamp TRUST-VERIFY-REFUSE (qt_verify_fmt_stamp, glm52.c) ----
+ * The stamp lives in the safetensors __metadata__["lma.fmt"] value -- itself
  * JSON text (a {tensor_name: format_name} map, matching what
  * tools/repack_fp8_passthrough.py writes and st_fmt_stamp_ingest (st.h) parses).
  * Three outcomes: an AGREEING stamp is a silent no-op (loads exactly as it would
@@ -888,9 +888,9 @@ static void test_fmt7_unreachable_sweep(void){
 /* Writes a single-tensor fp8 shard (O=8,I=256 -> nblkO=1,nblkI=2, the same
  * non-degenerate shape Part B's w7 fixture uses) with an OPTIONAL __metadata__
  * block. `meta_json_string_literal`, if non-NULL, must already be a quoted/
- * escaped JSON STRING TOKEN placed verbatim after "colibri.fmt": in the header
+ * escaped JSON STRING TOKEN placed verbatim after "lma.fmt": in the header
  * -- callers pass a C string literal like "\"{\\\"w\\\":\\\"fp8-e4m3-b128\\\"}\""
- * so the raw header bytes end up with colibri.fmt's VALUE being the JSON text
+ * so the raw header bytes end up with lma.fmt's VALUE being the JSON text
  * {"w":"fp8-e4m3-b128"} (double-JSON-encoded: a JSON string whose CONTENT is
  * itself JSON -- exactly what safetensors.save_file(metadata=...) produces,
  * since __metadata__ values must be plain strings). */
@@ -910,7 +910,7 @@ static void write_stamp_fixture(const char *dir, const char *meta_json_string_li
     char hdr[2048]; int hl;
     if(meta_json_string_literal)
         hl=snprintf(hdr,sizeof hdr,
-            "{\"__metadata__\":{\"colibri.fmt\":%s},"
+            "{\"__metadata__\":{\"lma.fmt\":%s},"
             "\"w\":{\"dtype\":\"U8\",\"shape\":[%lld],\"data_offsets\":[0,%lld]},"
             "\"w.qs\":{\"dtype\":\"F32\",\"shape\":[%lld],\"data_offsets\":[%lld,%lld]}}",
             meta_json_string_literal,
@@ -1019,13 +1019,13 @@ static void test_stamp_absent(void){
 
 /* Shard 1 = write_stamp_fixture's single-tensor fp8 shard ("w" + "w.qs"),
  * renamed into a two-shard layout; shard 2 = one tiny aux f32 tensor of its
- * own plus a colibri.fmt map stamping "w". */
+ * own plus a lma.fmt map stamping "w". */
 static void write_second_stamp_shard(const char *dir, const char *meta_json_string_literal){
     char path[300]; snprintf(path,sizeof path,"%s/model-extra.safetensors",dir);
     static float aux[4] = {1.f,2.f,3.f,4.f};
     char hdr[1024]; int hl;
     hl=snprintf(hdr,sizeof hdr,
-        "{\"__metadata__\":{\"colibri.fmt\":%s},"
+        "{\"__metadata__\":{\"lma.fmt\":%s},"
         "\"aux\":{\"dtype\":\"F32\",\"shape\":[4],\"data_offsets\":[0,16]}}",
         meta_json_string_literal);
     FILE *f=fopen(path,"wb");
@@ -1101,7 +1101,7 @@ static void test_stamp_agreeing_duplicate(void){
  * st_init_multi's header-parse loop, at CONTAINER DISCOVERY time, before any
  * tensor is resolved against the model, see st_fmt_stamp_ingest's own
  * "DISCOVERY-TIME ABORT SURFACE" comment) carrying an oversized
- * __metadata__["colibri.fmt"] blob of N distinct, entirely fictitious tensor
+ * __metadata__["lma.fmt"] blob of N distinct, entirely fictitious tensor
  * names -- st_fmt_stamp_ingest parses that blob independently of the
  * shard's real tensor list, so the names never need to correspond to
  * anything real for the cap to trigger. Tests BOTH sides of the boundary:
@@ -1121,7 +1121,7 @@ static void write_stamp_cap_fixture(const char *dir, int n_entries){
     inner[p++]='}'; inner[p]=0;
 
     /* JSON-escape `inner` into a quoted string literal for the OUTER header's
-     * colibri.fmt VALUE (double-JSON-encoding, same shape write_stamp_fixture's
+     * lma.fmt VALUE (double-JSON-encoding, same shape write_stamp_fixture's
      * callers hand-escape for small fixtures -- built programmatically here
      * since n_entries is too many to hand-escape). */
     char *esc = malloc(p*2 + 4);
@@ -1141,7 +1141,7 @@ static void write_stamp_cap_fixture(const char *dir, int n_entries){
     int64_t nb=(int64_t)O*I, ns=(int64_t)O*4;
     char *hdr = malloc(q + 512);
     int hl = snprintf(hdr, q+512,
-        "{\"__metadata__\":{\"colibri.fmt\":%s},"
+        "{\"__metadata__\":{\"lma.fmt\":%s},"
         "\"w\":{\"dtype\":\"U8\",\"shape\":[%lld],\"data_offsets\":[0,%lld]},"
         "\"w.qs\":{\"dtype\":\"F32\",\"shape\":[%lld],\"data_offsets\":[%lld,%lld]}}",
         esc,

@@ -18,8 +18,8 @@
 // Deliberately Linux-only: Windows builds use MSVC cl.exe, which never sees
 // glibc headers.
 
-#ifndef COLI_GLIBC_C23_MATH_COMPAT_H
-#define COLI_GLIBC_C23_MATH_COMPAT_H
+#ifndef LMA_GLIBC_C23_MATH_COMPAT_H
+#define LMA_GLIBC_C23_MATH_COMPAT_H
 
 #if defined(__cplusplus) && defined(__linux__)
 #include <features.h> /* defines __GLIBC__ on glibc; musl ships one too */
@@ -29,4 +29,4 @@
 #endif
 #endif /* __cplusplus && __linux__ */
 
-#endif /* COLI_GLIBC_C23_MATH_COMPAT_H */
+#endif /* LMA_GLIBC_C23_MATH_COMPAT_H */

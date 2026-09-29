@@ -1,7 +1,7 @@
 /* Qwen3.8 tokenizer NFC normalization.  The generated data lives in
  * qwen38_nfc_tables.h; this file owns the small normalization algorithm. */
-#ifndef COLI_QWEN38_NFC_H
-#define COLI_QWEN38_NFC_H
+#ifndef LMA_QWEN38_NFC_H
+#define LMA_QWEN38_NFC_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -241,4 +241,4 @@ fail:
     return -1;
 }
 
-#endif /* COLI_QWEN38_NFC_H */
+#endif /* LMA_QWEN38_NFC_H */

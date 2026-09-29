@@ -1,4 +1,4 @@
-/* fse_coli.h — entropy coder di casa per il container colibrì (LOCALE, non pushato).
+/* fse_lma.h — entropy coder di casa per il container LM Atomic (LOCALE, non pushato).
  *
  * COSA: rANS statico ordine-0 sui NIBBLE (16 simboli), 2 stati interleaved,
  * frequenze normalizzate a 4096 (12 bit), rinormalizzazione a byte.
@@ -22,8 +22,8 @@
  *          mode1: freq[16] u16LE | xA u32LE | xB u32LE | payload
  *          (l'encoder scrive il payload ALL'INDIETRO: il decoder legge in avanti)
  */
-#ifndef FSE_COLI_H
-#define FSE_COLI_H
+#ifndef FSE_LMA_H
+#define FSE_LMA_H
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>

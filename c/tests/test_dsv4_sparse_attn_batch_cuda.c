@@ -1,7 +1,7 @@
 /* Validates dsv4_cuda_sparse_attn_batch and dsv4_cuda_matmul_bf16_batch
- * against inline CPU references that mirror coli_v4_sparse_attention_ref and
+ * against inline CPU references that mirror lma_v4_sparse_attention_ref and
  * the compressor's bf16 projection loop. Build with cl against
- * coli_cuda_dsv4_dg.lib. */
+ * lma_cuda_dsv4_dg.lib. */
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -33,7 +33,7 @@ static float frand(unsigned *seed) {
 }
 
 /* CPU reference: same contract as the GPU kernel (window range + compressed
- * prefix over a linear slab), same math as coli_v4_sparse_attention_ref. */
+ * prefix over a linear slab), same math as lma_v4_sparse_attention_ref. */
 static void ref_token(float *out, const float *q, const float *vals,
                       const float *sinks, int wo, int wn, int cn,
                       int comp_base, int heads, int dim, float scale) {

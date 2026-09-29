@@ -2,7 +2,7 @@
 """Synthesize tokenizer.json for Kimi K3 from the repo's tiktoken.model.
 
 The K3 HF repo ships only a raw tiktoken BPE (base64 token -> rank) plus
-tokenization_kimi.py; the colibri-family engines load HuggingFace
+tokenization_kimi.py; the lmatomic-family engines load HuggingFace
 tokenizer.json (tok.h). This tool writes one:
 
   - vocab: every tiktoken byte sequence mapped through the GPT-2 byte-level
@@ -164,7 +164,7 @@ def main():
         # this fails wherever /tmp does not already exist. A fixed FILENAME
         # is also a collision between two concurrent runs, and nothing here
         # ever deleted it.
-        fd, cases = tempfile.mkstemp(prefix=".colibri-k3-cases-", suffix=".bin",
+        fd, cases = tempfile.mkstemp(prefix=".lmatomic-k3-cases-", suffix=".bin",
                                      dir=os.path.dirname(os.path.abspath(out)))
         os.close(fd)
         try:

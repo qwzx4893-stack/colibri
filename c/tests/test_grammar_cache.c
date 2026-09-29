@@ -4,7 +4,7 @@
  * the IDENTICAL schema/grammar text: it keeps an owned copy in GrDraft.src and,
  * on a match, does grammar_reset() instead of grammar_teardown()+setup. That is
  * only correct if two claims hold, which this test pins on the REAL functions
- * (via the include-colibri.c pattern):
+ * (via the include-glm52.c pattern):
  *
  *   (1) EQUIVALENCE: grammar_reset() on an already-compiled grammar yields the
  *       exact same walker behaviour as a fresh grammar_setup_text() of the same
@@ -12,8 +12,8 @@
  *   (2) OWNERSHIP: the GrDraft.src lifecycle (set on compile, freed on teardown)
  *       never leaks or double-frees across the miss/hit/fail/no-grammar paths.
  */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #define CHECK(cond) do { if(!(cond)){ \

@@ -22,7 +22,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
 ENGINE = HERE / ("olmoe.exe" if os.name == "nt" else "olmoe")
-FIXTURE = Path(os.environ.get("COLI_OLMOE_FIXTURE", ""))
+FIXTURE = Path(os.environ.get("LMA_OLMOE_FIXTURE", ""))
 CACHE_LINE = re.compile(r"^\[cache\] (\d+) slots/layer of (\d+) experts", re.M)
 
 
@@ -42,7 +42,7 @@ def derived_cap(ram_gb=None, cap="0"):
 
 @unittest.skipUnless(ENGINE.exists(), "olmoe engine is not built")
 @unittest.skipUnless(FIXTURE.name and (FIXTURE / "config.json").is_file(),
-                     "COLI_OLMOE_FIXTURE not set to a converted OLMoE container")
+                     "LMA_OLMOE_FIXTURE not set to a converted OLMoE container")
 class OlmoeCapBudgetTest(unittest.TestCase):
     def test_an_explicit_cap_is_never_second_guessed(self):
         cap, _ = derived_cap(ram_gb=64, cap="4")

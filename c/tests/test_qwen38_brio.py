@@ -23,7 +23,7 @@ class Engine:
     def __init__(self):
         env = dict(os.environ, SNAP=str(FIXTURE), SERVE='1',
                    TOK=str(FIXTURE / 'tokenizer.json'), OMP_NUM_THREADS='2',
-                   COLI_NO_OMP_TUNE='1', COLI_CUDA='0', Q38_TRUNK_GPU='0',
+                   LMA_NO_OMP_TUNE='1', LMA_CUDA='0', Q38_TRUNK_GPU='0',
                    Q38_MAXT='128')
         self.p = subprocess.Popen([str(ENGINE), '1', '8'], env=env,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,

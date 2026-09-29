@@ -1,8 +1,8 @@
 """tools/pack_python.py's needed() must compute the complete, real set of
-files a release archive has to contain: every file coli reaches, by any of
+files a release archive has to contain: every file lmatomic reaches, by any of
 the three kinds of edge, and everything those files reach in turn.
 
-  - import, followed to closure from `coli`
+  - import, followed to closure from `lmatomic`
   - subprocess, matched on the `os.path.join(TOOLS, "<script>.py")` call
     shape -- and the script is then walked like any other reached file, so
     what IT imports is followed too
@@ -29,7 +29,7 @@ before writing this module):
   module and carries a suffix from `DATA_SUFFIXES`; a plain name only, so
   a path or a name nothing matches yields nothing, and a source file
   merely mentioned in a message is not mistaken for data.
-- `needed`: the import closure starting from `coli`; a script reached by
+- `needed`: the import closure starting from `lmatomic`; a script reached by
   subprocess is itself added to the queue so its own imports are
   followed to the same closure, not merely added as a leaf; data files
   are collected along the same walk as leaves; a script invoked but
@@ -70,12 +70,12 @@ class PackPythonNeededTests(unittest.TestCase):
         cls.real_tree_paths = PACK.needed(HERE.parent)
 
     def make_tree(self, root):
-        """A minimal coli-shaped tree: coli imports `foo` and invokes
+        """A minimal lmatomic-shaped tree: lmatomic imports `foo` and invokes
         tools/bar.py as a subprocess; bar.py itself imports tools/baz.py,
-        a module coli never mentions by name anywhere."""
+        a module lmatomic never mentions by name anywhere."""
         root = pathlib.Path(root)
         (root / "tools").mkdir()
-        (root / "coli").write_text(
+        (root / "lmatomic").write_text(
             "import os\n"
             "import foo\n"
             "TOOLS = os.path.join(os.path.dirname(__file__), 'tools')\n"
@@ -104,7 +104,7 @@ class PackPythonNeededTests(unittest.TestCase):
         # the identical fixture, and confirm baz.py is silently dropped.
         def needed_without_recursion(src):
             local = PACK.local_modules(src)
-            reached, queue = set(), [src / "coli"]
+            reached, queue = set(), [src / "lmatomic"]
             scripts = set()
             while queue:
                 path = queue.pop()
@@ -118,7 +118,7 @@ class PackPythonNeededTests(unittest.TestCase):
                 candidate = src / "tools" / script
                 if not candidate.exists():
                     raise SystemExit(
-                        f"FAIL: coli invokes tools/{script}, which does not exist")
+                        f"FAIL: lmatomic invokes tools/{script}, which does not exist")
                 paths.add(candidate)
             return sorted(paths)
 
@@ -165,7 +165,7 @@ class PackPythonNeededTests(unittest.TestCase):
         future tool import the fixtures cannot see is still caught here.
 
         It asserts the two files #1359 was actually about, rather than a name
-        invented for the test: coli launches tools/convert_fp8_to_int4.py as a
+        invented for the test: lmatomic launches tools/convert_fp8_to_int4.py as a
         subprocess, that script imports iq3_pack inside quant_e8(), and
         iq3_pack opens iq3xxs_grid.json next to itself. Both were absent from
         every published archive. Assert the real pair and the test dies with
@@ -178,7 +178,7 @@ class PackPythonNeededTests(unittest.TestCase):
 
     def test_engine_evidence_is_needed_by_the_real_tree(self):
         """This branch's own new tool, asserted the same way and for the same
-        reason: eval_glm.py is launched by coli as a subprocess and imports
+        reason: eval_glm.py is launched by lmatomic as a subprocess and imports
         engine_evidence, so the module is reachable only across the boundary
         this suite exists to defend. It is a second real-tree case rather than
         a replacement for the one above -- that one pins the historical bug,
@@ -195,7 +195,7 @@ class PackPythonDataFileTests(unittest.TestCase):
     def make_tree(self, root, data_name="grid.json"):
         root = pathlib.Path(root)
         (root / "tools").mkdir()
-        (root / "coli").write_text(
+        (root / "lmatomic").write_text(
             "import os\nimport reader\n"
             "TOOLS = os.path.join(os.path.dirname(__file__), 'tools')\n")
         (root / "reader.py").write_text(
@@ -230,7 +230,7 @@ class PackPythonDataFileTests(unittest.TestCase):
         self.assertNotIn("grid.json", names)
 
     def test_a_source_file_named_in_a_message_is_not_packaged(self):
-        """The allowlist earns its keep here. coli names colibri.c and
+        """The allowlist earns its keep here. lmatomic names glm52.c and
         family_registry.py names five engine sources, none of which belong in
         a release archive; a rule of "any existing sibling that is not .py"
         would have shipped all of them."""
@@ -264,7 +264,7 @@ class PackPythonDataFileTests(unittest.TestCase):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 PACK.main(["pack_python.py", str(root), str(dist)])
-        # coli is the walk's root and is copied by the workflow, not by
+        # lmatomic is the walk's root and is copied by the workflow, not by
         # needed(), so the fixture's one packaged module is reader.py.
         self.assertIn("1 Python files and 1 data files", buf.getvalue())
 

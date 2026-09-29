@@ -1,7 +1,7 @@
-# Inkling (Thinking Machines 975B MoE) on colibri
+# Inkling (Thinking Machines 975B MoE) on LM Atomic
 
 `c/inkling.c` runs [Thinking Machines Inkling](https://huggingface.co/thinkingmachines/Inkling)
-(975B total / 41B active, Apache 2.0) with colibri's expert-streaming approach:
+(975B total / 41B active, Apache 2.0) with LM Atomic's expert-streaming approach:
 dense weights resident (RAM or VRAM), routed experts streamed from disk with an
 LRU + pinned cache. Audio input is supported when the audio tensors are present
 (see [Audio input](#audio-input-dmel) below); the vision encoder and the MTP
@@ -89,7 +89,7 @@ help in proportion to the RAM you can give them.
 | `--audio file.dmel [-p "text"]` | spoken input: raw u8 DMel frames `[n_frames, 80]`, one `<\|audio\|>` position per frame (implies `--chat`) |
 | `[cap] [bits] [ref.json]` | token-exact oracle harness against a `tools/make_tiny_inkling.py` fixture (CI-style validation; `tools/make_tiny_inkling_audio.py` for the audio path) |
 
-`coli chat` / `coli serve` / `coli web` render the same template through the
+`lmatomic chat` / `lmatomic serve` / `lmatomic web` render the same template through the
 gateway, so there is nothing to pass there.
 
 ## Audio input (DMel)
@@ -148,7 +148,7 @@ spoken turns.
 
 ```sh
 curl localhost:8000/v1/chat/completions -d '{
-  "model": "inkling-colibri",
+  "model": "inkling-lmatomic",
   "messages": [{"role": "user", "content": [
     {"type": "input_audio", "input_audio": {"data": "<base64 wav>", "format": "wav"}}
   ]}]
@@ -157,7 +157,7 @@ curl localhost:8000/v1/chat/completions -d '{
 
 ## Expert cache size
 
-`cap` (first positional argument, or `--cap` through `coli`) is how many experts each
+`cap` (first positional argument, or `--cap` through `lmatomic`) is how many experts each
 layer keeps in RAM. Each slot is ~28 MB on the 975B, so `cap × n_layers × 28 MB` has to
 fit next to the resident dense set — with the int4 dense container on a 25 GB host that
 means `cap` around 2.
@@ -170,10 +170,10 @@ current token, and the model computed with whatever landed in them. A prefill of
 tokens at `topk=6` needs up to 108 distinct experts per layer, so anything below that
 produced incoherent output with no error message.)
 
-## Cache warming (same idea as glm's `.coli_usage`)
+## Cache warming (same idea as glm's `.lma_usage`)
 
 Expert selections are counted per `(layer, expert)` and written to
-`SNAP/.coli_usage` after each generation run. On startup the top `PIN_N`
+`SNAP/.lma_usage` after each generation run. On startup the top `PIN_N`
 experts per layer are pinned (non-evictable, loaded in one parallel burst).
 Counts **accumulate across runs**, so the ranking converges toward your real
 workload — pins trained on a single prompt overfit badly (see the benchmark
@@ -192,7 +192,7 @@ SNAP=~/Models/inkling_i4 ./c/inkling -f warmup_prompts.txt -n 32
 | `NOGPU=1` / `GPU_DEV=<n>` | disable CUDA / select device |
 | `IDOT=0` | byte-exact scalar int kernels (debugging) |
 | `INK_SHARED_BATCH=0` | disable shared-expert prefill batching for a controlled A/B; positive values cap rows per chunk. The default uses up to 64 MiB of bounded scratch and never changes decode (`S=1`) |
-| `TOPP=<p>` | adaptive routing: keep routed experts up to cumulative weight `p`, drop the tail. **Trims the routing** — fewer experts read per token (the lever that matters on a disk-bound host), but a different computation from the declared top-k. Off by default; the run reports `[topp] … N/M routed used (X% trimmed)` so the trade is measurable. Same semantics as `TOPP` in `colibri.c` and `K3_TOPP` in `kimi_k3.c` |
+| `TOPP=<p>` | adaptive routing: keep routed experts up to cumulative weight `p`, drop the tail. **Trims the routing** — fewer experts read per token (the lever that matters on a disk-bound host), but a different computation from the declared top-k. Off by default; the run reports `[topp] … N/M routed used (X% trimmed)` so the trade is measurable. Same semantics as `TOPP` in `glm52.c` and `K3_TOPP` in `kimi_k3.c` |
 | First positional arg | expert-cache cap per layer (`0` = auto-size from free RAM) |
 
 ## Performance (975B, Ryzen 9 7900 / 24t, 187 GB DDR5, RTX A6000, NVMe)

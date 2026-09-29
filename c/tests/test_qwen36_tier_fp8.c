@@ -59,10 +59,10 @@ int main(void) {
         for (int i = 0; i < 3 * NSC; i++) scales[e][i] = 0.001f * (e + 1) + 0.0001f * i;
     }
     for (int i = 0; i < 256; i++) lut[i] = (float)i;
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", "0", 1);
     setenv("QT_NO_WARMSTART", "1", 1);
-    setenv("COLI_PLACE", "off", 1);
+    setenv("LMA_PLACE", "off", 1);
     setenv("HEAT_FILE", "", 1);
 
     /* ---- 1. the mode starts with cap < n_experts, publishes the LUT, sizes fmt 8 ---- */

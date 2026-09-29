@@ -1,25 +1,25 @@
 _Read the read me in [English](README.md)._
 
 
-# Guida a Colibrì - Motore di Inferenza Locale
+# Guida a LM Atomic - Motore di Inferenza Locale
 
-Una guida semplice per eseguire **Colibrì**, un motore di inferenza locale basato su GLM 5.2, senza conoscenze di programmazione. Se hai già Docker installato, sei a buon punto.
+Una guida semplice per eseguire **LM Atomic**, un motore di inferenza locale basato su GLM 5.2, senza conoscenze di programmazione. Se hai già Docker installato, sei a buon punto.
 
 ---
 
 ## 📋 Sommario
 
-- [Cosa è Colibrì?](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#cosa-%C3%A8-colibr%C3%AC)
+- [Cosa è LM Atomic?](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#cosa-%C3%A8-colibr%C3%AC)
 - [Cosa serve](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#cosa-serve)
     - [Hardware](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#hardware)
     - [Software](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#software)
 - [Come iniziare](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#come-iniziare)
     - [Passo 1: Scarica il modello](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#passo-1-scarica-il-modello)
-    - [Passo 2: Scarica il Dockerfile di Colibrì](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#passo-2-scarica-il-dockerfile-di-colibr%C3%AC)
+    - [Passo 2: Scarica il Dockerfile di LM Atomic](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#passo-2-scarica-il-dockerfile-di-colibr%C3%AC)
     - [Passo 3: Compila l'immagine Docker](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#passo-3-compila-limmagine-docker)
-    - [Passo 4: Avvia Colibrì](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#passo-4-avvia-colibr%C3%AC)
+    - [Passo 4: Avvia LM Atomic](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#passo-4-avvia-colibr%C3%AC)
     - [Cosa significa quel comando?](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#cosa-significa-quel-comando)
-    - [Usare Colibrì](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#usare-colibr%C3%AC)
+    - [Usare LM Atomic](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#usare-colibr%C3%AC)
 - [Entrare nel container](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#entrare-nel-container)
 - [Risoluzione dei problemi](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#risoluzione-dei-problemi)
 - [Note tecniche](https://github.com/JustVugg/colibri/blob/main/docker/README.IT.md#note-tecniche)
@@ -29,9 +29,9 @@ Una guida semplice per eseguire **Colibrì**, un motore di inferenza locale basa
 
 ---
 
-## Cosa è Colibrì?
+## Cosa è LM Atomic?
 
-Colibrì è un'applicazione che ti permette di eseguire un modello di intelligenza artificiale (GLM 5.2) direttamente sul tuo computer, senza connettersi a server esterni. È possbile anche farlo girare in Docker, che isola l'applicazione dal resto del sistema.
+LM Atomic è un'applicazione che ti permette di eseguire un modello di intelligenza artificiale (GLM 5.2) direttamente sul tuo computer, senza connettersi a server esterni. È possbile anche farlo girare in Docker, che isola l'applicazione dal resto del sistema.
 
 > **Nota importante**: Il modello è molto grande. Attendi anche diversi minuti per una risposta a una domanda semplice, specialmente con poca RAM. Alla fine di questo readme vedrai il risultato sul mio PC (senza scheda grafica discreta) e arrivo a 0.01 token al secondo.
 
@@ -48,7 +48,7 @@ Colibrì è un'applicazione che ti permette di eseguire un modello di intelligen
 | 32 GB | ✅ Sì | Il minimo (ma vedi sezione memoria su Windows) |
 | 48+ GB | ✅ Sì | Meglio |
 
-Inoltre: un **disco SSD veloce** è essenziale. Colibrì usa il disco come memoria aggiuntiva. Con una scheda grafica NVidia è ancora meglio.
+Inoltre: un **disco SSD veloce** è essenziale. LM Atomic usa il disco come memoria aggiuntiva. Con una scheda grafica NVidia è ancora meglio.
 
 ### Software
 
@@ -94,11 +94,11 @@ Se sei su Windows e non riesci con Python:
 
 ---
 
-### Passo 2: Scarica il Dockerfile di Colibrì
+### Passo 2: Scarica il Dockerfile di LM Atomic
 
 1. Vai a: https://github.com/JustVugg/colibri/blob/main/docker/Dockerfile
 2. Clicca il pulsante **Download** (icona ⬇️) in alto a destra
-3. Salva il file in una cartella (es. `C:\LLM\Colibrì`)
+3. Salva il file in una cartella (es. `C:\LLM\LM Atomic`)
 
 ---
 
@@ -108,49 +108,49 @@ Apri il terminale (PowerShell su Windows, Terminal su Mac/Linux) **nella cartell
 
 **Windows:**
 ```bash
-docker build -t colibri-i .
+docker build -t lmatomic-i .
 ```
 
 **Linux/Mac:**
 ```bash
-sudo docker build -t colibri-i .
+sudo docker build -t lmatomic-i .
 ```
 
-Attendi che finisca (pochi minuti). Se tutto va bene, vedrai: `Successfully tagged colibri-i:latest`
+Attendi che finisca (pochi minuti). Se tutto va bene, vedrai: `Successfully tagged lmatomic-i:latest`
 
-> **Se vuoi recepire gli aggiornamenti del repository**: Cancella prima l'immagine vecchia con `docker rmi colibri-i` e ricompila.
+> **Se vuoi recepire gli aggiornamenti del repository**: Cancella prima l'immagine vecchia con `docker rmi lmatomic-i` e ricompila.
 
 ---
 
-### Passo 4: Avvia Colibrì
+### Passo 4: Avvia LM Atomic
 
 Apri il terminale e digita il comando sottostante (sostituisci `C:\LLM\models\glm-5.2` con il percorso reale del tuo PC):
 
 **Windows** (PowerShell):
 ```bash
 $MODEL_PATH="C:\LLM\models\glm-5.2"
-docker run --rm -it --name colibri-c `
+docker run --rm -it --name lmatomic-c `
   -v "$MODEL_PATH`:/app/glm-5.2" `
-  -e COLI_MODEL=/app/glm-5.2 `
-  colibri-i ./coli chat
+  -e LMA_MODEL=/app/glm-5.2 `
+  lmatomic-i ./lmatomic chat
 ```
 
 **Mac/Linux** (Terminal/Bash):
 ```bash
 MODEL_PATH="/path/to/glm-5.2"
-docker run --rm -it --name colibri-c \
+docker run --rm -it --name lmatomic-c \
   -v "$MODEL_PATH:/app/glm-5.2" \
-  -e COLI_MODEL=/app/glm-5.2 \
-  colibri-i ./coli chat
+  -e LMA_MODEL=/app/glm-5.2 \
+  lmatomic-i ./lmatomic chat
 ```
 
 **Esempio per Linux:**
 ```bash
 MODEL_PATH="/home/user/LLM/glm-5.2"
-docker run --rm -it --name colibri-c \
+docker run --rm -it --name lmatomic-c \
   -v "$MODEL_PATH:/app/glm-5.2" \
-  -e COLI_MODEL=/app/glm-5.2 \
-  colibri-i ./coli chat
+  -e LMA_MODEL=/app/glm-5.2 \
+  lmatomic-i ./lmatomic chat
 ```
 
 ---
@@ -163,13 +163,13 @@ docker run --rm -it --name colibri-c \
 | `--rm` | Cancella il container quando chiudi |
 | `-it` | Modalità interattiva (puoi scrivere e leggere) |
 | `-v "PERCORSO:/app/glm-5.2"` | Collega il tuo modello dentro il container |
-| `-e COLI_MODEL=/app/glm-5.2` | Dice a Colibrì dove trovare il modello |
-| `colibri-i` | Nome dell'immagine Docker |
-| `./coli chat` | Avvia Colibrì in modalità chat |
+| `-e LMA_MODEL=/app/glm-5.2` | Dice a LM Atomic dove trovare il modello |
+| `lmatomic-i` | Nome dell'immagine Docker |
+| `./lmatomic chat` | Avvia LM Atomic in modalità chat |
 
 ---
 
-### Usare Colibrì
+### Usare LM Atomic
 
 Una volta avviato, vedrai un prompt come questo:
 
@@ -201,10 +201,10 @@ Il modello capisce **italiano, inglese, cinese e altre lingue**, anche se è ott
 Se vuoi esplorare il container come fosse una macchina Linux normale:
 
 ```bash
-docker run --rm -it --name colibri-c \
+docker run --rm -it --name lmatomic-c \
   -v "PERCORSO_MODELLO:/app/glm-5.2" \
-  -e COLI_MODEL=/app/glm-5.2 \
-  colibri-i /bin/bash
+  -e LMA_MODEL=/app/glm-5.2 \
+  lmatomic-i /bin/bash
 ```
 
 Ora sei dentro Linux. Digita `exit` per uscire.
@@ -271,7 +271,7 @@ Ora sei dentro Linux. Digita `exit` per uscire.
 **Cause possibili**:
 1. Il disco è lento
 2. Hai poca RAM
-3. Colibrì sta usando il disco come memoria aggiuntiva (normale)
+3. LM Atomic sta usando il disco come memoria aggiuntiva (normale)
 
 **Come controllare la velocità del disco:**
 
@@ -297,7 +297,7 @@ Un **SSD NVMe moderno** arriva a 15 GB/sec. Se il tuo è sotto 2-3 GB/sec, è le
 
 **Soluzione - Opzione 1** (rapida):
 ```bash
-sudo docker build -t colibri-i .
+sudo docker build -t lmatomic-i .
 sudo docker run ... (come sopra, con sudo davanti)
 ```
 
@@ -321,7 +321,7 @@ docker run ... (senza sudo)
    dir Dockerfile # Windows
    ```
 2. Riscarica il Dockerfile dal repository GitHub
-3. Elimina l'immagine vecchia: `docker rmi colibri-i`
+3. Elimina l'immagine vecchia: `docker rmi lmatomic-i`
 4. Riprova il build
 
 ---
@@ -356,7 +356,7 @@ Poi riprova il comando `hf_download`.
 
 ### Perché il disco è importante?
 
-Colibrì usa il disco come "RAM aggiuntiva" virtuale (paging). Un disco **veloce** è cruciale per prestazioni decenti.
+LM Atomic usa il disco come "RAM aggiuntiva" virtuale (paging). Un disco **veloce** è cruciale per prestazioni decenti.
 
 - **SSD NVMe** (consigliato): 1-15 GB/sec
 - **SSD SATA**: 0.5-1 GB/sec
@@ -392,17 +392,17 @@ R: Sì, in parte:
 - Riduci la complessità delle domande
 - Usa `:reset` per cancellare la memoria e alleggerire il carico
 
-**D: Posso usare Colibrì senza Docker?**  
-R: Colibrì è nato così, ma questa guida assume Docker. Per compilare da sorgente, vedi il repository GitHub.
+**D: Posso usare LM Atomic senza Docker?**  
+R: LM Atomic è nato così, ma questa guida assume Docker. Per compilare da sorgente, vedi il repository GitHub.
 
 **D: Quanta connessione internet mi serve dopo aver scaricato il modello?**  
-R: Zero. Colibrì funziona completamente offline.
+R: Zero. LM Atomic funziona completamente offline.
 
 ---
 
 ## Supporto e contributi
 
-Se trovi errori o hai suggerimenti per migliorare questa guida, aprici una issue o una pull request sul repository GitHub di Colibrì.
+Se trovi errori o hai suggerimenti per migliorare questa guida, aprici una issue o una pull request sul repository GitHub di LM Atomic.
 
 Buon divertimento! 🐦
 
@@ -413,9 +413,9 @@ Buon divertimento! 🐦
 Nel primo caso ho fatto una domanda in italiano, nel secondo in giapponese, e nel terzo ho rifatto la domanda in giapponese ma ho richiesto una risposta in italiano. 
 
 ```
-PS C:\quack\llm\colibri\docker> docker run --rm -it --name colibri-c -v "C:\quack\llm\models\glm-5.2:/app/glm-5.2" -e COLI_MODEL=/app/glm-5.2 colibri-i ./coli chat
+PS C:\quack\llm\LM Atomic\docker> docker run --rm -it --name lmatomic-c -v "C:\quack\llm\models\glm-5.2:/app/glm-5.2" -e LMA_MODEL=/app/glm-5.2 lmatomic-i ./lmatomic chat
 
-     ▄▀▀▀▄  ▄        colibrì v1.0
+     ▄▀▀▀▄  ▄        LM Atomic v1.0
   ▄▄▄▄▀▀▀▀▄▀▀        tiny engine, immense model
       ▀▀▀▀▀▀▀        GLM-5.2 · 744B MoE · int4 · streaming CPU
         ▀▀▀▀         chat · glm-5.2 · ram -GB · topp off
@@ -427,7 +427,7 @@ PS C:\quack\llm\colibri\docker> docker run --rm -it --name colibri-c -v "C:\quac
   │ › Quanti abitanti ha la Cina?                                                                  │
   ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-  ◆ colibrì
+  ◆ LM Atomic
   La Cina è attualmente il paese più popoloso al mondo (sebbene, secondo alcune stime recenti, sia stata ormai superata dall'India).
 
   La popolazione totale della Repubblica Popolare Cinese è di circa 1,41 miliardi di abitanti (dati del 2020-2022 circa).
@@ -437,7 +437,7 @@ PS C:\quack\llm\colibri\docker> docker run --rm -it --name colibri-c -v "C:\quac
   │ › 漫画「ワンピース」の主人公の名前を教えてください。名前だけで、それ以上のコメントはありません。                                              │
   ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-  ◆ colibrì
+  ◆ LM Atomic
   ルフィ
   └─ 2 tok · 0.01 tok/s · hit 1% · RSS 16.7 GB · 260s
 
@@ -445,7 +445,7 @@ PS C:\quack\llm\colibri\docker> docker run --rm -it --name colibri-c -v "C:\quac
   │ › 漫画「ワンピース」の主人公の名前を教えてください。名前だけで、それ以上のコメントはありません。イタリア語で返信                                      │
   ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-  ◆ colibrì
+  ◆ LM Atomic
   Il nome del protagonista di One Piece è Monkey D. Luffy.
   └─ 14 tok · 0.02 tok/s · hit 2% · RSS 17.3 GB · 593s
 

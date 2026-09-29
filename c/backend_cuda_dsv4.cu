@@ -18,10 +18,10 @@
 #define NOMINMAX
 #include <windows.h>
 #endif
-#ifdef COLI_DSV4_NCCL
+#ifdef LMA_DSV4_NCCL
 #include <nccl.h>
 #endif
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
 #include <cuda.h>
 #include <deep_gemm/impls/sm120_fp8_fp4_gemm_1d1d.cuh>
 #include <deep_gemm/impls/sm120_split_k_reduce.cuh>
@@ -32,12 +32,12 @@
  * runtime by DSV4_CUDA_TC=1, off by default) needs the cuBLASLt >= 12.8
  * block-scaling APIs (CUBLASLT_MATMUL_MATRIX_SCALE_VEC32_UE8M0 / *_SCALE_MODE).
  * Older toolkits (e.g. Jetson JetPack with CUDA 12.6) lack them; build with
- * -DCOLI_DSV4_NO_TC to compile without that path (generic DLL/object only —
+ * -DLMA_DSV4_NO_TC to compile without that path (generic DLL/object only —
  * the DeepGEMM sm_120a flavour needs 12.8+ anyway). */
-#if defined(COLI_DSV4_NO_TC)
-#define COLI_DSV4_TC 0
+#if defined(LMA_DSV4_NO_TC)
+#define LMA_DSV4_TC 0
 #else
-#define COLI_DSV4_TC 1
+#define LMA_DSV4_TC 1
 #endif
 struct Dsv4CudaTensor { void *w,*bf16_cache; uint8_t *scale;int *dg_scale; int O,I,fmt,device,own_w,own_scale,own_dg_scale; long long bytes; };
 struct Dsv4CudaActivation { float *data; long long elements; int device; };
@@ -48,13 +48,13 @@ struct ExpertPtr { const uint8_t *w,*scale; };
 struct Dsv4CudaExpertSet { ExpertPtr *table;int64_t *hash;Dsv4CudaTensor *sg,*su,*sd;uint8_t *bank_fc1,*bank_fc1_scale,*bank_fc2,*bank_fc2_scale;int *bank_fc1_dg_scale,*bank_fc2_dg_scale;int count,device,H,I,vocab,topk; };
 struct TcPlan {int O,I,ok;cublasLtMatmulDesc_t op;cublasLtMatrixLayout_t a,b,c,d;cublasLtMatmulHeuristicResult_t algo;};
 struct Dev { int id,sms; cudaStream_t stream,aux; cudaEvent_t ready,fork,join;float *dx,*dy,*p1,*p2,*p3,*p4,*aux1,*aux2,*aux3; size_t xcap,ycap,p1cap,p2cap,p3cap,p4cap,aux1cap,aux2cap,aux3cap; float *hx,*hy;
-#ifdef COLI_DSV4_NCCL
+#ifdef LMA_DSV4_NCCL
     ncclComm_t ep_comm;
 #endif
     int *decode_state;
     MvDesc *mvdesc;size_t mvdesccap;float *expert_weights;size_t expert_weightscap;int *expert_ids;size_t expert_idcap;
     cublasLtHandle_t lt;void *tc_workspace;uint8_t *tcw,*tcs,*tcx,*tcxs;size_t tcwcap,tcscap,tcxcap,tcxscap;TcPlan plans[2];
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     uint8_t *dga1,*dga2;int *dgsfa1,*dgsfa2,*dglayout,*dgrowmap;__nv_bfloat16 *dgmm1,*dgmm2;float *dgref,*dgdensews;size_t dga1cap,dga2cap,dgsfa1cap,dgsfa2cap,dglayoutcap,dgrowmapcap,dgmm1cap,dgmm2cap,dgrefcap,dgdensewscap;
 #endif
 };
@@ -62,7 +62,7 @@ static Dev g[16];static int ng;
 static Dev *ctx(int d){for(int i=0;i<ng;i++)if(g[i].id==d)return g+i;return nullptr;}
 static int ok(cudaError_t e,const char *s){if(e==cudaSuccess)return 1;fprintf(stderr,"[DSV4 CUDA] %s: %s\n",s,cudaGetErrorString(e));return 0;}
 static int bok(cublasStatus_t e,const char*s){if(e==CUBLAS_STATUS_SUCCESS)return 1;fprintf(stderr,"[DSV4 CUDA] %s: cuBLAS status %d\n",s,(int)e);return 0;}
-#ifdef COLI_DSV4_NCCL
+#ifdef LMA_DSV4_NCCL
 static int nok(ncclResult_t e,const char*s){if(e==ncclSuccess)return 1;fprintf(stderr,"[DSV4 NCCL] %s: %s\n",s,ncclGetErrorString(e));return 0;}
 #endif
 static int buf(void **p,size_t *cap,size_t n){if(*cap>=n)return 1;if(*p)cudaFree(*p);*p=nullptr;*cap=0;if(!ok(cudaMalloc(p,n),"buffer allocation"))return 0;*cap=n;return 1;}
@@ -140,7 +140,7 @@ static void run_fp4_grouped(const MvDesc *desc,int count,int O,int I,cudaStream_
  * matvec-per-token loop would cost). Numerics match mv<F> exactly: same
  * e4m3/e8 dequant, same bf16 round-trip for fmt 9. x is tokens-major
  * [T][I], y is tokens-major [T][O] — the layout dg_dense_batch_dispatch and
- * the engine's coli_fp8_matmul_batch_ref both use. */
+ * the engine's lma_fp8_matmul_batch_ref both use. */
 template<int F> __global__ void mm_batch(const uint8_t *w,const uint8_t *sc,const float *x,float *y,int O,int I,int T){
     int o=blockIdx.x;if(o>=O)return;int tbase=blockIdx.y*16,tcount=T-tbase<16?T-tbase:16;
     float sum[16]={};
@@ -229,7 +229,7 @@ __global__ void fp8_sim64(float *x,int n){int i=blockIdx.x*64+threadIdx.x;__shar
 __device__ __forceinline__ bool route_better(float,unsigned,float,unsigned);__device__ __forceinline__ float route_prob(float);
 __global__ void route_logits_batch(const float*w,const float*x,float*y,int tokens,int E,int H){int e=blockIdx.x% E,t=blockIdx.x/E;float sum=0;const float*in=x+(long long)t*H;for(int h=threadIdx.x;h<H;h+=blockDim.x)sum+=w[(long long)e*H+h]*in[h];__shared__ float s[256];s[threadIdx.x]=sum;__syncthreads();for(int n=128;n;n>>=1){if(threadIdx.x<n)s[threadIdx.x]+=s[threadIdx.x+n];__syncthreads();}if(!threadIdx.x)y[(long long)t*E+e]=s[0];(void)tokens;}
 __global__ void route_top6_batch(int*ids,float*weights,const float*bias,const float*logits,int tokens,float scale){int t=blockIdx.x,lane=threadIdx.x;if(t>=tokens||lane>=32)return;const float*src=logits+(long long)t*256;float prob[8],score[8];for(int j=0;j<8;j++){int e=lane+j*32;prob[j]=route_prob(src[e]);score[j]=prob[j]+(bias?bias[e]:0.f);}float outp[6]={};unsigned outi[6]={};for(int k=0;k<6;k++){float bs=-INFINITY,bp=0;unsigned bi=UINT_MAX;for(int j=0;j<8;j++){unsigned e=lane+j*32;if(route_better(score[j],e,bs,bi)){bs=score[j];bp=prob[j];bi=e;}}for(int m=16;m;m>>=1){float os=__shfl_xor_sync(0xffffffff,bs,m),op=__shfl_xor_sync(0xffffffff,bp,m);unsigned oi=__shfl_xor_sync(0xffffffff,bi,m);if(route_better(os,oi,bs,bi)){bs=os;bp=op;bi=oi;}}for(int j=0;j<8;j++)if((unsigned)(lane+j*32)==bi)score[j]=-INFINITY;if(!lane){outp[k]=bp;outi[k]=bi;}}if(!lane){float sum=0;for(int k=0;k<6;k++)sum+=outp[k];sum=fmaxf(sum,6.103515625e-5f);for(int k=0;k<6;k++){ids[(long long)t*6+k]=(int)outi[k];weights[(long long)t*6+k]=outp[k]/sum*scale;}}}
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
 __global__ void dg_pack_weight_scale(int*out,const uint8_t*in,int expert,int N,int groups){
     int p=blockIdx.x*blockDim.x+threadIdx.x,total=N*(groups/4);if(p>=total)return;int n=p/(groups/4),kg=p%(groups/4);uint32_t v=0;
     for(int b=0;b<4;b++)v|=(uint32_t)in[(long long)n*groups+kg*4+b]<<(8*b);out[((long long)expert*(groups/4)+kg)*N+n]=(int)v;
@@ -657,7 +657,7 @@ __global__ void attention_window_kernel(float *context,const float *q,const floa
  * [0, comp_base) window rows in position order, [comp_base, ...) the
  * compressed rows.  meta[3t] = first window row for token t, meta[3t+1] = its
  * window row count, meta[3t+2] = its visible compressed prefix.  Numerics
- * mirror coli_v4_sparse_attention_ref: fp32 scores, max over scores only
+ * mirror lma_v4_sparse_attention_ref: fp32 scores, max over scores only
  * (sink joins the denominator, not the max), probabilities rounded to bf16
  * before the value sum, output rounded to bf16 after the division. */
 /* ---- persistent per-layer KV cache for batched prefill attention ----
@@ -699,14 +699,14 @@ static int g_kv_comp_cap[DSV4_KV_CACHE_LAYERS];
 extern "C" int dsv4_cuda_backend_arch_ok(int device){
     cudaDeviceProp prop;
     if(cudaGetDeviceProperties(&prop,device)!=cudaSuccess){cudaGetLastError();return 0;}
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     return prop.major==12;
 #else
     return prop.major>=6;
 #endif
 }
 extern "C" const char *dsv4_cuda_backend_name(void){
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     return "deepgemm-sm120";
 #else
     return "generic";
@@ -1227,19 +1227,19 @@ __global__ void final_mhc_coeff(float*pre,const float*res,const float*fn,const f
 __global__ void final_mhc_mix(float*out,const float*res,const float*pre,int M,int H){int h=blockIdx.x*blockDim.x+threadIdx.x;if(h<H){float v=0;for(int m=0;m<M;m++)v+=pre[m]*res[(long long)m*H+h];out[h]=__bfloat162float(__float2bfloat16(v));}}
 
 extern "C" int dsv4_cuda_init(const int *dev,int n){if(n<1||n>16)return 0;float scale[256];for(int b=0;b<256;b++)scale[b]=b?ldexpf(1.f,b-127):ldexpf(1.f,-127);ng=0;for(int i=0;i<n;i++){cudaDeviceProp p{};if(!ok(cudaSetDevice(dev[i]),"select device")||!ok(cudaMemcpyToSymbol(e8_table,scale,sizeof(scale)),"scale table upload")||!ok(cudaGetDeviceProperties(&p,dev[i]),"device properties")||!ok(cudaStreamCreateWithFlags(&g[i].stream,cudaStreamNonBlocking),"stream")||!ok(cudaStreamCreateWithFlags(&g[i].aux,cudaStreamNonBlocking),"aux stream")||!ok(cudaEventCreateWithFlags(&g[i].ready,cudaEventDisableTiming),"device event")||!ok(cudaEventCreateWithFlags(&g[i].fork,cudaEventDisableTiming),"fork event")||!ok(cudaEventCreateWithFlags(&g[i].join,cudaEventDisableTiming),"join event")||!bok(cublasLtCreate(&g[i].lt),"cuBLASLt create")||!ok(cudaMalloc(&g[i].tc_workspace,32<<20),"Tensor Core workspace")||!ok(cudaMalloc(&g[i].decode_state,2*sizeof(int)),"decode state allocation"))return 0;g[i].id=dev[i];g[i].sms=p.multiProcessorCount;ng++;fprintf(stderr,"[DSV4 CUDA] device %d: %s %.1f GB sm_%d%d\n",dev[i],p.name,p.totalGlobalMem/1e9,p.major,p.minor);}for(int i=0;i<n;i++)for(int j=0;j<n;j++)if(i!=j){int can=0;if(!ok(cudaDeviceCanAccessPeer(&can,dev[i],dev[j]),"peer query"))return 0;if(can){if(!ok(cudaSetDevice(dev[i]),"select peer device"))return 0;cudaError_t e=cudaDeviceEnablePeerAccess(dev[j],0);if(e!=cudaSuccess&&e!=cudaErrorPeerAccessAlreadyEnabled)return ok(e,"enable peer access");}}
-#ifdef COLI_DSV4_NCCL
+#ifdef LMA_DSV4_NCCL
     if(n==6)for(int pair=0;pair<3;pair++){int ids[2]={dev[2*pair],dev[2*pair+1]};ncclComm_t comm[2];if(!nok(ncclCommInitAll(comm,2,ids),"EP2 communicator init"))return 0;g[2*pair].ep_comm=comm[0];g[2*pair+1].ep_comm=comm[1];}
 #endif
     return 1;}
 static void plan_free(TcPlan*p){if(p->d)cublasLtMatrixLayoutDestroy(p->d);if(p->c)cublasLtMatrixLayoutDestroy(p->c);if(p->b)cublasLtMatrixLayoutDestroy(p->b);if(p->a)cublasLtMatrixLayoutDestroy(p->a);if(p->op)cublasLtMatmulDescDestroy(p->op);memset(p,0,sizeof(*p));}
 extern "C" void dsv4_cuda_shutdown(void){
     for(int i=0;i<ng;i++){cudaSetDevice(g[i].id);if(g[i].decode_state)cudaFree(g[i].decode_state);
-#ifdef COLI_DSV4_NCCL
+#ifdef LMA_DSV4_NCCL
         if(g[i].ep_comm)ncclCommDestroy(g[i].ep_comm);
 #endif
     }
     for(int i=0;i<ng;i++){cudaSetDevice(g[i].id);if(g[i].dx)cudaFree(g[i].dx);if(g[i].dy)cudaFree(g[i].dy);if(g[i].p1)cudaFree(g[i].p1);if(g[i].p2)cudaFree(g[i].p2);if(g[i].p3)cudaFree(g[i].p3);if(g[i].p4)cudaFree(g[i].p4);if(g[i].aux1)cudaFree(g[i].aux1);if(g[i].aux2)cudaFree(g[i].aux2);if(g[i].aux3)cudaFree(g[i].aux3);if(g[i].mvdesc)cudaFree(g[i].mvdesc);if(g[i].expert_weights)cudaFree(g[i].expert_weights);if(g[i].expert_ids)cudaFree(g[i].expert_ids);if(g[i].tcw)cudaFree(g[i].tcw);if(g[i].tcs)cudaFree(g[i].tcs);if(g[i].tcx)cudaFree(g[i].tcx);if(g[i].tcxs)cudaFree(g[i].tcxs);if(g[i].tc_workspace)cudaFree(g[i].tc_workspace);
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
         if(g[i].dga1)cudaFree(g[i].dga1);if(g[i].dga2)cudaFree(g[i].dga2);if(g[i].dgsfa1)cudaFree(g[i].dgsfa1);if(g[i].dgsfa2)cudaFree(g[i].dgsfa2);if(g[i].dglayout)cudaFree(g[i].dglayout);if(g[i].dgrowmap)cudaFree(g[i].dgrowmap);if(g[i].dgmm1)cudaFree(g[i].dgmm1);if(g[i].dgmm2)cudaFree(g[i].dgmm2);if(g[i].dgref)cudaFree(g[i].dgref);if(g[i].dgdensews)cudaFree(g[i].dgdensews);
 #endif
         for(int p=0;p<2;p++)plan_free(&g[i].plans[p]);if(g[i].lt)cublasLtDestroy(g[i].lt);if(g[i].hx)cudaFreeHost(g[i].hx);if(g[i].hy)cudaFreeHost(g[i].hy);if(g[i].ready)cudaEventDestroy(g[i].ready);if(g[i].fork)cudaEventDestroy(g[i].fork);if(g[i].join)cudaEventDestroy(g[i].join);cudaStreamDestroy(g[i].aux);cudaStreamDestroy(g[i].stream);}ng=0;}
@@ -1277,7 +1277,7 @@ extern "C" void dsv4_cuda_graph_free(Dsv4CudaGraph*g){if(!g)return;cudaSetDevice
 static int upload(Dsv4CudaTensor **pt,const void *w,size_t wb,const uint8_t *sc,size_t sb,int O,int I,int d,int fmt){if(*pt)return 1;Dev *c=ctx(d);if(!c||!ok(cudaSetDevice(d),"select upload device"))return 0;Dsv4CudaTensor *t=(Dsv4CudaTensor*)calloc(1,sizeof(*t));t->O=O;t->I=I;t->device=d;t->fmt=fmt;t->bytes=wb+sb;
     if(!ok(cudaMalloc(&t->w,wb),"weight allocation")){dsv4_cuda_tensor_free(t);return 0;}t->own_w=1;if(!ok(cudaMemcpy(t->w,w,wb,cudaMemcpyHostToDevice),"weight upload")){dsv4_cuda_tensor_free(t);return 0;}
     if(sb){if(!ok(cudaMalloc(&t->scale,sb),"scale allocation")){dsv4_cuda_tensor_free(t);return 0;}t->own_scale=1;if(!ok(cudaMemcpy(t->scale,sc,sb,cudaMemcpyHostToDevice),"scale upload")){dsv4_cuda_tensor_free(t);return 0;}}
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     if((fmt==8||fmt==9)&&O%128==0&&I%128==0){size_t db=(size_t)O*(I/128/4)*sizeof(int);if(!ok(cudaMalloc(&t->dg_scale,db),"dense DeepGEMM scale allocation")){dsv4_cuda_tensor_free(t);return 0;}t->own_dg_scale=1;
         if(fmt==9){int groups=O/1024;dg_pack_batched_scale<<<(O*(I/128/4)+255)/256,256,0,c->stream>>>(t->dg_scale,t->scale,O/groups,I/128,groups);}
         else dg_pack_dense_scale<<<(O*(I/128/4)+255)/256,256,0,c->stream>>>(t->dg_scale,t->scale,O,I/128);
@@ -1322,28 +1322,28 @@ extern "C" int dsv4_cuda_attention_first(const Dsv4CudaActivation*input,Dsv4Cuda
     Dsv4CudaTensor*tensors[]={an,qa,qn,qb,kv,kvn,sink,wa,wb};for(auto*t:tensors)if(t->device!=input->device)return 0;int P1=R>WR?R:WR;if(output->device!=input->device||!ok(cudaSetDevice(input->device),"select attention device")||!buf((void**)&c->dx,&c->xcap,(size_t)H*4)||!buf((void**)&c->p1,&c->p1cap,(size_t)P1*4)||!buf((void**)&c->p2,&c->p2cap,(size_t)Q*4)||!buf((void**)&c->p3,&c->p3cap,(size_t)K*4)||!buf((void**)&c->p4,&c->p4cap,(size_t)Q*4))return 0;
     int dense_dg=getenv("DSV4_CUDA_DENSE_DG")&&atoi(getenv("DSV4_CUDA_DENSE_DG"));
     rmsnorm_f32<<<1,256,0,c->stream>>>(c->dx,input->data,(float*)an->w,H,eps);
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     if(dense_dg){if(!dg_attention_projection(c,qa,c->dx,c->p1)||!dg_attention_kv_reuse(c,kv,c->dx,c->p3))return 0;}else
 #endif
     {fp8_sim<<<(H+127)/128,128,0,c->stream>>>(c->dx,1,H);run_mv<8>((uint8_t*)qa->w,qa->scale,c->dx,c->p1,R,H,1,c->stream);}
     bf16_round<<<(R+255)/256,256,0,c->stream>>>(c->p1,R);rmsnorm_seq<<<1,256,0,c->stream>>>(c->p1,(__nv_bfloat16*)qn->w,R,eps);
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     if(dense_dg){if(!dg_attention_projection(c,qb,c->p1,c->p2))return 0;}else
 #endif
     {fp8_sim<<<(R+127)/128,128,0,c->stream>>>(c->p1,1,R);run_mv<8>((uint8_t*)qb->w,qb->scale,c->p1,c->p2,Q,R,1,c->stream);}
     bf16_round<<<(Q+255)/256,256,0,c->stream>>>(c->p2,Q);head_rmsnorm<<<heads,256,0,c->stream>>>(c->p2,heads,dim,eps);
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     if(dense_dg){}else
 #endif
     run_mv<8>((uint8_t*)kv->w,kv->scale,c->dx,c->p3,K,H,1,c->stream);
     bf16_round<<<(K+255)/256,256,0,c->stream>>>(c->p3,K);rmsnorm_f32<<<1,256,0,c->stream>>>(c->p3,c->p3,(float*)kvn->w,K,eps);if(K>qk_rope)fp8_sim64<<<(K-qk_rope+63)/64,64,0,c->stream>>>(c->p3,K-qk_rope);
     attention_one<<<heads,256,0,c->stream>>>(c->p4,c->p2,c->p3,(float*)sink->w,heads,dim);
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     if(dense_dg){if(!dg_attention_wo_a(c,wa,c->p4,c->p1))return 0;}else
 #endif
     run_mv<9>((uint8_t*)wa->w,wa->scale,c->p4,c->p1,WR,wa->I,groups,c->stream);
     bf16_round<<<(WR+255)/256,256,0,c->stream>>>(c->p1,WR);
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     if(dense_dg){if(!dg_attention_projection(c,wb,c->p1,output->data))return 0;}else
 #endif
     {fp8_sim<<<(WR+127)/128,128,0,c->stream>>>(c->p1,1,WR);run_mv<8>((uint8_t*)wb->w,wb->scale,c->p1,output->data,H,WR,1,c->stream);}
@@ -1514,14 +1514,14 @@ extern "C" int dsv4_cuda_attention_window(const Dsv4CudaActivation *input, Dsv4C
         if (async && !ok(cudaEventRecord(c->join, c->aux), "attention join record")) return 0;
     }
     int dense_dg=getenv("DSV4_CUDA_DENSE_DG")&&atoi(getenv("DSV4_CUDA_DENSE_DG"));
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     if(dense_dg){if(!dg_attention_projection(c,qa,c->dx,c->p1)||(!fused_qkv&&!dg_attention_kv_reuse(c,kv,c->dx,c->p3)))return 0;}else
 #endif
     {fp8_sim<<<(H + 127) / 128, 128, 0, c->stream>>>(c->dx, 1, H);
     run_mv<8>((uint8_t *)qa->w, qa->scale, c->dx, c->p1, R, H, 1, c->stream);}
     bf16_round<<<(R + 255) / 256, 256, 0, c->stream>>>(c->p1, R);
     rmsnorm_seq<<<1, 256, 0, c->stream>>>(c->p1, (__nv_bfloat16 *)qn->w, R, eps);
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     if(dense_dg){if(!dg_attention_projection(c,qb,c->p1,c->p2))return 0;}else
 #endif
     {fp8_sim<<<(R + 127) / 128, 128, 0, c->stream>>>(c->p1, 1, R);
@@ -1532,7 +1532,7 @@ extern "C" int dsv4_cuda_attention_window(const Dsv4CudaActivation *input, Dsv4C
     if (qk_rope&&!sparse)
         rope_heads_dynamic<<<(heads * (qk_rope / 2) + 255) / 256, 256, 0, c->stream>>>(
             c->p2, heads, dim, qk_rope, c->decode_state, 0, 0, 0, cache->rope_cos, cache->rope_sin);
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     if(dense_dg){}else
 #endif
     run_mv<8>((uint8_t *)kv->w, kv->scale, c->dx, c->p3, K, H, 1, c->stream);
@@ -1549,12 +1549,12 @@ extern "C" int dsv4_cuda_attention_window(const Dsv4CudaActivation *input, Dsv4C
     if (qk_rope)
         rope_heads_dynamic<<<(heads * (qk_rope / 2) + 255) / 256, 256, 0, c->stream>>>(
             c->p4, heads, dim, qk_rope, c->decode_state, 0, 1, 0, cache->rope_cos, cache->rope_sin);
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     if(dense_dg){if(!dg_attention_wo_a(c,wa,c->p4,c->p1))return 0;}else
 #endif
     run_mv<9>((uint8_t *)wa->w, wa->scale, c->p4, c->p1, WR, wa->I, groups, c->stream);
     bf16_round<<<(WR + 255) / 256, 256, 0, c->stream>>>(c->p1, WR);
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     if(dense_dg){if(!dg_attention_projection(c,wb,c->p1,output->data))return 0;}else
 #endif
     {fp8_sim<<<(WR + 127) / 128, 128, 0, c->stream>>>(c->p1, 1, WR);
@@ -1568,7 +1568,7 @@ extern "C" int dsv4_cuda_attention_sparse_batch(const Dsv4CudaActivation*input,D
 }
 
 extern "C" int dsv4_cuda_attention_output_batch(const Dsv4CudaActivation*context,Dsv4CudaTensor*wa,Dsv4CudaTensor*wb,int groups,int tokens,Dsv4CudaActivation*output){
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     Dev*c=context?ctx(context->device):nullptr;int K=wa?wa->I:0,N=wa&&groups?wa->O/groups:0,WR=wa?wa->O:0,H=wb?wb->O:0;
     if(!c||!wa||!wb||!output||groups<1||tokens<1||wa->fmt!=9||wa->O%groups||wb->fmt!=8||wb->I!=WR||
        wa->device!=context->device||wb->device!=context->device||output->device!=context->device||
@@ -1604,7 +1604,7 @@ extern "C" int dsv4_cuda_attention_window_tp2(const Dsv4CudaActivation *input,Ds
         const Dsv4CudaAttentionWeights *a,const Dsv4CudaAttentionWeights *b,int ratio,int heads,int dim,int qk_rope,
         int groups,int pos,float eps,Dsv4CudaKvCache *cache,Dsv4CudaKvCache *peer_cache,
         Dsv4CudaActivation *output,Dsv4CudaActivation *peer_output){
-#ifndef COLI_DSV4_NCCL
+#ifndef LMA_DSV4_NCCL
     (void)input;(void)peer_input;(void)a;(void)b;(void)ratio;(void)heads;(void)dim;(void)qk_rope;(void)groups;
     (void)pos;(void)eps;(void)cache;(void)peer_cache;(void)output;(void)peer_output;return 0;
 #else
@@ -1612,7 +1612,7 @@ extern "C" int dsv4_cuda_attention_window_tp2(const Dsv4CudaActivation *input,Ds
     if(!p||!q||!a||!b||!cache||!peer_cache||!output||!peer_output||!p->ep_comm||!q->ep_comm||heads%2||groups%2||
        peer_input->elements<H||output->elements<H||peer_output->elements<H)return 0;
     int replicated=getenv("DSV4_CUDA_REPLICATED_TP2")&&atoi(getenv("DSV4_CUDA_REPLICATED_TP2"));
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     const char *qkv_env=getenv("DSV4_CUDA_QKV_FUSED");int fuse_qkv=!qkv_env||atoi(qkv_env);
 #else
     int fuse_qkv=0;
@@ -1652,7 +1652,7 @@ extern "C" int dsv4_cuda_matvec(Dsv4CudaTensor*t,float*y,const float*x){return d
 extern "C" int dsv4_cuda_matmul_batch(Dsv4CudaTensor*t,const Dsv4CudaActivation*input,int tokens,Dsv4CudaActivation*output){
     Dev*c=t?ctx(t->device):nullptr;if(!c||!input||!output||tokens<1||input->device!=t->device||output->device!=t->device||
        input->elements<(long long)tokens*t->I||output->elements<(long long)tokens*t->O||!ok(cudaSetDevice(t->device),"select batched dense device"))return 0;
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     return dg_dense_batch_dispatch(c,t,input->data,output->data,tokens);
 #else
     if(t->fmt!=8&&t->fmt!=9&&t->fmt!=4)return 0;
@@ -1661,7 +1661,7 @@ extern "C" int dsv4_cuda_matmul_batch(Dsv4CudaTensor*t,const Dsv4CudaActivation*
 #endif
 }
 extern "C" int dsv4_cuda_head_argmax(Dsv4CudaTensor*t,const float*x,int*id,float*value){
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     constexpr int O=129280,I=4096;Dev*c=t?ctx(t->device):nullptr;if(!c||!x||!id||!value||t->fmt!=16||t->O!=O||t->I!=I||!ok(cudaSetDevice(t->device),"select output head device")||
        !buf((void**)&c->dx,&c->xcap,I*sizeof(float))||!buf((void**)&c->dga1,&c->dga1cap,I*sizeof(__nv_bfloat16))||!buf((void**)&c->dgmm1,&c->dgmm1cap,O*sizeof(__nv_bfloat16))||
        !buf((void**)&c->expert_ids,&c->expert_idcap,sizeof(int))||!buf((void**)&c->expert_weights,&c->expert_weightscap,sizeof(float))||
@@ -1681,7 +1681,7 @@ extern "C" int dsv4_cuda_head_argmax(Dsv4CudaTensor*t,const float*x,int*id,float
 #endif
 }
 extern "C" int dsv4_cuda_final_argmax(const Dsv4CudaActivation*r,Dsv4CudaTensor*fn,Dsv4CudaTensor*scale,Dsv4CudaTensor*base,Dsv4CudaTensor*norm,Dsv4CudaTensor*head,int M,int H,float eps,float pre_eps,int*id,float*value){
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     constexpr int O=129280,I=4096;Dev*c=r?ctx(r->device):nullptr;int MH=M*H;if(!c||!fn||!scale||!base||!norm||!head||!id||!value||M!=4||H!=I||r->elements<MH||fn->fmt!=32||fn->O!=M||fn->I!=MH||scale->fmt!=32||base->fmt!=32||norm->fmt!=32||head->fmt!=16||head->O!=O||head->I!=I||
        fn->device!=r->device||scale->device!=r->device||base->device!=r->device||norm->device!=r->device||head->device!=r->device||!ok(cudaSetDevice(r->device),"select final head device")||
        !buf((void**)&c->dx,&c->xcap,I*sizeof(float))||!buf((void**)&c->p1,&c->p1cap,M*sizeof(float))||!buf((void**)&c->dga1,&c->dga1cap,I*sizeof(__nv_bfloat16))||!buf((void**)&c->dgmm1,&c->dgmm1cap,O*sizeof(__nv_bfloat16))||
@@ -1695,7 +1695,7 @@ extern "C" int dsv4_cuda_final_argmax(const Dsv4CudaActivation*r,Dsv4CudaTensor*
     (void)r;(void)fn;(void)scale;(void)base;(void)norm;(void)head;(void)M;(void)H;(void)eps;(void)pre_eps;(void)id;(void)value;return 0;
 #endif
 }
-#if COLI_DSV4_TC
+#if LMA_DSV4_TC
 static TcPlan *tc_plan(Dev*c,int O,int I){int pi=O>I;TcPlan*p=&c->plans[pi];if(p->ok)return p;if(p->op)plan_free(p);p->O=O;p->I=I;
     cublasOperation_t ta=CUBLAS_OP_T,tb=CUBLAS_OP_N;cublasLtMatmulMatrixScale_t mode=CUBLASLT_MATMUL_MATRIX_SCALE_VEC32_UE8M0;
     if(!bok(cublasLtMatmulDescCreate(&p->op,CUBLAS_COMPUTE_32F,CUDA_R_32F),"TC operation")||
@@ -1721,7 +1721,7 @@ static int tc_fp4_matvec(Dev*c,Dsv4CudaTensor*t,float*y){int O=t->O,I=t->I;size_
     void *as=c->tcs,*bs=c->tcxs;if(!bok(cublasLtMatmulDescSetAttribute(p->op,CUBLASLT_MATMUL_DESC_A_SCALE_POINTER,&as,sizeof(as)),"TC A scale")||
        !bok(cublasLtMatmulDescSetAttribute(p->op,CUBLASLT_MATMUL_DESC_B_SCALE_POINTER,&bs,sizeof(bs)),"TC B scale"))return 0;float alpha=1,beta=0;
     return bok(cublasLtMatmul(c->lt,p->op,&alpha,c->tcw,p->a,c->tcx,p->b,&beta,y,p->c,y,p->d,&p->algo.algo,c->tc_workspace,32<<20,c->stream),"TC matvec");}
-#endif /* COLI_DSV4_TC */
+#endif /* LMA_DSV4_TC */
 extern "C" int dsv4_cuda_expert_group(Dsv4CudaTensor *const *gate,Dsv4CudaTensor *const *up,Dsv4CudaTensor *const *down,
         const float *weights,int count,float limit,float *y,const float *x){
     if(count<1||count>16||!gate||!up||!down)return 0;Dsv4CudaTensor *t=gate[0];Dev*c=t?ctx(t->device):nullptr;
@@ -1732,14 +1732,14 @@ extern "C" int dsv4_cuda_expert_group(Dsv4CudaTensor *const *gate,Dsv4CudaTensor
        !buf((void**)&c->p1,&c->p1cap,ib)||!buf((void**)&c->p2,&c->p2cap,ib)||
        !buf((void**)&c->p3,&c->p3cap,ib)||!buf((void**)&c->p4,&c->p4cap,hb))return 0;
     if(!ok(cudaMemcpyAsync(c->dx,x,xb,cudaMemcpyHostToDevice,c->stream),"expert-group activation upload"))return 0;
-#if COLI_DSV4_TC
+#if LMA_DSV4_TC
     static int tc=-1;if(tc<0)tc=getenv("DSV4_CUDA_TC")?atoi(getenv("DSV4_CUDA_TC")):0;
     if(tc){for(int e=0;e<count;e++){if(!tc_prepare_x(c,c->dx,H)||!tc_fp4_matvec(c,gate[e],c->p1+(long long)e*I)||!tc_fp4_matvec(c,up[e],c->p2+(long long)e*I))return 0;
             expert_act<<<(I+255)/256,256,0,c->stream>>>(c->p3+(long long)e*I,c->p1+(long long)e*I,c->p2+(long long)e*I,weights[e],limit,I);
             if(!tc_prepare_x(c,c->p3+(long long)e*I,I)||!tc_fp4_matvec(c,down[e],c->p4+(long long)e*H))return 0;}
         expert_reduce<<<(H+255)/256,256,0,c->stream>>>(c->dy,c->p4,count,H);
         return ok(cudaGetLastError(),"TC expert-group launch")&&ok(cudaMemcpyAsync(y,c->dy,(size_t)H*4,cudaMemcpyDeviceToHost,c->stream),"TC expert-group result download")&&ok(cudaStreamSynchronize(c->stream),"TC expert-group sync");}
-#endif /* COLI_DSV4_TC */
+#endif /* LMA_DSV4_TC */
     static int batched=-1;if(batched<0)batched=getenv("DSV4_CUDA_BATCHED")?atoi(getenv("DSV4_CUDA_BATCHED")):1;
     if(batched){MvDesc hd[32];for(int e=0;e<count;e++){
             hd[2*e]={(uint8_t*)gate[e]->w,gate[e]->scale,c->dx,c->p1+(long long)e*I};
@@ -1892,7 +1892,7 @@ extern "C" Dsv4CudaExpertSet *dsv4_cuda_expert_bank_create(int count,int H,int I
        !ok(cudaMalloc(&set->bank_fc1_scale,fc1_s),"expert FC1 scale bank allocation")||
        !ok(cudaMalloc(&set->bank_fc2,fc2_w),"expert FC2 bank allocation")||
        !ok(cudaMalloc(&set->bank_fc2_scale,fc2_s),"expert FC2 scale bank allocation")||
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
        !ok(cudaMalloc(&set->bank_fc1_dg_scale,fc1_s),"expert FC1 DeepGEMM scale allocation")||
        !ok(cudaMalloc(&set->bank_fc2_dg_scale,fc2_s),"expert FC2 DeepGEMM scale allocation")||
 #endif
@@ -1986,7 +1986,7 @@ static int bank_upload_stream(Dsv4CudaExpertSet*set,int e,
        !ok(cudaMemcpyAsync(fc1s+s1,us,s1,cudaMemcpyHostToDevice,s),"expert up scale upload")||
        !ok(cudaMemcpyAsync(fc2,dw,w2,cudaMemcpyHostToDevice,s),"expert down upload")||
        !ok(cudaMemcpyAsync(fc2s,ds,s2,cudaMemcpyHostToDevice,s),"expert down scale upload"))return 0;
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     dg_pack_weight_scale<<<(2*I*(H/32/4)+255)/256,256,0,s>>>(set->bank_fc1_dg_scale,fc1s,e,2*I,H/32);
     dg_pack_weight_scale<<<(H*(I/32/4)+255)/256,256,0,s>>>(set->bank_fc2_dg_scale,fc2s,e,H,I/32);
     if(!ok(cudaGetLastError(),"expert DeepGEMM scale packing"))return 0;
@@ -2030,7 +2030,7 @@ extern "C" int dsv4_cuda_expert_bank_upload_tp2(Dsv4CudaExpertSet*set,int e,int 
        !ok(cudaMemcpy(fc1s+s1,us+(size_t)rank*s1,s1,cudaMemcpyHostToDevice),"TP2 expert up scale upload")||
        !ok(cudaMemcpy2D(fc2,J/2,dw+(size_t)rank*(J/2),I/2,J/2,H,cudaMemcpyHostToDevice),"TP2 expert down upload")||
        !ok(cudaMemcpy2D(fc2s,J/32,ds+(size_t)rank*(J/32),I/32,J/32,H,cudaMemcpyHostToDevice),"TP2 expert down scale upload"))return 0;
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     dg_pack_weight_scale<<<(2*J*(H/32/4)+255)/256,256>>>(set->bank_fc1_dg_scale,fc1s,e,2*J,H/32);
     dg_pack_weight_scale<<<(H*(J/32/4)+255)/256,256>>>(set->bank_fc2_dg_scale,fc2s,e,H,J/32);
     if(!ok(cudaGetLastError(),"TP2 expert DeepGEMM scale packing"))return 0;
@@ -2076,7 +2076,7 @@ extern "C" int dsv4_cuda_route_moe(const Dsv4CudaActivation*input,Dsv4CudaTensor
     if(set->hash)route_fixed6<<<1,K,0,c->stream>>>(c->expert_ids,c->expert_weights,c->dy,scale);
     else route_top6<<<1,32,0,c->stream>>>(c->expert_ids,c->expert_weights,bias?(float*)bias->w:nullptr,c->dy,0,scale);
     if(!ok(cudaMemcpyAsync(c->dx,input->data,hb,cudaMemcpyDeviceToDevice,c->stream),"routed MoE input copy"))return 0;
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     static int deepgemm=-1;if(deepgemm<0)deepgemm=getenv("DSV4_CUDA_DEEPGEMM")?atoi(getenv("DSV4_CUDA_DEEPGEMM")):1;
     if(deepgemm){
         static int announced;if(!announced++){fprintf(stderr,"[DSV4 CUDA] DeepGEMM routed experts active\n");}
@@ -2131,7 +2131,7 @@ extern "C" int dsv4_cuda_route_moe(const Dsv4CudaActivation*input,Dsv4CudaTensor
     return ok(cudaGetLastError(),"routed MoE launch");
 }
 extern "C" int dsv4_cuda_route_moe_batch(const Dsv4CudaActivation*input,Dsv4CudaTensor*gate,Dsv4CudaTensor*bias,const int*tokens,int count,float scale,Dsv4CudaExpertSet*set,float limit,Dsv4CudaActivation*output){
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     Dev*c=input?ctx(input->device):nullptr;if(!c||!gate||!set||!output||count<1||count>128||set->device!=input->device||output->device!=input->device||gate->fmt!=32||gate->O!=256||gate->I!=4096||gate->device!=input->device||set->count!=256||set->H!=4096||set->I!=2048||input->elements<(long long)count*4096||output->elements<(long long)count*4096||(bias&&(bias->fmt!=32||bias->O*bias->I<256||bias->device!=input->device))||(set->hash&&!tokens)||!ok(cudaSetDevice(input->device),"select batched MoE device"))return 0;
     int routes=count*6;size_t logits=(size_t)count*256*sizeof(float),ids=(size_t)routes*sizeof(int),weights=(size_t)routes*sizeof(float);
     if(!buf((void**)&c->dy,&c->ycap,logits)||!buf((void**)&c->expert_ids,&c->expert_idcap,ids)||!buf((void**)&c->expert_weights,&c->expert_weightscap,weights)||
@@ -2177,7 +2177,7 @@ extern "C" int dsv4_cuda_route_top6_batch(const Dsv4CudaActivation*input,Dsv4Cud
  * The caller guarantees every id's bank slot holds that expert's weights;
  * routed sum and the shared expert land in output like route_moe_batch. */
 extern "C" int dsv4_cuda_route_moe_ids_batch(const Dsv4CudaActivation*input,const int*ids,const float*weights,int count,Dsv4CudaExpertSet*set,float limit,Dsv4CudaActivation*output){
-#ifdef COLI_DSV4_DEEPGEMM
+#ifdef LMA_DSV4_DEEPGEMM
     Dev*c=input?ctx(input->device):nullptr;
     if(!c||!ids||!weights||!set||!output||count<1||count>128||set->device!=input->device||output->device!=input->device||
        set->count!=256||set->H!=4096||set->I!=2048||!set->bank_fc1||
@@ -2258,7 +2258,7 @@ extern "C" int dsv4_cuda_route_moe_ids_batch(const Dsv4CudaActivation*input,cons
 extern "C" int dsv4_cuda_route_moe_ep2(const Dsv4CudaActivation*input,Dsv4CudaTensor*gate,Dsv4CudaTensor*bias,
         const Dsv4CudaActivation*peer_input,Dsv4CudaTensor*peer_gate,Dsv4CudaTensor*peer_bias,int token,float scale,
         Dsv4CudaExpertSet*local,Dsv4CudaExpertSet*peer,float limit,Dsv4CudaActivation*output,Dsv4CudaActivation*peer_output){
-#ifndef COLI_DSV4_DEEPGEMM
+#ifndef LMA_DSV4_DEEPGEMM
     (void)input;(void)gate;(void)bias;(void)peer_input;(void)peer_gate;(void)peer_bias;(void)token;(void)scale;(void)local;(void)peer;(void)limit;(void)output;(void)peer_output;return 0;
 #else
     Dev*c=input?ctx(input->device):nullptr,*p=peer?ctx(peer->device):nullptr;
@@ -2292,7 +2292,7 @@ extern "C" int dsv4_cuda_route_moe_ep2(const Dsv4CudaActivation*input,Dsv4CudaTe
         if(peer->hash)route_fixed6<<<1,K,0,p->stream>>>(p->expert_ids,p->expert_weights,p->dy,scale);
         else route_top6<<<1,32,0,p->stream>>>(p->expert_ids,p->expert_weights,peer_bias?(float*)peer_bias->w:nullptr,p->dy,0,scale);
         if(!ok(cudaMemcpyAsync(p->dx,peer_input->data,hb,cudaMemcpyDeviceToDevice,p->stream),"EP2 peer local input"))return 0;}
-#ifdef COLI_DSV4_NCCL
+#ifdef LMA_DSV4_NCCL
     if(!replicated&&(!c->ep_comm||!p->ep_comm||!ok(cudaSetDevice(c->id),"select EP2 broadcast root")||!nok(ncclGroupStart(),"EP2 broadcast group start")||
        !nok(ncclBroadcast(c->dx,c->dx,H,ncclFloat,0,c->ep_comm,c->stream),"EP2 input root")||
        !nok(ncclBroadcast(c->expert_ids,c->expert_ids,K,ncclInt,0,c->ep_comm,c->stream),"EP2 ids root")||
@@ -2331,7 +2331,7 @@ extern "C" int dsv4_cuda_route_moe_ep2(const Dsv4CudaActivation*input,Dsv4CudaTe
     else if(dense){if(!dg_dense_4096x2048(c,local->sd,c->p3,c->p4))return 0;}
     else{fp8_sim<<<(LJ+127)/128,128,0,c->stream>>>(c->p3,1,LJ);run_mv<8>((uint8_t*)local->sd->w,local->sd->scale,c->p3,c->p4,H,LJ,1,c->stream);}
     if(shared_tp)moe_combine<<<(H+255)/256,256,0,c->stream>>>(output->data,c->p4,H);
-#ifdef COLI_DSV4_NCCL
+#ifdef LMA_DSV4_NCCL
     if(!ok(cudaSetDevice(c->id),"select EP2 reduce root")||!nok(ncclGroupStart(),"EP2 reduce group start")||
        !nok(ncclAllReduce(output->data,output->data,H,ncclFloat,ncclSum,c->ep_comm,c->stream),"EP2 primary reduce")||
        !ok(cudaSetDevice(p->id),"select EP2 reduce peer")||

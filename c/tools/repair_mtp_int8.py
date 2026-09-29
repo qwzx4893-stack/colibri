@@ -1,4 +1,4 @@
-"""Repair an existing colibri int4 container whose MTP head was quantized at int4.
+"""Repair an existing lmatomic int4 container whose MTP head was quantized at int4.
 
 WHY THIS EXISTS
   `model.layers.<N>.eh_proj.weight` [D, 2D] multiplies the MTP concat
@@ -46,7 +46,7 @@ except ImportError:
 
 # ---------- HTTP range reads against the source repo ----------
 def http_range(url, start, length, tries=5):
-    req = urllib.request.Request(url, headers={"User-Agent": "colibri-mtp-repair",
+    req = urllib.request.Request(url, headers={"User-Agent": "lmatomic-mtp-repair",
                                                "Range": f"bytes={start}-{start+length-1}"})
     for attempt in range(tries):
         try:
@@ -154,7 +154,7 @@ def write_shard(path, tensors, meta):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--snap", required=True, help="local colibri int4 container directory")
+    ap.add_argument("--snap", required=True, help="local lmatomic int4 container directory")
     ap.add_argument("--source-repo", default="zai-org/GLM-5.2-FP8")
     ap.add_argument("--revision", default="main")
     ap.add_argument("--dry-run", action="store_true", help="report what would change, touch nothing")

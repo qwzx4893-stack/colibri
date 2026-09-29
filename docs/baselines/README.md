@@ -1,4 +1,4 @@
-# Colibri, SGLang and vLLM serving baseline
+# LM Atomic, SGLang and vLLM serving baseline
 
 This is a reproducible collection protocol, **not a measured performance ranking**.
 `c/tools/benchmark_baseline.py` reuses the existing HTTP harness. It does not start,
@@ -41,7 +41,7 @@ Choose the comparison explicitly:
 | `matched_artifact` | All three weight inventory hashes, formats and quantization descriptions must match | Matched-artifact performance observations, conditional on external quality and configuration checks |
 | `deployment` | Shared source model/tokenizer/template and workload; engine artifacts may differ | A comparison of complete deployment configurations, **not an isolated engine speedup** |
 
-A Colibri converted INT4 artifact and a vLLM NVFP4 checkpoint belong in
+A LM Atomic converted INT4 artifact and a vLLM NVFP4 checkpoint belong in
 `deployment`, even if they originated from the same model. Matching labels or
 hashes does not prove equal quality or backend numerical behavior.
 
@@ -68,16 +68,16 @@ least reach the largest concurrency; this does not guarantee sustained occupancy
 
 The plan rotates engine order to reduce systematic order bias:
 
-1. Colibri, SGLang, vLLM.
-2. SGLang, vLLM, Colibri.
-3. vLLM, Colibri, SGLang.
+1. LM Atomic, SGLang, vLLM.
+2. SGLang, vLLM, LM Atomic.
+3. vLLM, LM Atomic, SGLang.
 
 After manually starting the selected engine with the recorded configuration:
 
 ```sh
 python3 c/tools/benchmark_baseline.py run \
   --manifest /path/experiment/manifest.json \
-  --engine colibri --round 1 --results /path/experiment/results
+  --engine LM Atomic --round 1 --results /path/experiment/results
 ```
 
 Repeat for each plan entry, releasing the previous engine's allocated hardware

@@ -1,7 +1,7 @@
 /* COLIEX01 cluster wire contract: network-order headers, raw f32 activations,
  * and one request/response over a socketpair. No model fixture required. */
-#define main coli_engine_main_unused
-#include "../colibri.c"
+#define main lma_engine_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <assert.h>
@@ -18,8 +18,8 @@ static void *cluster_protocol_worker(void *opaque)
     float input[6], output[6];
 
     /* Request: magic(8) version layer D I n, then eid nr and nr*D inputs. */
-    if (cluster_io(fd, magic, sizeof(magic), 0) || memcmp(magic, COLI_CLUSTER_MAGIC, 8) ||
-        cluster_u32(fd, &version, 0) || version != COLI_CLUSTER_VERSION ||
+    if (cluster_io(fd, magic, sizeof(magic), 0) || memcmp(magic, LMA_CLUSTER_MAGIC, 8) ||
+        cluster_u32(fd, &version, 0) || version != LMA_CLUSTER_VERSION ||
         cluster_u32(fd, &layer, 0) || layer != 7 ||
         cluster_u32(fd, &D, 0) || D != 3 ||
         cluster_u32(fd, &I, 0) || I != 5 ||
@@ -33,8 +33,8 @@ static void *cluster_protocol_worker(void *opaque)
     for (int i = 0; i < 6; i++) output[i] = input[i] * 2.0f;
 
     /* Response: magic(8) version status(0) n, then eid nr and nr*D outputs. */
-    version = COLI_CLUSTER_VERSION;
-    if (cluster_io(fd, (void *)COLI_CLUSTER_MAGIC, 8, 1) ||
+    version = LMA_CLUSTER_VERSION;
+    if (cluster_io(fd, (void *)LMA_CLUSTER_MAGIC, 8, 1) ||
         cluster_u32(fd, &version, 1) ||
         cluster_u32(fd, &(uint32_t){0}, 1) ||
         cluster_u32(fd, &n, 1) ||
@@ -56,8 +56,8 @@ static void test_wire_round_trip(void)
     uint32_t value;
     float input[6] = {1.0f, -2.0f, 0.5f, 3.0f, -4.0f, 0.25f}, output[6] = {0};
 
-    assert(cluster_io(sockets[0], (void *)COLI_CLUSTER_MAGIC, 8, 1) == 0);
-    value = COLI_CLUSTER_VERSION; assert(cluster_u32(sockets[0], &value, 1) == 0);
+    assert(cluster_io(sockets[0], (void *)LMA_CLUSTER_MAGIC, 8, 1) == 0);
+    value = LMA_CLUSTER_VERSION; assert(cluster_u32(sockets[0], &value, 1) == 0);
     value = 7;  assert(cluster_u32(sockets[0], &value, 1) == 0); /* layer */
     value = 3;  assert(cluster_u32(sockets[0], &value, 1) == 0); /* D */
     value = 5;  assert(cluster_u32(sockets[0], &value, 1) == 0); /* moe_inter */
@@ -68,8 +68,8 @@ static void test_wire_round_trip(void)
 
     char magic[8];
     assert(cluster_io(sockets[0], magic, 8, 0) == 0);
-    assert(memcmp(magic, COLI_CLUSTER_MAGIC, 8) == 0);
-    value = 0; assert(cluster_u32(sockets[0], &value, 0) == 0 && value == COLI_CLUSTER_VERSION);
+    assert(memcmp(magic, LMA_CLUSTER_MAGIC, 8) == 0);
+    value = 0; assert(cluster_u32(sockets[0], &value, 0) == 0 && value == LMA_CLUSTER_VERSION);
     value = 1; assert(cluster_u32(sockets[0], &value, 0) == 0 && value == 0);  /* status */
     value = 0; assert(cluster_u32(sockets[0], &value, 0) == 0 && value == 1);  /* n */
     value = 0; assert(cluster_u32(sockets[0], &value, 0) == 0 && value == 42); /* eid */

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/colibri-logo.svg" width="560" alt="colibrì——小巧引擎，庞大模型">
+  <img src="assets/lmatomic-logo.svg" width="560" alt="LM Atomic——小巧引擎，庞大模型">
 </p>
 
 <p align="center">
@@ -13,19 +13,19 @@
 目前可运行九个模型家族：**GLM-5.2/5.3**（744B）、**GLM-5.3-Flash**（321B，含视觉）、
 **Inkling**（975B）、**Kimi K3**（2.8T）、**DeepSeek V4 Flash**（284B）、**DeepSeek V4.1 Flash**（552B，含视觉）、
 **Qwen3.8-Flash-Next**（125B + 51B n-gram）、**Qwen3.6**（35B-A3B）与 **OLMoE**（7B）
-——各自一个 C 文件，共用同一套 `coli chat` / `coli serve` / `coli web` 前端。[完整列表](README.md#other-supported-models)
+——各自一个 C 文件，共用同一套 `lmatomic chat` / `lmatomic serve` / `lmatomic web` 前端。[完整列表](README.md#other-supported-models)
 
-> **Colibrì 既是今天就能运行的推理引擎，也是一个开放的研究平台**。它的首要目标是在
+> **LM Atomic 既是今天就能运行的推理引擎，也是一个开放的研究平台**。它的首要目标是在
 > 完整的软硬件边界上追求推理侧性能——模型格式、内存层级、存储 I/O、放置、调度、内核、
 > 推测解码以及 CPU/GPU 重叠执行——让大模型减少对稀缺硬件的依赖，并降低运行成本。
 
-Colibrì 刻意用于验证激进的系统思路——因此**对速度不作 SLA 承诺，对语义则给出硬性保证**：
+LM Atomic 刻意用于验证激进的系统思路——因此**对速度不作 SLA 承诺，对语义则给出硬性保证**：
 实验必须通过可复现的端到端测量证明价值；默认策略**绝不会在未告知的情况下改变模型精度或
 路由语义**。高速内存不足可以降低速度，但不能悄悄重新定义模型。
 
 ```
-$ ./coli chat
-  🐦 colibri v1.12.1 — GLM-5.2 · 744B MoE · int4 · streaming CPU
+$ ./lmatomic chat
+  🐦 lmatomic v1.12.1 — GLM-5.2 · 744B MoE · int4 · streaming CPU
   ✓ ready in 32s · resident 9.9 GB
   › ciao!
   ◆ Ciao! 😊 Come posso aiutarti oggi?
@@ -34,40 +34,40 @@ $ ./coli chat
 ## 实际运行效果
 
 <p align="center">
-  <img src="docs/media/colibri-dashboard.png" width="900" alt="colibrì 网页仪表盘——实时指标、硬件面板与专家存储层级">
+  <img src="docs/media/lmatomic-dashboard.png" width="900" alt="LM Atomic 网页仪表盘——实时指标、硬件面板与专家存储层级">
 </p>
-<p align="center"><em>网页仪表盘（<code>./coli web</code>），1.12.0 重新设计：一个工作区，底部停靠栏切换聊天、Brio 模式、
+<p align="center"><em>网页仪表盘（<code>./lmatomic web</code>），1.12.0 重新设计：一个工作区，底部停靠栏切换聊天、Brio 模式、
 Brain 页面和性能分析，支持浅色与深色主题。图中是 Qwen3.6 在纯 CPU 机器上作答，专家从磁盘流式读取。</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-brio.png" width="900" alt="Brio 页面：文档只读一次，每个允许的答案各有一个概率，并给出熵">
+  <img src="docs/media/lmatomic-brio.png" width="900" alt="Brio 页面：文档只读一次，每个允许的答案各有一个概率，并给出熵">
 </p>
 <p align="center"><em><strong>Brio 模式</strong>：同一个模型，只是不再让它写。给它一段文档和唯一允许的几个答案，
 它读出每个答案的概率，不生成任何 token，并给出一个熵，说明它何时没有把握。图中：<strong>request changes，99.9%</strong>，
 熵 0.005，读取 4 个 token，生成 0 个。</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-brain.png" width="900" alt="大脑页面：GLM-5.2 的实测专家图谱绘成一块皮层，十个可进入的区域">
+  <img src="docs/media/lmatomic-brain.png" width="900" alt="大脑页面：GLM-5.2 的实测专家图谱绘成一块皮层，十个可进入的区域">
 </p>
 <p align="center"><em><strong>大脑（Brain）</strong>页面的 <strong>Explore</strong> 视图：将 GLM-5.2 的<a href="https://github.com/JustVugg/colibri/issues/175">实测专家图谱</a>绘成一块皮层。
 13,260 个已分析专家分为十个区域（Python、SQL、数学、诗歌、法律、中文……）；位置取自实测路由亲和度，而非学习出的嵌入向量。
 选择一个区域即可进入。<strong>Live routing</strong> 视图切换到正在运行的模型：每个专家一格，颜色代表存储层级，每轮被路由到的专家都会闪白。</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-brain-region.png" width="900" alt="Python 区域内部：1,142 个专家，其中一个被选中并显示其实测亲和度">
+  <img src="docs/media/lmatomic-brain-region.png" width="900" alt="Python 区域内部：1,142 个专家，其中一个被选中并显示其实测亲和度">
 </p>
 <p align="center"><em><strong>Python</strong> 区域内部：1,142 个专家组成的星座，每个都标注了层号和序号。面板显示其中一个：第 17 层第 178 号专家，
 一个熵为 3.13 的通才，其实测亲和度为 Python 20.2%、JSON 14.6%、对话 14.2%、SQL 13.3%。</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-profiling.png" width="900" alt="性能剖析页面：引擎在每一轮中的时间去向">
+  <img src="docs/media/lmatomic-profiling.png" width="900" alt="性能剖析页面：引擎在每一轮中的时间去向">
 </p>
 <p align="center"><em><strong>性能剖析（Profiling）</strong>页面：引擎在每一轮中的时间去向，按阶段划分，并以最近 30 轮作为趋势。
 此处为 CPU 机器上的 Qwen3.6：36 个提示词元与 55 个生成词元共用时 19.0 秒，2.9 tok/s，其中 11.4 秒的磁盘服务与计算重叠。</em></p>
 
 ## 研究使命
 
-前沿模型推理不该默认要求数据中心级硬件。Colibrì 的研究目标很简单：
+前沿模型推理不该默认要求数据中心级硬件。LM Atomic 的研究目标很简单：
 **优化证据表明受限的每一段推理路径，降低推理的硬件依赖与总成本**。
 
 这包括改变权重的表示与移动方式，决定哪些内容常驻 VRAM、RAM 或存储，重叠异构计算，
@@ -99,7 +99,7 @@ Brain 页面和性能分析，支持浅色与深色主题。图中是 Qwen3.6 �
 
 ## 开放猜想、实验与参与方式
 
-在受控的端到端 A/B 证明之前，Colibrì 将每项优化都视为猜想。当前主要问题如下：
+在受控的端到端 A/B 证明之前，LM Atomic 将每项优化都视为猜想。当前主要问题如下：
 
 | 猜想 | 当前证据 | 仍需完成的实验 |
 |---|---|---|
@@ -134,7 +134,7 @@ Brain 页面和性能分析，支持浅色与深色主题。图中是 Qwen3.6 �
   **存放在磁盘**（约 370 GB），并**按需流式加载**，配合逐层 LRU 缓存、
   会学习的热门专家固定存储区，以及可选的 VRAM 层级。
 
-引擎是一个 C 主文件（`c/colibri.c`）加上若干头文件。不需要 BLAS，
+引擎是一个 C 主文件（`c/glm52.c`）加上若干头文件。不需要 BLAS，
 运行时不需要 Python，也不需要 GPU。
 
 ## 工作原理
@@ -158,8 +158,8 @@ Brain 页面和性能分析，支持浅色与深色主题。图中是 Qwen3.6 �
 （慢，但结果正确）；在大内存主机上，则可让整组专家常驻
 （`CUDA_EXPERT_GB=auto PIN_GB=all`），让磁盘完全退出解码路径。
 两端之间有一层**学习型缓存**：引擎会记录*你的*工作负载路由到哪些专家
-（`.coli_usage`，每轮更新），并自动固定最热门的专家——colibrì 确实会越用越快。
-在多路主机上，`COLI_NUMA=1` 会将常驻权重交错分配到各内存控制器
+（`.lma_usage`，每轮更新），并自动固定最热门的专家——LM Atomic 确实会越用越快。
+在多路主机上，`LMA_NUMA=1` 会将常驻权重交错分配到各内存控制器
 （[#82](https://github.com/JustVugg/colibri/issues/82)）。
 
 ### 绝不为同一次磁盘读取等待两遍
@@ -169,7 +169,7 @@ Brain 页面和性能分析，支持浅色与深色主题。图中是 Qwen3.6 �
 （`PIPE=1`，默认启用）会在常驻专家计算时加载缺失的专家；批量位置只读取每个
 不重复专家一次（**批量并集**）；路由前瞻线程（`PILOT=1`）则预取下一层专家——
 实测显示，路由结果提前一层时有 **71.6% 的可预测性**。
-在 GPU 上，常驻管线（`COLI_CUDA_PIPE=2`）让残差流跨层保留在设备端，
+在 GPU 上，常驻管线（`LMA_CUDA_PIPE=2`）让残差流跨层保留在设备端，
 使 CPU 专家循环不中断；在 Apple Silicon 上，实验性的
 [Metal 后端](docs/metal.md)会用统一内存 GPU 执行批量专家运算。
 
@@ -178,7 +178,7 @@ Brain 页面和性能分析，支持浅色与深色主题。图中是 Qwen3.6 �
 前向传播已通过 `transformers` oracle 验证为**逐 token 完全一致**
 （teacher-forcing 32/32）。MLA 注意力存储压缩后的 KV 状态——每个 token 为 576 个
 浮点数，而非 32,768 个（**缩小 57×**）——并跨重启持久保存
-（`.coli_kv`）：对话可暖启恢复，不需重新 prefill，结果与不中断的会话
+（`.lma_kv`）：对话可暖启恢复，不需重新 prefill，结果与不中断的会话
 逐字节相同。DSA 稀疏注意力（GLM-5.2 的 lightning indexer）已忠实实现，
 并通过强制选取所有 key，验证可精确复现稠密注意力。
 
@@ -222,18 +222,18 @@ MTP head 必须是 **int8**（int4 head 的接受率会崩塌到 0–4%，见
 你需要两样东西：**程序本体**（几百 KB）和**模型**（372 GB）。各平台的分步
 指引见 [Quick Start 指南](docs/quickstart.md)。
 
-### 1. 获取 colibri
+### 1. 获取 LM Atomic
 
 **下载预编译版本**——Linux、macOS 与 Windows 均已提供，无需编译器。从
 [Releases](https://github.com/JustVugg/colibri/releases) 下载对应平台的压缩包并解压：
 
 ```bash
-mkdir colibri && tar xzf colibri-v1.8.0-linux-x86_64.tar.gz -C colibri && cd colibri
-python3 coli info                         # engine ready ✓
+mkdir lmatomic && tar xzf colibri-v1.8.0-linux-x86_64.tar.gz -C lmatomic && cd lmatomic
+python3 lmatomic info                         # engine ready ✓
 ```
 
-包内含引擎（`colibri`，Windows 上为 `colibri.exe`）、`coli` 启动器及其 Python
-辅助脚本。无需重命名或配置：`coli` 会自动找到同目录下的引擎。你只需安装
+包内含引擎（`lmatomic`，Windows 上为 `glm52.exe`）、`lmatomic` 启动器及其 Python
+辅助脚本。无需重命名或配置：`lmatomic` 会自动找到同目录下的引擎。你只需安装
 [Python 3](https://www.python.org/downloads/)——启动器和 API gateway 是 Python
 脚本，而引擎本身是零依赖的纯 C 程序。
 
@@ -244,7 +244,7 @@ git clone https://github.com/JustVugg/colibri && cd colibri/c
 ./setup.sh                                # 检查 gcc/OpenMP、构建并运行自测
 ```
 
-想把 `coli` 加入 PATH？在 checkout 中执行 `pip install -e .` 即可注册（引擎仍位于
+想把 `lmatomic` 加入 PATH？在 checkout 中执行 `pip install -e .` 即可注册（引擎仍位于
 `c/` 目录——这是从克隆目录做的可编辑安装，而非独立 wheel）。
 
 ### 2. 获取模型
@@ -271,17 +271,17 @@ Hugging Face 上已有预转换的 **GLM-5.2 int4** 容器——请务必使用
 在磁盘上同时存放完整的 756 GB：
 
 ```bash
-./coli convert --model /nvme/glm52_i4     # 逐 shard 下载并转换（仅此一次需要 python）
+./lmatomic convert --model /nvme/glm52_i4     # 逐 shard 下载并转换（仅此一次需要 python）
 ```
 
 ### 3. 运行
 
 ```bash
-COLI_MODEL=/nvme/glm52_i4 ./coli chat     # 自动检测 RAM 预算、缓存与 MTP
-COLI_MODEL=/nvme/glm52_i4 ./coli plan     # 查看规划的 VRAM／RAM／磁盘配置
-COLI_MODEL=/nvme/glm52_i4 ./coli doctor   # 只读就绪检查
-./coli web  --model /nvme/glm52_i4        # 在同一端口提供 API 与网页仪表盘
-./coli serve --model /nvme/glm52_i4       # 仅提供 OpenAI 兼容 API
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic chat     # 自动检测 RAM 预算、缓存与 MTP
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic plan     # 查看规划的 VRAM／RAM／磁盘配置
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic doctor   # 只读就绪检查
+./lmatomic web  --model /nvme/glm52_i4        # 在同一端口提供 API 与网页仪表盘
+./lmatomic serve --model /nvme/glm52_i4       # 仅提供 OpenAI 兼容 API
 ```
 
 #### Brio 模式：问一个封闭式问题
@@ -293,7 +293,7 @@ Brio 模式把允许的选项交给引擎，读出每个选项的概率，而不
 
 ```bash
 # 在 TUI 中：同一个模型，只是不再让它写
-./coli chat --model /nvme/qwen36_i4_gs64
+./lmatomic chat --model /nvme/qwen36_i4_gs64
 > /brio merge | request changes | close
 > 340 lines, 8 files, no tests. CI is green but nothing covers that path.
 
@@ -311,7 +311,7 @@ curl -s http://127.0.0.1:8000/v1/brio -H 'Content-Type: application/json' -d '{
 仪表盘中也有 Brio 页面。
 
 
-在 Windows 上同样使用这些命令，写作 `python coli chat --model D:\glm52_i4`。
+在 Windows 上同样使用这些命令，写作 `python lmatomic chat --model D:\glm52_i4`。
 引擎运行时是纯 C——python 只供一次性转换工具与可选的 API gateway 使用。
 
 ### 4. 深入了解
@@ -340,9 +340,9 @@ Windows／MSYS2（CPU），并提供可选的 CUDA 层（Windows 运行时 DLL�
 ```bash
 cd c
 make deepseek-v4
-python ./coli run --model /path/to/DeepSeek-V4-Flash --ram 32 \
+python ./lmatomic run --model /path/to/DeepSeek-V4-Flash --ram 32 \
   "法国的首都是哪里？"
-# 同一模型也支持：coli chat / coli serve / coli web
+# 同一模型也支持：lmatomic chat / lmatomic serve / lmatomic web
 ```
 
 状态、checkpoint 验证、统一 CLI／server 用法和动态生成的 tiny 独立
@@ -361,7 +361,7 @@ oracle 说明，请参阅[中文版 DeepSeek V4 文档](docs/deepseek-v4.zh-CN.m
 
 ## 支持项目
 
-colibrì 最初由一人使用 12 核心、25 GB RAM 的笔记本开发；
+LM Atomic 最初由一人使用 12 核心、25 GB RAM 的笔记本开发；
 如今它的数据来自社区中各种真实机器。如果这个项目对你有用：
 
 - ⭐ 为仓库加星并分享；
@@ -374,15 +374,15 @@ colibrì 最初由一人使用 12 核心、25 GB RAM 的笔记本开发；
 ```
 Makefile                  根目录构建／检查入口
 c/
-├── colibri.c             引擎主文件
+├── glm52.c             引擎主文件
 ├── quant.h               量化 matmul 内核（SIMD 多架构）
 ├── sample.h              采样与 stop-set 管理
-├── kv_persist.h          .coli_kv 磁盘持久化
+├── kv_persist.h          .lma_kv 磁盘持久化
 ├── telemetry.h           仪表盘协议、统计与用量持久化
 ├── st.h, tok.h, json.h   运行时头文件
 ├── backend_cuda.*        可选的 CUDA 层级
 ├── Makefile              构建与本地检查
-├── coli                  用户界面 CLI
+├── lmatomic                  用户界面 CLI
 ├── openai_server.py      OpenAI 兼容 HTTP gateway
 ├── setup.sh              一条命令完成本地设置
 ├── tools/                离线转换、fixtures 与 benchmarks
@@ -393,11 +393,11 @@ desktop/                  封装网页 UI 的 Tauri v2 桌面 shell
 docs/                     参考文档、实验、媒体文件与 DeepSeek V4 说明
 ```
 
-运行时路径刻意保持扁平、易读：`colibri.c` 加上若干头文件。
+运行时路径刻意保持扁平、易读：`glm52.c` 加上若干头文件。
 在仓库根目录执行 `make`、`make check` 与 `make clean`，
 都会转发给引擎的 Makefile。
 
-## 为什么叫"colibrì"
+## 为什么叫"LM Atomic"
 
 蜂鸟只有几克重，能在原地悬停，并在一天内造访上千朵花。
 这套引擎只用蜂鸟般的配给，就能让 744B 参数的巨人运转：

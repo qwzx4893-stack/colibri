@@ -6,7 +6,7 @@
  * backend_cuda.cu uses onto HIP 1:1. The kernel language (__global__,
  * __shared__, <<<>>>) is shared syntax.
  *
- * COLI_GPU_HAS_WMMA: the WMMA tensor-core kernels are guarded by
+ * LMA_GPU_HAS_WMMA: the WMMA tensor-core kernels are guarded by
  * __CUDA_ARCH__ >= 700 (device side) and by this flag at the host dispatch
  * sites. Under HIP, __CUDA_ARCH__ is not defined by hipcc, so we define it
  * here to 700 to activate the WMMA kernel bodies (the guard is a minimum
@@ -18,31 +18,31 @@
  * Note: grouped_s4_wmma uses wmma::experimental::precision::s4 (4-bit)
  * which has no rocWMMA equivalent — that kernel stays a no-op under HIP
  * and falls back to quant_matmul. */
-#ifndef COLIBRI_BACKEND_GPU_COMPAT_H
-#define COLIBRI_BACKEND_GPU_COMPAT_H
+#ifndef LMA_BACKEND_GPU_COMPAT_H
+#define LMA_BACKEND_GPU_COMPAT_H
 
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP__)
 #include <hip/hip_runtime.h>
 #include <hip/hip_fp16.h>
 /* rocWMMA requires matrix cores (MFMA: gfx908+, WMMA: gfx11xx); on other
  * targets (gfx906, gfx101x, gfx103x) its headers static_assert. The Makefile
- * passes -DCOLI_HIP_NO_WMMA for those archs: the WMMA kernel bodies stay
+ * passes -DLMA_HIP_NO_WMMA for those archs: the WMMA kernel bodies stay
  * compiled out (__CUDA_ARCH__ undefined fails the >= 700 guard) and the host
- * dispatch sites fall back via COLI_GPU_HAS_WMMA=0, same as pre-Volta CUDA.
+ * dispatch sites fall back via LMA_GPU_HAS_WMMA=0, same as pre-Volta CUDA.
  * The flag must be set for BOTH hipcc passes (host + device) — an arch-macro
  * check here would let the host dispatch kernels whose bodies were compiled
  * out, silently computing nothing. */
-#ifndef COLI_HIP_NO_WMMA
+#ifndef LMA_HIP_NO_WMMA
 #if __has_include(<rocwmma/rocwmma.hpp>)
 #include <rocwmma/rocwmma.hpp>
-#define COLI_GPU_HAS_WMMA        1
+#define LMA_GPU_HAS_WMMA        1
 /* rocWMMA has no sub-byte fragments (no s4/int4 precision), and the
  * grouped_s4_wmma body is guarded by __CUDA_ARCH__ >= 750, which the 700
  * defined below does not reach: its body is compiled OUT. The host gate
  * used to test rocWMMA availability alone, took the branch, launched three
  * empty kernels and returned the previous call's output untouched (#1499).
  * A second flag for the one kernel that needs more than WMMA. */
-#define COLI_GPU_HAS_S4_WMMA     0
+#define LMA_GPU_HAS_S4_WMMA     0
 #define __CUDA_ARCH__            700
 #define __half                  rocwmma::float16_t
 namespace nvcuda { namespace wmma = ::rocwmma; }
@@ -54,8 +54,8 @@ namespace nvcuda { namespace wmma = ::rocwmma; }
 #endif
 #else
 /* Arch has no matrix cores: rocWMMA is not needed and not included. */
-#define COLI_GPU_HAS_WMMA        0
-#define COLI_GPU_HAS_S4_WMMA     0
+#define LMA_GPU_HAS_WMMA        0
+#define LMA_GPU_HAS_S4_WMMA     0
 #define __syncwarp()            __syncthreads()
 #endif
 #define cudaError_t              hipError_t
@@ -110,11 +110,11 @@ namespace nvcuda { namespace wmma = ::rocwmma; }
 #else
 #include <cuda_runtime.h>
 #include <mma.h>
-#define COLI_GPU_HAS_WMMA        1
+#define LMA_GPU_HAS_WMMA        1
 /* nvcuda::wmma::experimental::precision::s4 exists here; the kernel body still
  * needs sm_75+, which the host checks at run time from the device's compute
  * capability (see the grouped_s4_wmma dispatch in backend_cuda.cu). */
-#define COLI_GPU_HAS_S4_WMMA     1
+#define LMA_GPU_HAS_S4_WMMA     1
 #endif
 
-#endif /* COLIBRI_BACKEND_GPU_COMPAT_H */
+#endif /* LMA_BACKEND_GPU_COMPAT_H */

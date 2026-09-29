@@ -1,5 +1,5 @@
-#ifndef COLIBRI_BACKEND_CUDA_DSV4_H
-#define COLIBRI_BACKEND_CUDA_DSV4_H
+#ifndef LMA_BACKEND_CUDA_DSV4_H
+#define LMA_BACKEND_CUDA_DSV4_H
 #include <stdint.h>
 #ifdef __cplusplus
 extern "C" {

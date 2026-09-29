@@ -22,7 +22,7 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-ENGINE = HERE / ("colibri.exe" if sys.platform == "win32" else "colibri")
+ENGINE = HERE / ("glm52.exe" if sys.platform == "win32" else "glm52")
 
 TINY_GLM_CONFIG = json.loads('{"transformers_version":"5.12.1","architectures":null,"output_hidden_states":false,"return_dict":true,"dtype":null,"chunk_size_feed_forward":0,"is_encoder_decoder":false,"id2label":{"0":"LABEL_0","1":"LABEL_1"},"label2id":{"LABEL_0":0,"LABEL_1":1},"problem_type":null,"vocab_size":8192,"hidden_size":1024,"intermediate_size":2048,"moe_intermediate_size":512,"num_hidden_layers":8,"num_attention_heads":16,"num_key_value_heads":16,"n_shared_experts":1,"n_routed_experts":32,"routed_scaling_factor":2.5,"kv_lora_rank":128,"q_lora_rank":256,"qk_rope_head_dim":32,"v_head_dim":64,"qk_nope_head_dim":64,"n_group":1,"topk_group":1,"num_experts_per_tok":8,"norm_topk_prob":true,"hidden_act":"silu","max_position_embeddings":4096,"initializer_range":0.02,"rms_norm_eps":1e-05,"use_cache":true,"pad_token_id":null,"bos_token_id":0,"eos_token_id":1,"tie_word_embeddings":false,"rope_parameters":{"rope_type":"default","rope_theta":10000.0},"mlp_layer_types":["dense","dense","dense","sparse","sparse","sparse","sparse","sparse"],"attention_bias":false,"attention_dropout":0.0,"index_topk":4096,"index_head_dim":32,"index_n_heads":4,"mlp_bias":false,"num_experts":256,"head_dim":32,"first_k_dense_replace":3,"layer_types":["deepseek_sparse_attention","deepseek_sparse_attention","deepseek_sparse_attention","deepseek_sparse_attention","deepseek_sparse_attention","deepseek_sparse_attention","deepseek_sparse_attention","deepseek_sparse_attention"],"indexer_types":["full","full","full","full","full","full","full","full"],"qk_head_dim":96,"_name_or_path":"","model_type":"glm_moe_dsa","output_attentions":false}')
 
@@ -44,7 +44,7 @@ def write_safetensors(path, tensors):
             fh.write(blob)
 
 
-@unittest.skipUnless(ENGINE.exists(), "colibri is not built")
+@unittest.skipUnless(ENGINE.exists(), "lmatomic is not built")
 class MissingTensorDiagnosticsTest(unittest.TestCase):
     def test_missing_embed_explains_instead_of_naming(self):
         with tempfile.TemporaryDirectory() as tmp:

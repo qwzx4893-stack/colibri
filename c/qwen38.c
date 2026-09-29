@@ -13,7 +13,7 @@
  * Runtime: SNAP=<dir>, optional Q38_MAXT, Q38_EXPERT_PREFETCH=0 and
  * Q38_EXPERT_PARALLEL_READS=0 A/B controls, and argv
  * `qwen38 <cache/layer> <reserved> [ref.json]`.  The second positional remains
- * reserved so Colibri's common cache-aware launcher ABI stays stable.
+ * reserved so LM Atomic's common cache-aware launcher ABI stays stable.
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -67,16 +67,16 @@ static int qwen38_max_ctx(void) {
 #include "tok_unicode.h"
 #include "tok_unicode_o200k.h"
 #include "qwen38_nfc.h"
-/* quant.h owns Colibri's authoritative E4M3 table.  This engine retains the
+/* quant.h owns LM Atomic's authoritative E4M3 table.  This engine retains the
  * Qwen sibling's established dense kernels, so rename quant.h's two generic
  * helpers while including it; every format-specific symbol keeps its shared
  * name and implementation. */
-#define matmul coli_quant_matmul
-#define matmul_q coli_quant_matmul_q
+#define matmul lma_quant_matmul
+#define matmul_q lma_quant_matmul_q
 #include "quant.h"
 #undef matmul
 #undef matmul_q
-#include "route_trace.h"             /* shared ROUTE_TRACE + .coli_usage contract */
+#include "route_trace.h"             /* shared ROUTE_TRACE + .lma_usage contract */
 #include "moe_router.h"           /* shared top-K expert selection */
 #include "serve_codec.h"             /* shared SUBMIT/STOP/CANCEL framing */
 #include "pin_pool.h"                /* piu scatti annidati dello stato */
@@ -579,7 +579,7 @@ static double g_gen_t0 = 0;            /* generate() start (monotonic seconds) *
 static double g_ttft   = -1;           /* time to first token (s); -1 = unset */
 static long   g_oa_created = 0;        /* unix timestamp for OpenAI "created" */
 static char   g_oa_id[64];             /* OpenAI-style id, e.g. chatcmpl-... */
-static char   g_model[128] = "qwen3.8-flash-next-colibri";
+static char   g_model[128] = "qwen3.8-flash-next-lmatomic";
 static double now_s(void);   /* forward decl; defined later near model code */
 static int q38_completion_nonce(double monotonic_seconds){
     if(!isfinite(monotonic_seconds)||monotonic_seconds<0.0)return 0;
@@ -598,7 +598,7 @@ static double q38_decode_rate(int generated,double decode_seconds){
  * reuse all emit logic without any change to the CLI path. */
 static long long g_sock_out = -1;
 static void (*g_sock_send)(long long fd, const char *buf, int n) = NULL;
-static char g_q38_usage[2100];        /* <snap>/.coli_usage, or COLI_USAGE */
+static char g_q38_usage[2100];        /* <snap>/.lma_usage, or LMA_USAGE */
 
 /* JSON-escape a byte string into out (no surrounding quotes). Returns length,
  * or -1 without emitting a partial string when the destination is too small. */
@@ -915,12 +915,12 @@ static void emit_openai_result(const int *out, int np, int n_new, int stream){
 
 /* ---------- native text inference core ---------- */
 #include "qwen38_core.h"
-#ifdef COLI_SEGMENT_ADAPTER
+#ifdef LMA_SEGMENT_ADAPTER
 #include "segment_runtime.h"
 #include "segment_adapters.h"
 #include "segment_adapter_internal.h"
 #endif
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 #include "edge_runtime.h"
 #include "edge_adapters.h"
 #include "edge_adapter_internal.h"
@@ -933,9 +933,9 @@ static void emit_openai_result(const int *out, int np, int n_new, int stream){
 static void q38_telemetry_init(const char *snap, const Model *m) {
     rt_init("qwen38", m->c.layers, m->c.experts);
     rt_drop_row(m->c.layers);
-    const char *up = getenv("COLI_USAGE");
+    const char *up = getenv("LMA_USAGE");
     if (up && *up) snprintf(g_q38_usage, sizeof g_q38_usage, "%s", up);
-    else snprintf(g_q38_usage, sizeof g_q38_usage, "%s/.coli_usage", snap);
+    else snprintf(g_q38_usage, sizeof g_q38_usage, "%s/.lma_usage", snap);
     int64_t h = rt_load(g_q38_usage);
     if (h > 0)
         fprintf(stderr, "[USAGE] expert history: %lld selections (%s)\n",
@@ -982,7 +982,7 @@ static void generate(Model *m, const int *prompt, int np, int n_new, int *out) {
     m->kv_len = 0;
     for (int i = 0; i < np; i++) out[i] = prompt[i];
     float *logit = step(m, prompt, np, 0);
-    q38_tm_snapshot_prefill(m);        /* COLI_TIMERS: decode bank starts here */
+    q38_tm_snapshot_prefill(m);        /* LMA_TIMERS: decode bank starts here */
     int len = np;
     for (int s = 0; s < n_new; s++) {
         int best = 0; float bv = logit[0];
@@ -1105,10 +1105,10 @@ static int compare_reference_logits(const float *actual,const jval *expected){
 
 #if !defined(QWEN38_NO_MAIN) || defined(QWEN38_TEST_SERVE)
 
-/* ===================== coli serve mode (SERVE=1) ===================== *
- * Implements the colibri gateway wire protocol so `coli chat` / `coli web` /
- * `coli serve` can drive this engine. Without it the engine is unreachable:
- * users run `coli chat`, not the binary directly.
+/* ===================== lmatomic serve mode (SERVE=1) ===================== *
+ * Implements the lmatomic gateway wire protocol so `lmatomic chat` / `lmatomic web` /
+ * `lmatomic serve` can drive this engine. Without it the engine is unreachable:
+ * users run `lmatomic chat`, not the binary directly.
  * Protocol (matches kimi_k3.c / inkling.c, the other non-GLM engines):
  *   engine:  \x01\x01READY\x01\x01\n
  *            STAT 0 0.00 0.0 <rss>\n
@@ -1121,7 +1121,7 @@ static int compare_reference_logits(const float *actual,const jval *expected){
  *   gateway: CANCEL <id>  (abort current turn)
  * Windows: stdout/stdin must go binary BEFORE the READY sentinel or the CRT
  * rewrites the trailing \n as \r\n and the gateway never matches it -> the
- * session hangs forever (#748). compat.h's coli_serve_binary_mode (#749)
+ * session hangs forever (#748). compat.h's lma_serve_binary_mode (#749)
  * carries that fix for every engine; see its comment for the full story. */
 
 typedef struct {
@@ -1133,7 +1133,7 @@ typedef struct {
     int plen;
     int logprobs, pin;   /* SUBMIT logprobs=k / pin=1 */
 } ServeReq;
-static const ColiServeWireProfile q38_wire = {
+static const LmaServeWireProfile q38_wire = {
     .max_header_bytes = 511,
     .max_payload_bytes = 1u << 24,
     .max_tokens = 1 << 20,
@@ -1158,56 +1158,56 @@ static void q38_pending_image_clear(void){
 }
 
 static int serve_read_req(FILE *in,FILE *out,ServeReq *q,const char *active_id){
-    ColiServeCommand command;
-    ColiServeReadResult result=coli_serve_read_command(in,&q38_wire,&command);
-    if(result==COLI_SERVE_READ_EOF||result==COLI_SERVE_READ_BAD_FRAME)return -1;
-    if(result==COLI_SERVE_READ_NOMEM){coli_serve_write_error(out,command.id,"out of memory");return -1;}
-    if(result==COLI_SERVE_READ_BAD_REQUEST){
-        if(command.kind==COLI_SERVE_COMMAND_SUBMIT)
-            coli_serve_write_error(out,command.id,"bad submit header");
-        coli_serve_command_dispose(&command);return 0;
+    LmaServeCommand command;
+    LmaServeReadResult result=lma_serve_read_command(in,&q38_wire,&command);
+    if(result==LMA_SERVE_READ_EOF||result==LMA_SERVE_READ_BAD_FRAME)return -1;
+    if(result==LMA_SERVE_READ_NOMEM){lma_serve_write_error(out,command.id,"out of memory");return -1;}
+    if(result==LMA_SERVE_READ_BAD_REQUEST){
+        if(command.kind==LMA_SERVE_COMMAND_SUBMIT)
+            lma_serve_write_error(out,command.id,"bad submit header");
+        lma_serve_command_dispose(&command);return 0;
     }
-    if(result!=COLI_SERVE_READ_OK)return 0;
-    if(command.kind==COLI_SERVE_COMMAND_STOP||command.kind==COLI_SERVE_COMMAND_CANCEL){
+    if(result!=LMA_SERVE_READ_OK)return 0;
+    if(command.kind==LMA_SERVE_COMMAND_STOP||command.kind==LMA_SERVE_COMMAND_CANCEL){
         int active=active_id&&!strcmp(command.id,active_id);
-        int control=active?(command.kind==COLI_SERVE_COMMAND_STOP?1:3):0;
-        coli_serve_command_dispose(&command);return control;
+        int control=active?(command.kind==LMA_SERVE_COMMAND_STOP?1:3):0;
+        lma_serve_command_dispose(&command);return control;
     }
-    if(command.kind==COLI_SERVE_COMMAND_IMAGE){
+    if(command.kind==LMA_SERVE_COMMAND_IMAGE){
         if(!g_serve_model||!g_serve_model->vis_ready){
-            coli_serve_write_error(out,command.id,
+            lma_serve_write_error(out,command.id,
                 "this engine has no vision tower; images are not supported");
-            coli_serve_command_dispose(&command);return 0;
+            lma_serve_command_dispose(&command);return 0;
         }
         if(g_pending_image.present)
             fprintf(stderr,"[qwen38] a second image arrived before its SUBMIT; dropping the first\n");
         q38_pending_image_clear();
-        g_pending_image.patches=coli_serve_command_take_payload(&command);
+        g_pending_image.patches=lma_serve_command_take_payload(&command);
         g_pending_image.bytes=command.payload_bytes;
         g_pending_image.grid_h=command.grid_h;
         g_pending_image.grid_w=command.grid_w;
         g_pending_image.present=1;
-        coli_serve_command_dispose(&command);return 0;
+        lma_serve_command_dispose(&command);return 0;
     }
-    if(command.kind!=COLI_SERVE_COMMAND_SUBMIT){coli_serve_command_dispose(&command);return 0;}
+    if(command.kind!=LMA_SERVE_COMMAND_SUBMIT){lma_serve_command_dispose(&command);return 0;}
     if(active_id){
-        coli_serve_write_error(out,command.id,"engine busy");
-        coli_serve_command_dispose(&command);return 0;
+        lma_serve_write_error(out,command.id,"engine busy");
+        lma_serve_command_dispose(&command);return 0;
     }
     /* Qwen3.8 owns one recurrent/KV state.  The gateway still sends the
      * common cache-slot field, so reject every slot except that sole slot
      * after the codec has consumed the complete frame. */
     if(command.slot!=0){
-        coli_serve_write_error(out,command.id,"invalid cache slot");
-        coli_serve_command_dispose(&command);return 0;
+        lma_serve_write_error(out,command.id,"invalid cache slot");
+        lma_serve_command_dispose(&command);return 0;
     }
-    if(!q){coli_serve_command_dispose(&command);return 0;}
+    if(!q){lma_serve_command_dispose(&command);return 0;}
     snprintf(q->id,sizeof(q->id),"%s",command.id);
     q->slot=command.slot;
     q->max_tok=command.max_tokens;q->temp=command.temperature;q->top_p=command.top_p;
-    q->payload=(char*)coli_serve_command_take_payload(&command);q->plen=(int)command.payload_bytes;
+    q->payload=(char*)lma_serve_command_take_payload(&command);q->plen=(int)command.payload_bytes;
     q->logprobs=command.logprobs;q->pin=command.pin;
-    coli_serve_command_dispose(&command);return 2;
+    lma_serve_command_dispose(&command);return 2;
 }
 
 static void serve_data(const char *id, const char *p, int n){
@@ -1319,7 +1319,7 @@ static Q38PrefixCache g_q38_prefix;
  * dichiarato. Vedi pin_pool.h. */
 static int q38_prefix_geometry(const Model *m,size_t *rec_cells,
                                size_t *conv_cells,size_t *ple_cells);
-static ColiPinPool g_q38_pins;
+static LmaPinPool g_q38_pins;
 typedef struct { float **rec, **conv, *ple; int64_t ple_hist[2]; int ple_len; int n_layers; } Q38PinState;
 
 static void q38_pin_state_free(void *v){
@@ -1565,7 +1565,7 @@ static int q38_format_prof(char *out,size_t capacity,double wall_s,int prompt_to
 }
 
 /* ---------- dashboard protocol: EMAP / HITS ----------
- * Same stdout lines colibri.c emits for the web dashboard's Brain tab. Every
+ * Same stdout lines glm52.c emits for the web dashboard's Brain tab. Every
  * layer here is a MoE layer, so rows are all layers, columns the experts.
  * EMAP: one byte per expert as two hex digits, tier<<6 | heat (tier 1 =
  * resident in the layer cache; heat 0, no usage counter here). Printed after
@@ -1605,7 +1605,7 @@ static void serve_hits(Model *m){
  * Returns the budget, or -1 when the PROMPT does not fit. Refusing when
  * prompt + budget exceeded the context (#1641) turned the gateway's default
  * output budget -- 8192 here, the whole default context -- into a 400 on
- * every message of `coli chat` and on every request without max_tokens. */
+ * every message of `lmatomic chat` and on every request without max_tokens. */
 static int q38_serve_budget(int np, int max_tok, int max_ctx, int read_only){
     if (np < 1) return -1;
     int room = max_ctx - np;
@@ -1661,20 +1661,20 @@ static int serve_one(Model *m, ServeReq *q){
         kv_prefix_taint(&m->kvp);q38_prefix_cache_invalidate();
     }
     {
-        int ps=coli_pin_best(&g_q38_pins,ids,np);
+        int ps=lma_pin_best(&g_q38_pins,ids,np);
         while(ps>=0){
-            ColiPin *k=&g_q38_pins.slot[ps];
+            LmaPin *k=&g_q38_pins.slot[ps];
             Q38PinState *st=(Q38PinState*)k->state;
             /* Pins omit K/V/indexer rows. Reject one whose rows were overwritten. */
             if(st && kv_prefix_holds(&m->kvp,k->ids,k->len) &&
                q38_pin_state_copy(m,&st,0)){
                 m->kv_len=k->len; m->kvp.len=k->len;
                 reuse=k->len; pin_lo=k->logit;
-                coli_pin_touch(&g_q38_pins,ps);
+                lma_pin_touch(&g_q38_pins,ps);
                 break;
             }
             k->len=0;
-            ps=coli_pin_best(&g_q38_pins,ids,np);
+            ps=lma_pin_best(&g_q38_pins,ids,np);
         }
     }
     if(!reuse) reuse=q38_prefix_restore(m,ids,np);
@@ -1710,8 +1710,8 @@ static int serve_one(Model *m, ServeReq *q){
     /* Uno scatto chiesto va nel pool, dove nessun'altra richiesta lo
      * sovrascrive; la cache automatica resta libera di inseguire la chat. */
     if(q->pin&&lo){
-        coli_pin_pool_init(&g_q38_pins,m->c.vocab);
-        ColiPin *k=coli_pin_store(&g_q38_pins,ids,np,lo);
+        lma_pin_pool_init(&g_q38_pins,m->c.vocab);
+        LmaPin *k=lma_pin_store(&g_q38_pins,ids,np,lo);
         if(k){
             Q38PinState *st=(Q38PinState*)k->state;
             if(q38_pin_state_copy(m,&st,1)){ k->state=st; fprintf(stderr,"[PIN] scatto a %d token\n",np); }
@@ -1728,7 +1728,7 @@ static int serve_one(Model *m, ServeReq *q){
     double first_token_at=0.0,last_token_at=0.0;
     unsigned char sbuf[16]; int sbn=0;
     for(int s=0;s<q->max_tok;s++){
-        while(!input_eof&&coli_stdin_readable()){
+        while(!input_eof&&lma_stdin_readable()){
             int control=serve_read_req(stdin,stdout,NULL,q->id);
             if(control<0){input_eof=1;break;}
             if(control==1)stopped=1;
@@ -1737,7 +1737,7 @@ static int serve_one(Model *m, ServeReq *q){
         if(cancelled||stopped)break;
         int tk = serve_sample(lo, m->c.vocab, q->temp, q->top_p);
         char lptail[1024]; lptail[0]=0;
-        if(q->logprobs>0) coli_logprob_tail(lptail,sizeof lptail,lo,m->c.vocab,tk,q->logprobs);
+        if(q->logprobs>0) lma_logprob_tail(lptail,sizeof lptail,lo,m->c.vocab,tk,q->logprobs);
         free(lo); lo=NULL;
         int is_eos=0; for(int e=0;e<n_eos;e++) if(tk==eos_ids[e]) is_eos=1;
         if(is_eos){ limited=0; break; }
@@ -1756,7 +1756,7 @@ static int serve_one(Model *m, ServeReq *q){
         else if(chunk_n>0) serve_data(q->id,(char*)chunk,chunk_n);
         free(chunk);free(token);
         gen++;
-        while(!input_eof&&coli_stdin_readable()){
+        while(!input_eof&&lma_stdin_readable()){
             int control=serve_read_req(stdin,stdout,NULL,q->id);
             if(control<0){input_eof=1;break;}
             if(control==1)stopped=1;
@@ -1776,7 +1776,7 @@ static int serve_one(Model *m, ServeReq *q){
      * silenziosamente invece di dare errore. */
     q38_vision_detach(m);
     free(lo); free(ids);
-    if(cancelled){coli_serve_write_error(stdout,q->id,"CANCELLED");return input_eof?-1:0;}
+    if(cancelled){lma_serve_write_error(stdout,q->id,"CANCELLED");return input_eof?-1:0;}
     if(stopped)limited=0;
     unsigned char tail[3];int tail_n=0;
     if(utf8_finish(sbuf,&sbn,tail,sizeof tail,&tail_n)<0){
@@ -1787,12 +1787,12 @@ static int serve_one(Model *m, ServeReq *q){
     double decode_s=gen>1?last_token_at-first_token_at:0.0;
     uint64_t hits=m->hits-hits_before,misses=m->miss-misses_before;
     Q38Timers timers=q38_tm_delta(&m->timers,&timers_before);
-    ColiServeDone done={gen,q38_decode_rate(gen,decode_s),
+    LmaServeDone done={gen,q38_decode_rate(gen,decode_s),
                         q38_cache_hit_percent(hits,misses),rss_gb(),np,limited};
-    coli_serve_write_done(stdout,q->id,&done);
+    lma_serve_write_done(stdout,q->id,&done);
     /* Stable dashboard contract.  Disk service and synchronous miss wait
      * intentionally overlap; all finer Qwen phases remain available through
-     * COLI_TIMERS=1 without widening the shared frame. */
+     * LMA_TIMERS=1 without widening the shared frame. */
     char profile[256];int profile_bytes=q38_format_prof(profile,sizeof profile,wall_s,np,gen,&timers);
     if(profile_bytes>0)fwrite(profile,1,(size_t)profile_bytes,stdout);
     else fprintf(stderr,"[qwen38] internal error: PROF frame overflow\n");
@@ -1804,7 +1804,7 @@ static int serve_one(Model *m, ServeReq *q){
 
 static void serve_loop(Model *m){
     g_serve_model=m;
-    coli_serve_binary_mode();
+    lma_serve_binary_mode();
     setvbuf(stdin,NULL,_IONBF,0);
     int max_ctx=qwen38_max_ctx();
     if(max_ctx>m->c.max_positions)max_ctx=m->c.max_positions;
@@ -1835,19 +1835,19 @@ static int q38_reference_mode(const char *path,int serve_mode){
 
 #ifndef QWEN38_TEST_SERVE
 int main(int argc, char **argv) {
-    /* Physical-core team sizing, as colibri/inkling/kimi_k3/olmoe/deepseek-v41
+    /* Physical-core team sizing, as lmatomic/inkling/kimi_k3/olmoe/deepseek-v41
      * do. Without it this engine takes one thread per logical CPU, which on an
      * SMT host doubles the team for no arithmetic and pays a barrier per tiny
      * per-expert region (#718 measured +2.3x from the sizing alone on a
-     * 16C/32T part). OMP_NUM_THREADS wins, COLI_NO_OMP_TUNE=1 disables. */
-    coli_omp_tune_threads("qwen38");
+     * 16C/32T part). OMP_NUM_THREADS wins, LMA_NO_OMP_TUNE=1 disables. */
+    lma_omp_tune_threads("qwen38");
     const char *snap = getenv("SNAP");
     if (!snap) { fprintf(stderr, "set SNAP=<snapshot directory>\n"); return 1; }
     if (getenv("OPENAI")) g_openai = 1;                       /* OpenAI-compatible output */
     const char *mv = getenv("MODEL");
     if (mv && *mv) snprintf(g_model, sizeof g_model, "%s", mv);
-    int cap   = argc > 1 ? coli_arg_int(argv[1], "cache/layer") : 1;
-    int bits  = argc > 2 ? coli_arg_int(argv[2], "expert bits") : 8;
+    int cap   = argc > 1 ? lma_arg_int(argv[1], "cache/layer") : 1;
+    int bits  = argc > 2 ? lma_arg_int(argv[2], "expert bits") : 8;
     /* cap < 1 leaves every layer cache empty, so expert_get finds no slot to
      * evict and waits for a publish that can never come. The old lru=0 fallback
      * turned that into a heap OOB instead; neither is a failure mode to ship. */
@@ -1865,7 +1865,7 @@ int main(int argc, char **argv) {
     char *buf=NULL, *arena=NULL; jval *ref_root=NULL,*ref_logits=NULL;
     /* serve mode gets its prompts over the wire: skip the argv prompt file
      * entirely, or the default "ref.json" kills the engine before serve_loop
-     * is ever reached — which is exactly how `coli` launches it (SERVE=1, no
+     * is ever reached — which is exactly how `lmatomic` launches it (SERVE=1, no
      * prompt argument). */
     /* Load before model_init so malformed/missing tokenizer state cannot spend
      * minutes materializing a model that serve/text mode must then refuse. A
@@ -1948,20 +1948,20 @@ int main(int argc, char **argv) {
     }
 
     Model m; model_init(&m, snap, cap, bits);
-    q38_tier_start(&m, cap);   /* COLI_CUDA=1: hot experts stream to VRAM (qwen36_tier.c) */
+    q38_tier_start(&m, cap);   /* LMA_CUDA=1: hot experts stream to VRAM (qwen36_tier.c) */
     q38_trunk_cpu_int8(&m);    /* the trunk's int8 rows on the CPU, BF16 released (Q38_TRUNK_CPU_INT8=0 keeps BF16) */
     if(is_ref)ref_logits=read_reference_logits(ref_root,m.c.vocab);
     g_capture_last_logit=ref_logits!=NULL||getenv("DUMP")!=NULL;
     q38_telemetry_init(snap, &m);
     fprintf(stderr, "resident weights loaded in %.1fs | RSS after load: %.2f GB\n", m.dense_load_s, rss_gb());
 
-    /* coli serve mode: speak the gateway wire protocol instead of argv
+    /* lmatomic serve mode: speak the gateway wire protocol instead of argv
      * generation. AFTER the tier init: serve sessions ride the VRAM experts
      * exactly like argv runs, and serve_loop never returns. */
     if (getenv("SERVE") && getenv("SERVE")[0] == '1') {
         if (!g_tok) { fprintf(stderr, "[serve] tokenizer.json required (put in SNAP or set TOK)\n");
             q38_model_free(&m); rt_destroy(); return 1; }
-        coli_rt_term_arm();   /* SIGTERM must reach the save below (#1629) */
+        lma_rt_term_arm();   /* SIGTERM must reach the save below (#1629) */
         serve_loop(&m);
         rt_save(g_q38_usage, 0);
         q38_prefix_cache_release(&m);
@@ -2311,7 +2311,7 @@ static int q38_segment_session_state_bytes(const Cfg *c,uint32_t begin,
     *out=total;return 0;
 }
 
-#ifdef COLI_SEGMENT_ADAPTER
+#ifdef LMA_SEGMENT_ADAPTER
 /* ---------- engine-owned Segment adapter ------------------------------ */
 
 typedef struct {
@@ -2342,27 +2342,27 @@ static void qwen38_segment_session_state_free(Qwen38SegmentSession *s) {
 }
 
 static int qwen38_segment_engine_open(
-    void **engine_impl, ColiSegmentCapabilities *capabilities,
-    const ColiSegmentEngineOptions *options, char *error, size_t error_size) {
+    void **engine_impl, LmaSegmentCapabilities *capabilities,
+    const LmaSegmentEngineOptions *options, char *error, size_t error_size) {
     if (!engine_impl || !capabilities || !options || !options->model_dir)
-        return coli_segment_adapter_error(error,error_size,"invalid Qwen3.8 Segment open");
+        return lma_segment_adapter_error(error,error_size,"invalid Qwen3.8 Segment open");
     *engine_impl=NULL;
-    if (options->backend_mask && (options->backend_mask & ~COLI_SEGMENT_CAP_CPU))
-        return coli_segment_adapter_error(error,error_size,"Qwen3.8 Segment currently supports CPU");
+    if (options->backend_mask && (options->backend_mask & ~LMA_SEGMENT_CAP_CPU))
+        return lma_segment_adapter_error(error,error_size,"Qwen3.8 Segment currently supports CPU");
     Cfg probe; q38_load_cfg(&probe,options->model_dir); q38_validate_cfg(&probe);
     int layers=probe.layers, maxctx=probe.max_positions;
     uint32_t end=options->layer_end ? options->layer_end : (uint32_t)layers;
     if (options->layer_begin>=end || end>(uint32_t)layers){free(probe.is_attn);
-        return coli_segment_adapter_error(error,error_size,"Qwen3.8 Segment range exceeds model");
+        return lma_segment_adapter_error(error,error_size,"Qwen3.8 Segment range exceeds model");
     }
     if (!options->context_tokens || options->context_tokens>(uint32_t)maxctx || options->context_tokens>INT_MAX){free(probe.is_attn);
-        return coli_segment_adapter_error(error,error_size,"Qwen3.8 Segment context exceeds model limit");
+        return lma_segment_adapter_error(error,error_size,"Qwen3.8 Segment context exceeds model limit");
     }
     free(probe.is_attn);
     Qwen38SegmentEngine *e=(Qwen38SegmentEngine*)calloc(1,sizeof(*e));
-    if(!e) return coli_segment_adapter_error(error,error_size,"out of memory opening Qwen3.8 Segment");
+    if(!e) return lma_segment_adapter_error(error,error_size,"out of memory opening Qwen3.8 Segment");
     e->layer_begin=options->layer_begin; e->layer_end=end; e->context_tokens=options->context_tokens;
-    if(pthread_mutex_init(&e->run_lock,NULL)){free(e);return coli_segment_adapter_error(error,error_size,"cannot initialize Qwen3.8 Segment lock");}
+    if(pthread_mutex_init(&e->run_lock,NULL)){free(e);return lma_segment_adapter_error(error,error_size,"cannot initialize Qwen3.8 Segment lock");}
     /* Open with a single empty cache slot so tensor metadata and the effective
      * native-storage switches are available before honoring the caller's
      * budget. No expert is loaded during model_init_range, so resizing here
@@ -2375,31 +2375,31 @@ static int qwen38_segment_engine_open(
                                  &bytes_per_capacity,&fixed_scale_bytes,
                                  &numeric_kinds)){
         q38_model_free(&e->model);pthread_mutex_destroy(&e->run_lock);free(e);
-        return coli_segment_adapter_error(error,error_size,
+        return lma_segment_adapter_error(error,error_size,
             "Qwen3.8 Segment checkpoint has an unsupported expert layout");
     }
     if(q38_segment_cache_capacity(bytes_per_capacity,fixed_scale_bytes,
                                   e->model.c.experts,
                                   options->memory_limit_bytes,&cap)){
         q38_model_free(&e->model);pthread_mutex_destroy(&e->run_lock);free(e);
-        return coli_segment_adapter_error(error,error_size,
+        return lma_segment_adapter_error(error,error_size,
             "Qwen3.8 Segment memory limit cannot hold one expert per loaded layer");
     }
     if(cap!=1&&q38_segment_cache_resize(&e->model,cap)){
         q38_model_free(&e->model);pthread_mutex_destroy(&e->run_lock);free(e);
-        return coli_segment_adapter_error(error,error_size,
+        return lma_segment_adapter_error(error,error_size,
             "out of memory sizing Qwen3.8 Segment expert cache");
     }
     e->model.max_t=(int)e->context_tokens; e->model.kv_cap=(int)e->context_tokens;
     memset(capabilities,0,sizeof(*capabilities)); capabilities->struct_size=sizeof(*capabilities);
-    capabilities->abi_version=COLI_SEGMENT_ABI_VERSION;
-    capabilities->flags=COLI_SEGMENT_CAP_TOKEN_IDS|COLI_SEGMENT_CAP_SNAPSHOT|COLI_SEGMENT_CAP_RANGE_NATIVE|
-                        COLI_SEGMENT_CAP_MULTI_SESSION|COLI_SEGMENT_CAP_CPU;
-    coli_segment_capability_string(capabilities->engine_id,sizeof(capabilities->engine_id),"qwen38");
-    coli_segment_capability_string(capabilities->state_schema,sizeof(capabilities->state_schema),"qwen38/hyper-kv-deltanet-ple-f32-v1");
+    capabilities->abi_version=LMA_SEGMENT_ABI_VERSION;
+    capabilities->flags=LMA_SEGMENT_CAP_TOKEN_IDS|LMA_SEGMENT_CAP_SNAPSHOT|LMA_SEGMENT_CAP_RANGE_NATIVE|
+                        LMA_SEGMENT_CAP_MULTI_SESSION|LMA_SEGMENT_CAP_CPU;
+    lma_segment_capability_string(capabilities->engine_id,sizeof(capabilities->engine_id),"qwen38");
+    lma_segment_capability_string(capabilities->state_schema,sizeof(capabilities->state_schema),"qwen38/hyper-kv-deltanet-ple-f32-v1");
     q38_segment_numeric_class(capabilities->numeric_class,
                               sizeof(capabilities->numeric_class),numeric_kinds);
-    capabilities->state_dtype=COLI_SEGMENT_DTYPE_F32; capabilities->state_width=(uint32_t)e->model.c.hc_width;
+    capabilities->state_dtype=LMA_SEGMENT_DTYPE_F32; capabilities->state_width=(uint32_t)e->model.c.hc_width;
     capabilities->max_batch_rows=128; capabilities->max_context_tokens=(uint32_t)maxctx; capabilities->num_layers=(uint32_t)layers;
     *engine_impl=e; return 0;
 }
@@ -2409,20 +2409,20 @@ static void qwen38_segment_engine_destroy(void *impl) {
     q38_model_free(&e->model); pthread_mutex_destroy(&e->run_lock); free(e);
 }
 
-static int qwen38_segment_session_create(void *impl,void **out,const ColiSegmentSessionOptions *options,char *error,size_t error_size) {
+static int qwen38_segment_session_create(void *impl,void **out,const LmaSegmentSessionOptions *options,char *error,size_t error_size) {
     Qwen38SegmentEngine *e=(Qwen38SegmentEngine*)impl;
     if(!e||!out||!options)
-        return coli_segment_adapter_error(error,error_size,"invalid Qwen3.8 Segment session context");
+        return lma_segment_adapter_error(error,error_size,"invalid Qwen3.8 Segment session context");
     *out=NULL;
     if(!options->context_tokens||options->context_tokens>e->context_tokens)
-        return coli_segment_adapter_error(error,error_size,"invalid Qwen3.8 Segment session context");
+        return lma_segment_adapter_error(error,error_size,"invalid Qwen3.8 Segment session context");
     uint64_t state_bytes=0;
     if(q38_segment_session_state_bytes(&e->model.c,e->layer_begin,e->layer_end,
                                        options->context_tokens,&state_bytes))
-        return coli_segment_adapter_error(error,error_size,"Qwen3.8 session state size overflow");
+        return lma_segment_adapter_error(error,error_size,"Qwen3.8 session state size overflow");
     if(options->memory_limit_bytes&&state_bytes>options->memory_limit_bytes)
-        return coli_segment_adapter_error(error,error_size,"Qwen3.8 session state exceeds memory limit");
-    Qwen38SegmentSession *s=(Qwen38SegmentSession*)calloc(1,sizeof(*s)); if(!s)return coli_segment_adapter_error(error,error_size,"out of memory creating Qwen3.8 session");
+        return lma_segment_adapter_error(error,error_size,"Qwen3.8 session state exceeds memory limit");
+    Qwen38SegmentSession *s=(Qwen38SegmentSession*)calloc(1,sizeof(*s)); if(!s)return lma_segment_adapter_error(error,error_size,"out of memory creating Qwen3.8 session");
     s->engine=e;s->context_tokens=options->context_tokens;
     int n=e->model.c.layers; s->K=(float**)calloc((size_t)n,sizeof(float*));s->V=(float**)calloc((size_t)n,sizeof(float*));s->IK=(float**)calloc((size_t)n,sizeof(float*));
     s->DN_rec=(float**)calloc((size_t)n,sizeof(float*));s->DN_conv=(float**)calloc((size_t)n,sizeof(float*));
@@ -2431,39 +2431,39 @@ static int qwen38_segment_session_create(void *impl,void **out,const ColiSegment
     for(uint32_t i=e->layer_begin;i<e->layer_end;i++){
         size_t cells,bytes;
         if(c->is_attn[i]){
-            if(coli_segment_size_mul((size_t)c->kv_heads,s->context_tokens,&cells)||coli_segment_size_mul(cells,(size_t)c->head_dim,&cells))goto oom;
-            if(coli_segment_size_mul(cells,sizeof(float),&bytes))goto oom;
+            if(lma_segment_size_mul((size_t)c->kv_heads,s->context_tokens,&cells)||lma_segment_size_mul(cells,(size_t)c->head_dim,&cells))goto oom;
+            if(lma_segment_size_mul(cells,sizeof(float),&bytes))goto oom;
             s->K[i]=(float*)calloc(cells,sizeof(float));s->V[i]=(float*)calloc(cells,sizeof(float));
-            if(coli_segment_size_mul((size_t)s->context_tokens,(size_t)c->idx_dim,&cells)||coli_segment_size_mul(cells,sizeof(float),&bytes))goto oom;s->IK[i]=(float*)calloc(cells,sizeof(float));
+            if(lma_segment_size_mul((size_t)s->context_tokens,(size_t)c->idx_dim,&cells)||lma_segment_size_mul(cells,sizeof(float),&bytes))goto oom;s->IK[i]=(float*)calloc(cells,sizeof(float));
             if(!s->K[i]||!s->V[i]||!s->IK[i])goto oom;
         }else{
-            if(coli_segment_size_mul((size_t)c->dn_vheads,(size_t)c->dn_kdim,&cells)||coli_segment_size_mul(cells,(size_t)c->dn_vdim,&cells))goto oom;s->DN_rec[i]=(float*)calloc(cells,sizeof(float));
-            if(coli_segment_size_mul(cells,sizeof(float),&bytes))goto oom;
-            if(coli_segment_size_mul((size_t)c->dn_conv_dim,(size_t)c->dn_convk-1,&cells)||coli_segment_size_mul(cells,sizeof(float),&bytes))goto oom;s->DN_conv[i]=(float*)calloc(cells,sizeof(float));
+            if(lma_segment_size_mul((size_t)c->dn_vheads,(size_t)c->dn_kdim,&cells)||lma_segment_size_mul(cells,(size_t)c->dn_vdim,&cells))goto oom;s->DN_rec[i]=(float*)calloc(cells,sizeof(float));
+            if(lma_segment_size_mul(cells,sizeof(float),&bytes))goto oom;
+            if(lma_segment_size_mul((size_t)c->dn_conv_dim,(size_t)c->dn_convk-1,&cells)||lma_segment_size_mul(cells,sizeof(float),&bytes))goto oom;s->DN_conv[i]=(float*)calloc(cells,sizeof(float));
             if(!s->DN_rec[i]||!s->DN_conv[i])goto oom;
         }
     }
     if(c->ple_layer>=0&&(uint32_t)c->ple_layer>=e->layer_begin&&(uint32_t)c->ple_layer<e->layer_end){
-        size_t cells,bytes;if(coli_segment_size_mul((size_t)c->hc_width,(size_t)c->ple_convk-1,&cells)||coli_segment_size_mul(cells,(size_t)c->ngram_size,&cells)||coli_segment_size_mul(cells,sizeof(float),&bytes))goto oom;
+        size_t cells,bytes;if(lma_segment_size_mul((size_t)c->hc_width,(size_t)c->ple_convk-1,&cells)||lma_segment_size_mul(cells,(size_t)c->ngram_size,&cells)||lma_segment_size_mul(cells,sizeof(float),&bytes))goto oom;
         s->PLE_conv_state=(float*)calloc(cells,sizeof(float));if(!s->PLE_conv_state)goto oom;
     }
     *out=s;return 0;
-oom:qwen38_segment_session_state_free(s);free(s);return coli_segment_adapter_error(error,error_size,"out of memory allocating Qwen3.8 state");
+oom:qwen38_segment_session_state_free(s);free(s);return lma_segment_adapter_error(error,error_size,"out of memory allocating Qwen3.8 state");
 }
 
 static void qwen38_segment_session_destroy(void *impl){Qwen38SegmentSession *s=(Qwen38SegmentSession*)impl;if(!s)return;qwen38_segment_session_state_free(s);free(s);}
 
-static int qwen38_segment_session_run(void *impl,const ColiSegmentRunRequest *r,char *error,size_t error_size){
+static int qwen38_segment_session_run(void *impl,const LmaSegmentRunRequest *r,char *error,size_t error_size){
     Qwen38SegmentSession *s=(Qwen38SegmentSession*)impl; Qwen38SegmentEngine *e=s?s->engine:NULL; Cfg *c=e?&e->model.c:NULL;
-    if(!s||!r||r->position!=s->position)return coli_segment_adapter_error(error,error_size,"Qwen3.8 Segment requires contiguous positions");
+    if(!s||!r||r->position!=s->position)return lma_segment_adapter_error(error,error_size,"Qwen3.8 Segment requires contiguous positions");
     if(!r->rows||r->rows>128||r->rows>s->context_tokens||
        r->position>s->context_tokens-r->rows||!r->input||!r->output||
        !r->token_ids||r->token_count!=r->rows)
-        return coli_segment_adapter_error(error,error_size,"invalid Qwen3.8 Segment run request");
-    size_t cells,bytes;if(coli_segment_size_mul((size_t)r->rows,(size_t)c->hc_width,&cells)||coli_segment_size_mul(cells,sizeof(float),&bytes)||r->input_bytes!=bytes||r->output_bytes!=bytes)
-        return coli_segment_adapter_error(error,error_size,"Qwen3.8 Segment activation size mismatch");
-    for(uint32_t i=0;i<r->rows;i++)if(r->token_ids[i]<0||r->token_ids[i]>=c->vocab)return coli_segment_adapter_error(error,error_size,"Qwen3.8 Segment token id outside vocabulary");
-    if(r->should_cancel&&r->should_cancel(r->cancel_user_data))return coli_segment_adapter_error(error,error_size,"Qwen3.8 Segment run cancelled");
+        return lma_segment_adapter_error(error,error_size,"invalid Qwen3.8 Segment run request");
+    size_t cells,bytes;if(lma_segment_size_mul((size_t)r->rows,(size_t)c->hc_width,&cells)||lma_segment_size_mul(cells,sizeof(float),&bytes)||r->input_bytes!=bytes||r->output_bytes!=bytes)
+        return lma_segment_adapter_error(error,error_size,"Qwen3.8 Segment activation size mismatch");
+    for(uint32_t i=0;i<r->rows;i++)if(r->token_ids[i]<0||r->token_ids[i]>=c->vocab)return lma_segment_adapter_error(error,error_size,"Qwen3.8 Segment token id outside vocabulary");
+    if(r->should_cancel&&r->should_cancel(r->cancel_user_data))return lma_segment_adapter_error(error,error_size,"Qwen3.8 Segment run cancelled");
     if(r->output!=r->input)memcpy(r->output,r->input,bytes);
     pthread_mutex_lock(&e->run_lock); Model *m=&e->model;
     m->K=s->K;m->V=s->V;m->IK=s->IK;m->DN_rec=s->DN_rec;m->DN_conv=s->DN_conv;m->ple_history=s->ple_history;m->ple_history_len=s->ple_history_len;m->PLE_conv_state=s->PLE_conv_state;m->kv_cap=(int)s->context_tokens;m->kv_len=(int)s->position;
@@ -2472,43 +2472,43 @@ static int qwen38_segment_session_run(void *impl,const ColiSegmentRunRequest *r,
     pthread_mutex_unlock(&e->run_lock);s->position+=r->rows;return 0;
 }
 
-static int qwen38_segment_spans(Qwen38SegmentSession *s,uint32_t position,ColiSegmentStateSpan **out,size_t *count,char *error,size_t error_size){
+static int qwen38_segment_spans(Qwen38SegmentSession *s,uint32_t position,LmaSegmentStateSpan **out,size_t *count,char *error,size_t error_size){
     Cfg *c=&s->engine->model.c;
-    if(position>s->context_tokens)return coli_segment_adapter_error(error,error_size,"Qwen3.8 snapshot position exceeds context");
+    if(position>s->context_tokens)return lma_segment_adapter_error(error,error_size,"Qwen3.8 snapshot position exceeds context");
     size_t cap=0;
     for(uint32_t i=s->engine->layer_begin;i<s->engine->layer_end;i++){
         size_t add=2;
         if(c->is_attn[i]){
             /* One indexer span plus one K and one V span for every KV head. */
             if((uint64_t)c->kv_heads>(SIZE_MAX-1)/2)
-                return coli_segment_adapter_error(error,error_size,"Qwen3.8 state span count overflow");
+                return lma_segment_adapter_error(error,error_size,"Qwen3.8 state span count overflow");
             add=2*(size_t)c->kv_heads+1;
         }
-        if(add>SIZE_MAX-cap){return coli_segment_adapter_error(error,error_size,"Qwen3.8 state span count overflow");}
+        if(add>SIZE_MAX-cap){return lma_segment_adapter_error(error,error_size,"Qwen3.8 state span count overflow");}
         cap+=add;
     }
-    if(c->ple_layer>=0&&(uint32_t)c->ple_layer>=s->engine->layer_begin&&(uint32_t)c->ple_layer<s->engine->layer_end){if(cap>SIZE_MAX-3)return coli_segment_adapter_error(error,error_size,"Qwen3.8 state span count overflow");cap+=3;}
-    if(cap>SIZE_MAX/sizeof(ColiSegmentStateSpan))return coli_segment_adapter_error(error,error_size,"Qwen3.8 state span count overflow");
-    ColiSegmentStateSpan *v=(ColiSegmentStateSpan*)calloc(cap,sizeof(*v));if(cap&&!v)return coli_segment_adapter_error(error,error_size,"out of memory describing Qwen3.8 state");size_t n=0;
+    if(c->ple_layer>=0&&(uint32_t)c->ple_layer>=s->engine->layer_begin&&(uint32_t)c->ple_layer<s->engine->layer_end){if(cap>SIZE_MAX-3)return lma_segment_adapter_error(error,error_size,"Qwen3.8 state span count overflow");cap+=3;}
+    if(cap>SIZE_MAX/sizeof(LmaSegmentStateSpan))return lma_segment_adapter_error(error,error_size,"Qwen3.8 state span count overflow");
+    LmaSegmentStateSpan *v=(LmaSegmentStateSpan*)calloc(cap,sizeof(*v));if(cap&&!v)return lma_segment_adapter_error(error,error_size,"out of memory describing Qwen3.8 state");size_t n=0;
     for(uint32_t i=s->engine->layer_begin;i<s->engine->layer_end;i++)if(c->is_attn[i]){
         size_t cells,rb,stride;
-        if(coli_segment_size_mul((size_t)position,(size_t)c->head_dim,&cells)||coli_segment_size_mul(cells,sizeof(float),&rb)||coli_segment_size_mul((size_t)s->context_tokens,(size_t)c->head_dim,&stride)){free(v);return coli_segment_adapter_error(error,error_size,"Qwen3.8 attention state size overflow");}
-        for(int h=0;h<c->kv_heads;h++){v[n++]=(ColiSegmentStateSpan){s->K[i]+(size_t)h*stride,rb};v[n++]=(ColiSegmentStateSpan){s->V[i]+(size_t)h*stride,rb};}
-        if(coli_segment_size_mul((size_t)position,(size_t)c->idx_dim,&cells)||coli_segment_size_mul(cells,sizeof(float),&cells)){free(v);return coli_segment_adapter_error(error,error_size,"Qwen3.8 indexer state size overflow");} v[n++]=(ColiSegmentStateSpan){s->IK[i],cells};
+        if(lma_segment_size_mul((size_t)position,(size_t)c->head_dim,&cells)||lma_segment_size_mul(cells,sizeof(float),&rb)||lma_segment_size_mul((size_t)s->context_tokens,(size_t)c->head_dim,&stride)){free(v);return lma_segment_adapter_error(error,error_size,"Qwen3.8 attention state size overflow");}
+        for(int h=0;h<c->kv_heads;h++){v[n++]=(LmaSegmentStateSpan){s->K[i]+(size_t)h*stride,rb};v[n++]=(LmaSegmentStateSpan){s->V[i]+(size_t)h*stride,rb};}
+        if(lma_segment_size_mul((size_t)position,(size_t)c->idx_dim,&cells)||lma_segment_size_mul(cells,sizeof(float),&cells)){free(v);return lma_segment_adapter_error(error,error_size,"Qwen3.8 indexer state size overflow");} v[n++]=(LmaSegmentStateSpan){s->IK[i],cells};
     }else{
         size_t cells;
-        if(coli_segment_size_mul((size_t)c->dn_vheads,(size_t)c->dn_kdim,&cells)||coli_segment_size_mul(cells,(size_t)c->dn_vdim,&cells)||coli_segment_size_mul(cells,sizeof(float),&cells)){free(v);return coli_segment_adapter_error(error,error_size,"Qwen3.8 recurrent state size overflow");} v[n++]=(ColiSegmentStateSpan){s->DN_rec[i],cells};
-        if(coli_segment_size_mul((size_t)c->dn_conv_dim,(size_t)c->dn_convk-1,&cells)||coli_segment_size_mul(cells,sizeof(float),&cells)){free(v);return coli_segment_adapter_error(error,error_size,"Qwen3.8 convolution state size overflow");} v[n++]=(ColiSegmentStateSpan){s->DN_conv[i],cells};
+        if(lma_segment_size_mul((size_t)c->dn_vheads,(size_t)c->dn_kdim,&cells)||lma_segment_size_mul(cells,(size_t)c->dn_vdim,&cells)||lma_segment_size_mul(cells,sizeof(float),&cells)){free(v);return lma_segment_adapter_error(error,error_size,"Qwen3.8 recurrent state size overflow");} v[n++]=(LmaSegmentStateSpan){s->DN_rec[i],cells};
+        if(lma_segment_size_mul((size_t)c->dn_conv_dim,(size_t)c->dn_convk-1,&cells)||lma_segment_size_mul(cells,sizeof(float),&cells)){free(v);return lma_segment_adapter_error(error,error_size,"Qwen3.8 convolution state size overflow");} v[n++]=(LmaSegmentStateSpan){s->DN_conv[i],cells};
     }
-    if(c->ple_layer>=0&&(uint32_t)c->ple_layer>=s->engine->layer_begin&&(uint32_t)c->ple_layer<s->engine->layer_end){v[n++]=(ColiSegmentStateSpan){&s->ple_history_len,sizeof(s->ple_history_len)};v[n++]=(ColiSegmentStateSpan){s->ple_history,sizeof(s->ple_history)};size_t cells;if(coli_segment_size_mul((size_t)c->hc_width,(size_t)c->ple_convk-1,&cells)||coli_segment_size_mul(cells,(size_t)c->ngram_size,&cells)||coli_segment_size_mul(cells,sizeof(float),&cells)){free(v);return coli_segment_adapter_error(error,error_size,"Qwen3.8 PLE state size overflow");}v[n++]=(ColiSegmentStateSpan){s->PLE_conv_state,cells};}
-    if(n!=cap){free(v);return coli_segment_adapter_error(error,error_size,"Qwen3.8 state span topology mismatch");}
+    if(c->ple_layer>=0&&(uint32_t)c->ple_layer>=s->engine->layer_begin&&(uint32_t)c->ple_layer<s->engine->layer_end){v[n++]=(LmaSegmentStateSpan){&s->ple_history_len,sizeof(s->ple_history_len)};v[n++]=(LmaSegmentStateSpan){s->ple_history,sizeof(s->ple_history)};size_t cells;if(lma_segment_size_mul((size_t)c->hc_width,(size_t)c->ple_convk-1,&cells)||lma_segment_size_mul(cells,(size_t)c->ngram_size,&cells)||lma_segment_size_mul(cells,sizeof(float),&cells)){free(v);return lma_segment_adapter_error(error,error_size,"Qwen3.8 PLE state size overflow");}v[n++]=(LmaSegmentStateSpan){s->PLE_conv_state,cells};}
+    if(n!=cap){free(v);return lma_segment_adapter_error(error,error_size,"Qwen3.8 state span topology mismatch");}
     *out=v;*count=n;return 0;
 }
 
-static int qwen38_segment_session_snapshot(void *impl,ColiSegmentWriteFn wf,void *wd,char *error,size_t es){Qwen38SegmentSession *s=(Qwen38SegmentSession*)impl;ColiSegmentStateSpan *sp=NULL;size_t n=0,bytes=0;if(!s||qwen38_segment_spans(s,s?s->position:0,&sp,&n,error,es)||coli_segment_spans_size(sp,n,&bytes)){free(sp);return coli_segment_adapter_error(error,es,"Qwen3.8 snapshot size overflow");}ColiSegmentSnapshotHeader h;coli_segment_snapshot_header_init(&h,"qwen38",s->engine->layer_begin,s->engine->layer_end,s->context_tokens,s->position,bytes,coli_segment_spans_hash(sp,n));int rc=coli_segment_stream_write(wf,wd,&h,sizeof(h),error,es);if(!rc)rc=coli_segment_spans_write(sp,n,wf,wd,error,es);free(sp);return rc;}
+static int qwen38_segment_session_snapshot(void *impl,LmaSegmentWriteFn wf,void *wd,char *error,size_t es){Qwen38SegmentSession *s=(Qwen38SegmentSession*)impl;LmaSegmentStateSpan *sp=NULL;size_t n=0,bytes=0;if(!s||qwen38_segment_spans(s,s?s->position:0,&sp,&n,error,es)||lma_segment_spans_size(sp,n,&bytes)){free(sp);return lma_segment_adapter_error(error,es,"Qwen3.8 snapshot size overflow");}LmaSegmentSnapshotHeader h;lma_segment_snapshot_header_init(&h,"qwen38",s->engine->layer_begin,s->engine->layer_end,s->context_tokens,s->position,bytes,lma_segment_spans_hash(sp,n));int rc=lma_segment_stream_write(wf,wd,&h,sizeof(h),error,es);if(!rc)rc=lma_segment_spans_write(sp,n,wf,wd,error,es);free(sp);return rc;}
 
 static int qwen38_segment_payload_valid(
-    const ColiSegmentStateSpan *spans,size_t count,
+    const LmaSegmentStateSpan *spans,size_t count,
     const unsigned char *payload,size_t payload_bytes,
     void *user_data,char *error,size_t error_size){
     Qwen38SegmentSession *s=(Qwen38SegmentSession*)user_data;
@@ -2517,7 +2517,7 @@ static int qwen38_segment_payload_valid(
     int history_len=0; int64_t history[2]={0,0};
     for(size_t i=0;i<count;i++){
         if(spans[i].size>payload_bytes-consumed)
-            return coli_segment_adapter_error(error,error_size,"Qwen3.8 snapshot payload layout is invalid");
+            return lma_segment_adapter_error(error,error_size,"Qwen3.8 snapshot payload layout is invalid");
         if(spans[i].data==&s->ple_history_len&&spans[i].size==sizeof(history_len)){
             memcpy(&history_len,cursor,sizeof(history_len));found_len=1;
         }else if(spans[i].data==s->ple_history&&spans[i].size==sizeof(history)){
@@ -2530,35 +2530,35 @@ static int qwen38_segment_payload_valid(
     if(!found_len||!found_history||history_len<0||history_len>2||
        (history_len>0&&(history[0]<0||history[0]>=c->vocab))||
        (history_len>1&&(history[1]<0||history[1]>=c->vocab)))
-        return coli_segment_adapter_error(error,error_size,"Qwen3.8 snapshot PLE history is invalid");
+        return lma_segment_adapter_error(error,error_size,"Qwen3.8 snapshot PLE history is invalid");
     return 0;
 }
 
-static int qwen38_segment_session_restore(void *impl,ColiSegmentReadFn rf,void *rd,char *error,size_t es){
-    Qwen38SegmentSession *s=(Qwen38SegmentSession*)impl; ColiSegmentSnapshotHeader h;
-    if(!s||coli_segment_stream_read(rf,rd,&h,sizeof(h),error,es))return -1;
+static int qwen38_segment_session_restore(void *impl,LmaSegmentReadFn rf,void *rd,char *error,size_t es){
+    Qwen38SegmentSession *s=(Qwen38SegmentSession*)impl; LmaSegmentSnapshotHeader h;
+    if(!s||lma_segment_stream_read(rf,rd,&h,sizeof(h),error,es))return -1;
     if(h.position>s->context_tokens||h.layer_begin!=s->engine->layer_begin||
        h.layer_end!=s->engine->layer_end||h.context_tokens!=s->context_tokens)
-        return coli_segment_adapter_error(error,es,"Qwen3.8 snapshot identity is incompatible");
-    ColiSegmentStateSpan *sp=NULL; size_t n=0,bytes=0;
+        return lma_segment_adapter_error(error,es,"Qwen3.8 snapshot identity is incompatible");
+    LmaSegmentStateSpan *sp=NULL; size_t n=0,bytes=0;
     if(qwen38_segment_spans(s,h.position,&sp,&n,error,es)||
-       coli_segment_spans_size(sp,n,&bytes)||
-       coli_segment_snapshot_header_valid(&h,"qwen38",s->engine->layer_begin,
+       lma_segment_spans_size(sp,n,&bytes)||
+       lma_segment_snapshot_header_valid(&h,"qwen38",s->engine->layer_begin,
                                           s->engine->layer_end,s->context_tokens,
                                           bytes,error,es)){
         free(sp);return -1;
     }
-    int rc=coli_segment_spans_restore_checked(
+    int rc=lma_segment_spans_restore_checked(
         sp,n,h.payload_hash,rf,rd,qwen38_segment_payload_valid,s,error,es);
     free(sp);if(rc)return rc;
     s->position=h.position;return 0;
 }
 
-static const ColiSegmentAdapter qwen38_segment_adapter={sizeof(ColiSegmentAdapter),COLI_SEGMENT_ABI_VERSION,"qwen38",qwen38_segment_engine_open,qwen38_segment_engine_destroy,qwen38_segment_session_create,qwen38_segment_session_destroy,qwen38_segment_session_run,qwen38_segment_session_snapshot,qwen38_segment_session_restore,{0}};
-int coli_qwen38_segment_adapter_register(void){return coli_segment_adapter_register(&qwen38_segment_adapter);}
-#endif /* COLI_SEGMENT_ADAPTER */
+static const LmaSegmentAdapter qwen38_segment_adapter={sizeof(LmaSegmentAdapter),LMA_SEGMENT_ABI_VERSION,"qwen38",qwen38_segment_engine_open,qwen38_segment_engine_destroy,qwen38_segment_session_create,qwen38_segment_session_destroy,qwen38_segment_session_run,qwen38_segment_session_snapshot,qwen38_segment_session_restore,{0}};
+int lma_qwen38_segment_adapter_register(void){return lma_segment_adapter_register(&qwen38_segment_adapter);}
+#endif /* LMA_SEGMENT_ADAPTER */
 
-#ifdef COLI_EDGE_ADAPTER
+#ifdef LMA_EDGE_ADAPTER
 /* ---------- engine-owned model Edge adapter --------------------------- */
 
 typedef struct {
@@ -2585,24 +2585,24 @@ static void qwen38_edge_engine_destroy(void *engine_impl) {
 }
 
 static int qwen38_edge_engine_open(
-    void **engine_impl,ColiEdgeCapabilities *capabilities,
-    const ColiEdgeEngineOptions *options,char *error,size_t error_size) {
+    void **engine_impl,LmaEdgeCapabilities *capabilities,
+    const LmaEdgeEngineOptions *options,char *error,size_t error_size) {
     if(!engine_impl||!capabilities||!options||!options->model_dir)
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
                                        "invalid Qwen3.8 Edge open");
     *engine_impl=NULL;
-    if(options->backend_mask&&(options->backend_mask&~COLI_EDGE_CAP_CPU))
-        return coli_edge_adapter_error(error,error_size,
+    if(options->backend_mask&&(options->backend_mask&~LMA_EDGE_CAP_CPU))
+        return lma_edge_adapter_error(error,error_size,
                                        "Qwen3.8 Edge supports CPU only");
     /* The production tokenizer is process-global.  Segment-only engines do
      * not touch it, so a distributed process may host every Segment adapter
      * plus one Qwen3.8 Edge engine without cross-wiring vocabularies. */
     if(g_tok)
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
                                        "a Qwen3.8 tokenizer is already active");
     Qwen38EdgeEngine *engine=(Qwen38EdgeEngine*)calloc(1,sizeof(*engine));
     if(!engine)
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
                                        "out of memory opening Qwen3.8 Edge");
     Model *model=&engine->model;
     model->native_bf16=q38_env_bool("Q38_NATIVE_BF16",1);
@@ -2616,7 +2616,7 @@ static int qwen38_edge_engine_open(
         snprintf(model->prefix,sizeof model->prefix,"model");
     else {
         qwen38_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
             "Qwen3.8 checkpoint has no text embedding");
     }
 
@@ -2633,7 +2633,7 @@ static int qwen38_edge_engine_open(
     if(path_length<0||(size_t)path_length>=sizeof tokenizer_path||
        load_tokenizer(tokenizer_path)) {
         qwen38_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
                                        "cannot load Qwen3.8 tokenizer");
     }
 
@@ -2641,13 +2641,13 @@ static int qwen38_edge_engine_open(
     uint64_t norm_bytes=(uint64_t)config->hc_width*sizeof(float);
     if(resident>UINT64_MAX-norm_bytes) {
         qwen38_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
                                        "Qwen3.8 Edge resident size overflows");
     }
     resident+=norm_bytes;
     if(options->memory_limit_bytes&&resident>options->memory_limit_bytes) {
         qwen38_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
                                        "Qwen3.8 Edge exceeds memory limit");
     }
 
@@ -2659,27 +2659,27 @@ static int qwen38_edge_engine_open(
                                  &slot_bytes,&fixed_scale_bytes,
                                  &numeric_kinds)) {
         qwen38_edge_engine_destroy(engine);
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
             "Qwen3.8 Edge checkpoint has an unsupported expert layout");
     }
     (void)slot_bytes;(void)fixed_scale_bytes;
 
     memset(capabilities,0,sizeof(*capabilities));
     capabilities->struct_size=sizeof(*capabilities);
-    capabilities->abi_version=COLI_EDGE_ABI_VERSION;
-    capabilities->flags=COLI_EDGE_CAP_TOKENIZE|COLI_EDGE_CAP_DETOKENIZE|
-                        COLI_EDGE_CAP_GREEDY|COLI_EDGE_CAP_CPU;
-    coli_edge_capability_string(capabilities->engine_id,
+    capabilities->abi_version=LMA_EDGE_ABI_VERSION;
+    capabilities->flags=LMA_EDGE_CAP_TOKENIZE|LMA_EDGE_CAP_DETOKENIZE|
+                        LMA_EDGE_CAP_GREEDY|LMA_EDGE_CAP_CPU;
+    lma_edge_capability_string(capabilities->engine_id,
                                 sizeof(capabilities->engine_id),"qwen38");
-    coli_edge_capability_string(
+    lma_edge_capability_string(
         capabilities->state_schema,sizeof(capabilities->state_schema),
         "qwen38/hyper-kv-deltanet-ple-f32-v1");
     q38_segment_numeric_class(capabilities->numeric_class,
                               sizeof(capabilities->numeric_class),numeric_kinds);
-    coli_edge_capability_string(
+    lma_edge_capability_string(
         capabilities->tokenizer_class,sizeof(capabilities->tokenizer_class),
         "qwen38/hf-byte-bpe-nfc-v1");
-    capabilities->state_dtype=COLI_EDGE_DTYPE_F32;
+    capabilities->state_dtype=LMA_EDGE_DTYPE_F32;
     capabilities->state_width=(uint32_t)config->hc_width;
     capabilities->vocab_size=(uint32_t)config->vocab;
     capabilities->max_batch_rows=128;
@@ -2698,13 +2698,13 @@ static int qwen38_edge_tokenize(
     char *error,size_t error_size) {
     (void)engine_impl;
     if(!text||!token_count||text_bytes>INT_MAX)
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
                                        "invalid Qwen3.8 tokenizer input");
     int *ids=NULL,count=0;
     encode_text_n(text,text_bytes,&ids,&count);
     if(count<0||(token_ids&&token_capacity<(size_t)count)) {
         free(ids);
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
                                        "Qwen3.8 token output buffer is too small");
     }
     *token_count=(size_t)count;
@@ -2721,18 +2721,18 @@ static int qwen38_edge_detokenize(
     Qwen38EdgeEngine *engine=(Qwen38EdgeEngine*)engine_impl;
     if(!engine||!token_ids||!token_count||!text_bytes||token_count>INT_MAX||
        token_count>SIZE_MAX/sizeof(int))
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
                                        "invalid Qwen3.8 detokenizer input");
     int *ids=(int*)malloc(token_count*sizeof(*ids));
     if(!ids)
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
             "out of memory detokenizing Qwen3.8 tokens");
     for(size_t item=0;item<token_count;item++){
         int token=token_ids[item];
         if(token<0||token>=engine->model.c.vocab||token>=g_tok_n||
            !g_tok||!g_tok[token]){
             free(ids);
-            return coli_edge_adapter_error(error,error_size,
+            return lma_edge_adapter_error(error,error_size,
                                            "Qwen3.8 token ID is not decodable");
         }
         ids[item]=token;
@@ -2743,13 +2743,13 @@ static int qwen38_edge_detokenize(
     free(ids);
     if(result) {
         free(decoded);
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
             "cannot detokenize Qwen3.8 tokens");
     }
     *text_bytes=decoded_bytes;
     if(text&&text_capacity<decoded_bytes+1u) {
         free(decoded);
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
                                        "Qwen3.8 text output buffer is too small");
     }
     if(text)memcpy(text,decoded,decoded_bytes+1u);
@@ -2758,26 +2758,26 @@ static int qwen38_edge_detokenize(
 }
 
 static int qwen38_edge_embed(void *engine_impl,
-                             const ColiEdgeEmbedRequest *request,
+                             const LmaEdgeEmbedRequest *request,
                              char *error,size_t error_size) {
     Qwen38EdgeEngine *engine=(Qwen38EdgeEngine*)engine_impl;
     Cfg *config=&engine->model.c;
     float *output=(float*)request->output;
     float *row=(float*)malloc((size_t)config->hidden*sizeof(*row));
     if(!row)
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
             "out of memory embedding Qwen3.8 tokens");
     for(uint32_t index=0;index<request->rows;index++) {
         if(request->should_cancel&&
            request->should_cancel(request->cancel_user_data)) {
             free(row);
-            return coli_edge_adapter_error(error,error_size,
+            return lma_edge_adapter_error(error,error_size,
                                            "Qwen3.8 Edge embedding cancelled");
         }
         int token=request->token_ids[index];
         if(token<0||token>=config->vocab) {
             free(row);
-            return coli_edge_adapter_error(error,error_size,
+            return lma_edge_adapter_error(error,error_size,
                                            "Qwen3.8 token ID is out of range");
         }
         q38_weight_row(&engine->model.embed,token,row);
@@ -2791,7 +2791,7 @@ static int qwen38_edge_embed(void *engine_impl,
 }
 
 static int qwen38_edge_select(void *engine_impl,
-                              const ColiEdgeSelectRequest *request,
+                              const LmaEdgeSelectRequest *request,
                               char *error,size_t error_size) {
     Qwen38EdgeEngine *engine=(Qwen38EdgeEngine*)engine_impl;
     Cfg *config=&engine->model.c;
@@ -2799,7 +2799,7 @@ static int qwen38_edge_select(void *engine_impl,
     float *logits=(float*)malloc((size_t)config->vocab*sizeof(*logits));
     if(!hidden||!logits) {
         free(logits);free(hidden);
-        return coli_edge_adapter_error(error,error_size,
+        return lma_edge_adapter_error(error,error_size,
                                        "out of memory running Qwen3.8 head");
     }
     const float *input=(const float*)request->input;
@@ -2807,18 +2807,18 @@ static int qwen38_edge_select(void *engine_impl,
         if(request->should_cancel&&
            request->should_cancel(request->cancel_user_data)) {
             free(logits);free(hidden);
-            return coli_edge_adapter_error(error,error_size,
+            return lma_edge_adapter_error(error,error_size,
                                            "Qwen3.8 Edge selection cancelled");
         }
         q38_gr_read(&engine->model,&engine->model.final_gr,
                     input+(size_t)row*config->hc_width,1,hidden,NULL);
         q38_weight_matmul(logits,hidden,&engine->model.lm_head,
                           1,config->hidden,config->vocab);
-        if(coli_edge_argmax(logits,(uint32_t)config->vocab,
+        if(lma_edge_argmax(logits,(uint32_t)config->vocab,
                             &request->token_ids[row],
                             request->scores?&request->scores[row]:NULL)) {
             free(logits);free(hidden);
-            return coli_edge_adapter_error(error,error_size,
+            return lma_edge_adapter_error(error,error_size,
                                            "Qwen3.8 Edge head failed");
         }
     }
@@ -2826,9 +2826,9 @@ static int qwen38_edge_select(void *engine_impl,
     return 0;
 }
 
-static const ColiEdgeAdapter qwen38_edge_adapter={
-    .struct_size = sizeof(ColiEdgeAdapter),
-    .abi_version = COLI_EDGE_ABI_VERSION,
+static const LmaEdgeAdapter qwen38_edge_adapter={
+    .struct_size = sizeof(LmaEdgeAdapter),
+    .abi_version = LMA_EDGE_ABI_VERSION,
     .engine_id = "qwen38",
     .engine_open = qwen38_edge_engine_open,
     .engine_destroy = qwen38_edge_engine_destroy,
@@ -2839,7 +2839,7 @@ static const ColiEdgeAdapter qwen38_edge_adapter={
     .reserved_fn = {0}
 };
 
-int coli_qwen38_edge_adapter_register(void) {
-    return coli_edge_adapter_register(&qwen38_edge_adapter);
+int lma_qwen38_edge_adapter_register(void) {
+    return lma_edge_adapter_register(&qwen38_edge_adapter);
 }
-#endif /* COLI_EDGE_ADAPTER */
+#endif /* LMA_EDGE_ADAPTER */

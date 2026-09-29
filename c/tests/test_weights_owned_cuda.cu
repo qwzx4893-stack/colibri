@@ -1,9 +1,9 @@
 /* weights_owned ownership-vs-copy VRAM leak (upload failure path).
  *
- * At the defect (U6 audit F3): coli_cuda_tensor_upload sets
+ * At the defect (U6 audit F3): lma_cuda_tensor_upload sets
  * t->weights_owned = 1 only AFTER the H2D weight memcpy succeeds. When the
  * cudaMalloc succeeds and the memcpy fails, the failure branch calls
- * coli_cuda_tensor_free(t) while weights_owned is still 0, free's
+ * lma_cuda_tensor_free(t) while weights_owned is still 0, free's
  * `weights && weights_owned` gate skips the cudaFree, and the device buffer
  * leaks — invisibly to the ledger (tracked=0), visibly to the consumer
  * (cudaMemGetInfo free memory drops by weight_bytes per failed upload).
@@ -44,13 +44,13 @@
  * cuda_runtime.h before every TU. */
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP__)
 #include <hip/hip_runtime.h>
-extern "C" hipError_t coli_test_memcpy_hook(void *dst, const void *src,
+extern "C" hipError_t lma_test_memcpy_hook(void *dst, const void *src,
                                             size_t count, hipMemcpyKind kind);
-#define hipMemcpy coli_test_memcpy_hook
+#define hipMemcpy lma_test_memcpy_hook
 #else
-extern "C" cudaError_t coli_test_memcpy_hook(void *dst, const void *src,
+extern "C" cudaError_t lma_test_memcpy_hook(void *dst, const void *src,
                                              size_t count, enum cudaMemcpyKind kind);
-#define cudaMemcpy coli_test_memcpy_hook
+#define cudaMemcpy lma_test_memcpy_hook
 #endif
 
 /* No direct <cuda_runtime.h>: the backend include pulls backend_gpu_compat.h,
@@ -66,24 +66,24 @@ extern "C" cudaError_t coli_test_memcpy_hook(void *dst, const void *src,
  * off-surface names. */
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP__)
 #undef hipMemcpy
-#define COLI_REAL_MEMCPY      hipMemcpy
+#define LMA_REAL_MEMCPY      hipMemcpy
 #define cudaMemcpyKind        hipMemcpyKind
 #define cudaErrorInvalidValue hipErrorInvalidValue
 #else
 #undef cudaMemcpy
-#define COLI_REAL_MEMCPY      cudaMemcpy
+#define LMA_REAL_MEMCPY      cudaMemcpy
 #endif
 
 static size_t g_fail_h2d_bytes = 0;   /* 0 = pass everything through */
 static int    g_hook_hits      = 0;
 
-extern "C" cudaError_t coli_test_memcpy_hook(void *dst, const void *src,
+extern "C" cudaError_t lma_test_memcpy_hook(void *dst, const void *src,
                                              size_t count, cudaMemcpyKind kind) {
     if (g_fail_h2d_bytes && kind == cudaMemcpyHostToDevice && count == g_fail_h2d_bytes) {
         g_hook_hits++;
         return cudaErrorInvalidValue;
     }
-    return COLI_REAL_MEMCPY(dst, src, count, kind);
+    return LMA_REAL_MEMCPY(dst, src, count, kind);
 }
 
 static int device_free_bytes(size_t *out) {
@@ -94,10 +94,10 @@ static int device_free_bytes(size_t *out) {
 }
 
 int main(int argc, char **argv) {
-    int devices[COLI_CUDA_MAX_DEVICES], ndev = argc > 1 ? argc - 1 : 1;
-    if (ndev > COLI_CUDA_MAX_DEVICES) return 2;
+    int devices[LMA_CUDA_MAX_DEVICES], ndev = argc > 1 ? argc - 1 : 1;
+    if (ndev > LMA_CUDA_MAX_DEVICES) return 2;
     for (int i = 0; i < ndev; i++) devices[i] = argc > 1 ? std::atoi(argv[i + 1]) : 0;
-    if (!coli_cuda_init(devices, ndev)) return 77;
+    if (!lma_cuda_init(devices, ndev)) return 77;
     int d0 = devices[0];
 
     /* fmt=0 (float weights, no scale buffer): weight_bytes is exactly
@@ -109,30 +109,30 @@ int main(int argc, char **argv) {
     std::vector<float> w((size_t)I * O, 0.5f);
 
     size_t count = 99, bytes = 99;
-    coli_cuda_stats(-1, &count, &bytes);
+    lma_cuda_stats(-1, &count, &bytes);
     if (count || bytes) return 1;
 
     /* Warmup: the first real allocation can trigger lazy driver/module
      * setup whose memory never returns; absorb it before any sampling. */
     {
-        ColiCudaTensor *t = nullptr;
-        if (!coli_cuda_tensor_upload(&t, w.data(), nullptr, 0, I, O, d0) || !t) {
+        LmaCudaTensor *t = nullptr;
+        if (!lma_cuda_tensor_upload(&t, w.data(), nullptr, 0, I, O, d0) || !t) {
             std::fprintf(stderr, "warmup upload failed\n");
             return 1;
         }
-        coli_cuda_tensor_free(t);
+        lma_cuda_tensor_free(t);
     }
 
     /* ---- control: success path allocates and frees to zero delta -------- */
     size_t free_before = 0, free_now = 0;
     if (!device_free_bytes(&free_before)) return 2;
     for (int n = 0; n < N; n++) {
-        ColiCudaTensor *t = nullptr;
-        if (!coli_cuda_tensor_upload(&t, w.data(), nullptr, 0, I, O, d0) || !t) {
+        LmaCudaTensor *t = nullptr;
+        if (!lma_cuda_tensor_upload(&t, w.data(), nullptr, 0, I, O, d0) || !t) {
             std::fprintf(stderr, "control upload %d failed\n", n);
             return 1;
         }
-        coli_cuda_tensor_free(t);
+        lma_cuda_tensor_free(t);
     }
     if (!device_free_bytes(&free_now)) return 2;
     long long control_delta = (long long)free_before - (long long)free_now;
@@ -143,7 +143,7 @@ int main(int argc, char **argv) {
                      control_delta);
         return 1;
     }
-    coli_cuda_stats(-1, &count, &bytes);
+    lma_cuda_stats(-1, &count, &bytes);
     if (count || bytes) {
         std::fprintf(stderr, "ledger not restored after control cycles: %zu tensors %zu bytes\n",
                      count, bytes);
@@ -155,8 +155,8 @@ int main(int argc, char **argv) {
     g_fail_h2d_bytes = wb;
     if (!device_free_bytes(&free_before)) return 2;
     for (int n = 0; n < N; n++) {
-        ColiCudaTensor *t = nullptr;
-        if (coli_cuda_tensor_upload(&t, w.data(), nullptr, 0, I, O, d0) || t) {
+        LmaCudaTensor *t = nullptr;
+        if (lma_cuda_tensor_upload(&t, w.data(), nullptr, 0, I, O, d0) || t) {
             std::fprintf(stderr, "upload %d ignored the injected memcpy failure\n", n);
             g_fail_h2d_bytes = 0;
             return 1;
@@ -171,7 +171,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     long long leaked = (long long)free_before - (long long)free_now;
-    coli_cuda_stats(-1, &count, &bytes);
+    lma_cuda_stats(-1, &count, &bytes);
     if (count || bytes) {
         std::fprintf(stderr, "failed uploads reached the ledger: %zu tensors %zu bytes\n",
                      count, bytes);
@@ -187,13 +187,13 @@ int main(int argc, char **argv) {
 
     /* ---- disarmed: the upload path still works ---------------------------- */
     {
-        ColiCudaTensor *t = nullptr;
-        if (!coli_cuda_tensor_upload(&t, w.data(), nullptr, 0, I, O, d0) || !t) {
+        LmaCudaTensor *t = nullptr;
+        if (!lma_cuda_tensor_upload(&t, w.data(), nullptr, 0, I, O, d0) || !t) {
             std::fprintf(stderr, "healthy upload after disarm failed\n");
             return 1;
         }
-        coli_cuda_tensor_free(t);
-        coli_cuda_stats(-1, &count, &bytes);
+        lma_cuda_tensor_free(t);
+        lma_cuda_stats(-1, &count, &bytes);
         if (count || bytes) return 1;
     }
 

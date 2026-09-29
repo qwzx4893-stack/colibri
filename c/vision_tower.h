@@ -1,5 +1,5 @@
-#ifndef COLIBRI_VISION_TOWER_H
-#define COLIBRI_VISION_TOWER_H
+#ifndef LMA_VISION_TOWER_H
+#define LMA_VISION_TOWER_H
 
 /*
  * Vision transformer tower, shared by the engines whose checkpoint carries one.
@@ -37,7 +37,7 @@ typedef struct {
     int patch, temporal, merge, in_channels;
     int out_hidden, proj_intermediate;
     float eps, swiglu_limit, rope_theta;
-} ColiVisionConfig;
+} LmaVisionConfig;
 
 /* Row-major weights, transformers layout: a [out, in] matrix multiplies a
  * column vector of `in` values. Biases may be NULL where the checkpoint has
@@ -50,21 +50,21 @@ typedef struct {
     const float *gate_w, *gate_b;        /* [intermediate, hidden] */
     const float *up_w, *up_b;
     const float *down_w, *down_b;        /* [hidden, intermediate] */
-} ColiVisionBlock;
+} LmaVisionBlock;
 
 typedef struct {
-    ColiVisionConfig config;
+    LmaVisionConfig config;
     const float *patch_w, *patch_b;      /* [hidden, in_channels*temporal*patch*patch] */
-    const ColiVisionBlock *blocks;       /* depth entries */
+    const LmaVisionBlock *blocks;       /* depth entries */
     const float *post_norm;              /* [hidden] */
     const float *down_w, *down_b;        /* Conv2d [out_hidden, hidden, merge, merge] */
     const float *merger_proj;            /* [out_hidden, out_hidden] */
     const float *merger_norm_w, *merger_norm_b;
     const float *merger_gate, *merger_up;/* [proj_intermediate, out_hidden] */
     const float *merger_down;            /* [out_hidden, proj_intermediate] */
-} ColiVisionTower;
+} LmaVisionTower;
 
-static inline void coli_vision_matvec(float *out, const float *w, const float *b,
+static inline void lma_vision_matvec(float *out, const float *w, const float *b,
                                       const float *in, int rows, int columns) {
     for (int row = 0; row < rows; row++) {
         float sum = b ? b[row] : 0.0f;
@@ -74,7 +74,7 @@ static inline void coli_vision_matvec(float *out, const float *w, const float *b
     }
 }
 
-static inline void coli_vision_rmsnorm(float *out, const float *in, const float *weight,
+static inline void lma_vision_rmsnorm(float *out, const float *in, const float *weight,
                                        int dimension, float eps) {
     float square = 0.0f;
     for (int i = 0; i < dimension; i++) square += in[i] * in[i];
@@ -84,7 +84,7 @@ static inline void coli_vision_rmsnorm(float *out, const float *in, const float 
 
 /* Classic LayerNorm (mean and variance), which is what the patch merger uses -
  * the rest of the tower is RMSNorm. */
-static inline void coli_vision_layernorm(float *out, const float *in, const float *weight,
+static inline void lma_vision_layernorm(float *out, const float *in, const float *weight,
                                          const float *bias, int dimension, float eps) {
     float mean = 0.0f;
     for (int i = 0; i < dimension; i++) mean += in[i];
@@ -97,25 +97,25 @@ static inline void coli_vision_layernorm(float *out, const float *in, const floa
         out[i] = (in[i] - mean) * inverse * weight[i] + (bias ? bias[i] : 0.0f);
 }
 
-static inline float coli_vision_silu(float value) {
+static inline float lma_vision_silu(float value) {
     return value / (1.0f + expf(-value));
 }
 
 /* Exact GELU, the torch nn.GELU() default: erf-based, not the tanh
  * approximation. On a two-block tower the difference is invisible; on a
  * 24-block one it is not, and the two are not interchangeable. */
-static inline float coli_vision_gelu(float value) {
+static inline float lma_vision_gelu(float value) {
     return 0.5f * value * (1.0f + erff(value * 0.70710678118654752f));
 }
 
-static inline float coli_vision_clamp(float value, float low, float high) {
+static inline float lma_vision_clamp(float value, float low, float high) {
     if (value < low) return low;
     if (value > high) return high;
     return value;
 }
 
 /* Output tokens for a grid: one per m x m block. */
-static inline int coli_vision_output_tokens(const ColiVisionConfig *config,
+static inline int lma_vision_output_tokens(const LmaVisionConfig *config,
                                             int grid_h, int grid_w) {
     if (config->merge < 1 || grid_h % config->merge || grid_w % config->merge) return -1;
     return (grid_h / config->merge) * (grid_w / config->merge);
@@ -125,15 +125,15 @@ static inline int coli_vision_output_tokens(const ColiVisionConfig *config,
  * block-major token order the reference produces.
  * out: [output_tokens, out_hidden]. Returns 0, or -1 on bad arguments or
  * allocation failure. */
-#define COLI_VISION_MAX_HEAD_DIM 512   /* rotary scratch size; a larger head_dim is refused, not truncated */
+#define LMA_VISION_MAX_HEAD_DIM 512   /* rotary scratch size; a larger head_dim is refused, not truncated */
 
-static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
+static inline int lma_vision_forward(float *out, const LmaVisionTower *tower,
                                       const float *pixels, int grid_h, int grid_w) {
-    const ColiVisionConfig *c = &tower->config;
+    const LmaVisionConfig *c = &tower->config;
     if (!out || !tower || !pixels || grid_h < 1 || grid_w < 1 ||
         c->heads < 1 || c->hidden != c->heads * c->head_dim ||
-        c->head_dim % 4 || c->head_dim > COLI_VISION_MAX_HEAD_DIM ||
-        coli_vision_output_tokens(c, grid_h, grid_w) < 0)
+        c->head_dim % 4 || c->head_dim > LMA_VISION_MAX_HEAD_DIM ||
+        lma_vision_output_tokens(c, grid_h, grid_w) < 0)
         return -1;
 
     const int tokens = grid_h * grid_w;
@@ -163,7 +163,7 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
     /* Patch embedding: the checkpoint's Conv3d has kernel == stride, so it is a
      * matrix applied to each flattened patch, not a convolution. */
     for (int t = 0; t < tokens; t++)
-        coli_vision_matvec(state + (size_t)t * hidden, tower->patch_w, tower->patch_b,
+        lma_vision_matvec(state + (size_t)t * hidden, tower->patch_w, tower->patch_b,
                            pixels + (size_t)t * patch_width, hidden, patch_width);
 
     /* 2-D rotary tables, in the same block-major order as the tokens. */
@@ -191,11 +191,11 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
     }
 
     for (int layer = 0; layer < c->depth; layer++) {
-        const ColiVisionBlock *block = &tower->blocks[layer];
+        const LmaVisionBlock *block = &tower->blocks[layer];
         /* ---- attention ---- */
         for (int t = 0; t < tokens; t++) {
-            coli_vision_rmsnorm(scratch, state + (size_t)t * hidden, block->norm1, hidden, c->eps);
-            coli_vision_matvec(qkv + (size_t)t * 3 * hidden, block->qkv_w, block->qkv_b,
+            lma_vision_rmsnorm(scratch, state + (size_t)t * hidden, block->norm1, hidden, c->eps);
+            lma_vision_matvec(qkv + (size_t)t * 3 * hidden, block->qkv_w, block->qkv_b,
                                scratch, 3 * hidden, hidden);
         }
         /* q/k head norms, then rotate. The reference reshapes qkv to
@@ -207,11 +207,11 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
             for (int h = 0; h < heads; h++) {
                 float *q = row + (size_t)h * hd;
                 float *k = row + hidden + (size_t)h * hd;
-                coli_vision_rmsnorm(q, q, block->q_norm, hd, c->eps);
-                coli_vision_rmsnorm(k, k, block->k_norm, hd, c->eps);
+                lma_vision_rmsnorm(q, q, block->q_norm, hd, c->eps);
+                lma_vision_rmsnorm(k, k, block->k_norm, hd, c->eps);
                 for (int pass = 0; pass < 2; pass++) {
                     float *vec = pass ? k : q;
-                    float rotated[COLI_VISION_MAX_HEAD_DIM];   /* hd is checked above: never truncated */
+                    float rotated[LMA_VISION_MAX_HEAD_DIM];   /* hd is checked above: never truncated */
                     for (int i = 0; i < hd; i++)
                         rotated[i] = i < hd / 2 ? -vec[i + hd / 2] : vec[i - hd / 2];
                     for (int i = 0; i < hd; i++)
@@ -247,7 +247,7 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
             }
         }
         for (int t = 0; t < tokens; t++) {
-            coli_vision_matvec(scratch, block->proj_w, block->proj_b,
+            lma_vision_matvec(scratch, block->proj_w, block->proj_b,
                                branch + (size_t)t * hidden, hidden, hidden);
             for (int i = 0; i < hidden; i++) state[(size_t)t * hidden + i] += scratch[i];
         }
@@ -255,21 +255,21 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
         for (int t = 0; t < tokens; t++) {
             float *gate = branch;                 /* attention output is already consumed */
             float *up = gate + c->intermediate;
-            coli_vision_rmsnorm(scratch, state + (size_t)t * hidden, block->norm2, hidden, c->eps);
-            coli_vision_matvec(gate, block->gate_w, block->gate_b, scratch, c->intermediate, hidden);
-            coli_vision_matvec(up, block->up_w, block->up_b, scratch, c->intermediate, hidden);
+            lma_vision_rmsnorm(scratch, state + (size_t)t * hidden, block->norm2, hidden, c->eps);
+            lma_vision_matvec(gate, block->gate_w, block->gate_b, scratch, c->intermediate, hidden);
+            lma_vision_matvec(up, block->up_w, block->up_b, scratch, c->intermediate, hidden);
             for (int i = 0; i < c->intermediate; i++) {
                 float g = gate[i] > c->swiglu_limit ? c->swiglu_limit : gate[i];
-                float u = coli_vision_clamp(up[i], -c->swiglu_limit, c->swiglu_limit);
-                gate[i] = coli_vision_silu(g) * u;
+                float u = lma_vision_clamp(up[i], -c->swiglu_limit, c->swiglu_limit);
+                gate[i] = lma_vision_silu(g) * u;
             }
-            coli_vision_matvec(scratch, block->down_w, block->down_b, gate, hidden, c->intermediate);
+            lma_vision_matvec(scratch, block->down_w, block->down_b, gate, hidden, c->intermediate);
             for (int i = 0; i < hidden; i++) state[(size_t)t * hidden + i] += scratch[i];
         }
     }
 
     for (int t = 0; t < tokens; t++)
-        coli_vision_rmsnorm(state + (size_t)t * hidden, state + (size_t)t * hidden,
+        lma_vision_rmsnorm(state + (size_t)t * hidden, state + (size_t)t * hidden,
                             tower->post_norm, hidden, c->eps);
 
     /* Spatial merge. The reference views the tokens as [-1, m, m, hidden],
@@ -277,7 +277,7 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
      * the whole block, so each output token is one dot product over the
      * block's m*m*hidden values - which only lines up because the tokens of a
      * block are adjacent (see the header comment). */
-    const int m = c->merge, blocks = coli_vision_output_tokens(c, grid_h, grid_w);
+    const int m = c->merge, blocks = lma_vision_output_tokens(c, grid_h, grid_w);
     float *merged = malloc((size_t)c->out_hidden * sizeof(float));
     float *gated = malloc((size_t)c->proj_intermediate * 2 * sizeof(float));
     if (!merged || !gated) {
@@ -299,19 +299,19 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
         }
         /* Patch merger: proj, LayerNorm, GELU, then a clamped SwiGLU. */
         float *tmp = branch;                                  /* reuse: >= out_hidden */
-        coli_vision_matvec(tmp, tower->merger_proj, NULL, merged, c->out_hidden, c->out_hidden);
-        coli_vision_layernorm(merged, tmp, tower->merger_norm_w, tower->merger_norm_b,
+        lma_vision_matvec(tmp, tower->merger_proj, NULL, merged, c->out_hidden, c->out_hidden);
+        lma_vision_layernorm(merged, tmp, tower->merger_norm_w, tower->merger_norm_b,
                               c->out_hidden, 1e-5f);
-        for (int i = 0; i < c->out_hidden; i++) merged[i] = coli_vision_gelu(merged[i]);
+        for (int i = 0; i < c->out_hidden; i++) merged[i] = lma_vision_gelu(merged[i]);
         float *up = gated + c->proj_intermediate;
-        coli_vision_matvec(gated, tower->merger_gate, NULL, merged, c->proj_intermediate, c->out_hidden);
-        coli_vision_matvec(up, tower->merger_up, NULL, merged, c->proj_intermediate, c->out_hidden);
+        lma_vision_matvec(gated, tower->merger_gate, NULL, merged, c->proj_intermediate, c->out_hidden);
+        lma_vision_matvec(up, tower->merger_up, NULL, merged, c->proj_intermediate, c->out_hidden);
         for (int i = 0; i < c->proj_intermediate; i++) {
             float g = gated[i] > c->swiglu_limit ? c->swiglu_limit : gated[i];
-            float u = coli_vision_clamp(up[i], -c->swiglu_limit, c->swiglu_limit);
-            gated[i] = coli_vision_silu(g) * u;
+            float u = lma_vision_clamp(up[i], -c->swiglu_limit, c->swiglu_limit);
+            gated[i] = lma_vision_silu(g) * u;
         }
-        coli_vision_matvec(out + (size_t)n * c->out_hidden, tower->merger_down, NULL,
+        lma_vision_matvec(out + (size_t)n * c->out_hidden, tower->merger_down, NULL,
                            gated, c->out_hidden, c->proj_intermediate);
     }
 
@@ -327,4 +327,4 @@ static inline int coli_vision_forward(float *out, const ColiVisionTower *tower,
     return 0;
 }
 
-#endif /* COLIBRI_VISION_TOWER_H */
+#endif /* LMA_VISION_TOWER_H */

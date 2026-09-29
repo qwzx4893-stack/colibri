@@ -1,7 +1,7 @@
 #ifndef ABL_H
 #define ABL_H
 /* ============================================================================
- * abl.h — per-item EXPERT CAUSAL-ABLATION config for colibri's moe().
+ * abl.h — per-item EXPERT CAUSAL-ABLATION config for lmatomic's moe().
  *
  * A research instrument, off the hot path: OFF by default, byte-identical to
  * upstream unless a run explicitly enables it via ABLATE_SCORE=<manifest>.

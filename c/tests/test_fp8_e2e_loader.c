@@ -22,8 +22,8 @@
  *   (c) every dequantized value (e4m3_decode(byte) * block scale) is finite
  *       -- catches a decode-table or block-index bug a pure byte-count
  *       check wouldn't. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <stdio.h>

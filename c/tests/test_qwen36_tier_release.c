@@ -3,25 +3,25 @@
 #include <math.h>
 #include <stdio.h>
 #include "../compat.h"
-#define coli_cuda_tensor_free fixture_free
-#define coli_cuda_shutdown fixture_shutdown
-#define coli_cuda_expert_group_take fixture_take
+#define lma_cuda_tensor_free fixture_free
+#define lma_cuda_shutdown fixture_shutdown
+#define lma_cuda_expert_group_take fixture_take
 #include "qwen36_fake_cuda.h"
-#undef coli_cuda_tensor_free
-#undef coli_cuda_shutdown
-#undef coli_cuda_expert_group_take
+#undef lma_cuda_tensor_free
+#undef lma_cuda_shutdown
+#undef lma_cuda_expert_group_take
 static int freed, stops, pending, failures;
-static ColiCudaTensor *borrowed[3];
+static LmaCudaTensor *borrowed[3];
 #define CHECK(c) do { if(!(c)){fprintf(stderr,"FAIL %d: %s\n",__LINE__,#c);failures++;} } while(0)
-void coli_cuda_tensor_free(ColiCudaTensor *t) {
+void lma_cuda_tensor_free(LmaCudaTensor *t) {
     if(!t) return;
     for(int i=0;i<3;i++) CHECK(!pending || t!=borrowed[i]);
     freed++; fixture_free(t);
 }
-void coli_cuda_shutdown(void) {
+void lma_cuda_shutdown(void) {
     CHECK(!pending); CHECK(freed==fake_uploads); stops++;
 }
-const float *coli_cuda_expert_group_take(int device) { pending=0; return NULL; }
+const float *lma_cuda_expert_group_take(int device) { pending=0; return NULL; }
 static int issue(int device,int count,const float *x) { pending=1; return 1; }
 #include "../qwen36_tier.c"
 int main(void) {
@@ -41,8 +41,8 @@ int main(void) {
         CHECK(!qt_dnproj_matmul(0,y,x,D,D)); CHECK(qt_dense_count()==0);
         int before=freed; qt_shutdown(); CHECK(freed==before); CHECK(stops==0);
     }
-    setenv("COLI_CUDA","1",1); setenv("COLI_GPUS","0",1);
-    setenv("COLI_PLACE","experts=0,lmhead=0,dnproj=0",1);
+    setenv("LMA_CUDA","1",1); setenv("LMA_GPUS","0",1);
+    setenv("LMA_PLACE","experts=0,lmhead=0,dnproj=0",1);
     setenv("QT_NO_WARMSTART","1",1); setenv("HEAT_FILE","",1);
     setenv("CUDA_EXPERT_GB","0.0625",1);
     for(int round=0;round<2;round++) {

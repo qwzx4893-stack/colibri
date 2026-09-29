@@ -17,8 +17,8 @@
  * Header-only, all static, no dependencies beyond immintrin — mirrors quant.h
  * conventions. Guarded by __AVX2__; callers keep the stock fallback.
  */
-#ifndef COLI_FUSED_SIMD_H
-#define COLI_FUSED_SIMD_H
+#ifndef LMA_FUSED_SIMD_H
+#define LMA_FUSED_SIMD_H
 
 #include <stdint.h>
 #include <math.h>
@@ -153,4 +153,4 @@ static void matmul_q_idot_pair_v3(float *yg, float *yu, const float *x,
 }
 #endif /* __AVX2__ */
 
-#endif /* COLI_FUSED_SIMD_H */
+#endif /* LMA_FUSED_SIMD_H */

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/colibri-logo.svg" width="560" alt="colibrì — motore piccolo, modello immenso">
+  <img src="assets/lmatomic-logo.svg" width="560" alt="LM Atomic — motore piccolo, modello immenso">
 </p>
 
 <p align="center">
@@ -16,16 +16,16 @@ Oggi girano nove famiglie: **GLM-5.2/5.3** (744B), **GLM-5.3-Flash** (321B, con
 vision), **Inkling** (975B), **Kimi K3** (2,8T), **DeepSeek V4 Flash** (284B), **DeepSeek V4.1 Flash** (552B, con visione),
 **Qwen3.8-Flash-Next** (125B + 51B n-gram), **Qwen3.6** (35B-A3B) e
 **OLMoE** (7B) — un
-file C ciascuna, la stessa interfaccia `coli chat` / `coli serve` / `coli web`. [Elenco completo](README.md#other-supported-models)
+file C ciascuna, la stessa interfaccia `lmatomic chat` / `lmatomic serve` / `lmatomic web`. [Elenco completo](README.md#other-supported-models)
 
-> **Colibrì è un motore di inferenza che puoi usare oggi, e una piattaforma di
+> **LM Atomic è un motore di inferenza che puoi usare oggi, e una piattaforma di
 > ricerca aperta.** Il suo obiettivo principale è migliorare le prestazioni di
 > inferenza lungo l'intero confine software/hardware — formati dei modelli,
 > gerarchia di memoria, I/O dello storage, piazzamento, scheduling, kernel,
 > speculazione e sovrapposizione CPU/GPU — affinché i grandi modelli dipendano
 > meno da hardware raro e costino meno.
 
-Colibrì è intenzionalmente un luogo dove verificare idee di sistema aggressive —
+LM Atomic è intenzionalmente un luogo dove verificare idee di sistema aggressive —
 quindi **nessuno SLA sulla velocità, e una garanzia dura sulla semantica**: gli
 esperimenti devono dimostrare il proprio valore con misure end-to-end riproducibili;
 la policy predefinita **non cambia mai silenziosamente la precisione del modello né
@@ -33,8 +33,8 @@ la semantica del router**. Una memoria veloce insufficiente può ridurre la velo
 ma non ridefinire il modello di nascosto.
 
 ```
-$ ./coli chat
-  🐦 colibri v1.12.1 — GLM-5.2 · 744B MoE · int4 · streaming CPU
+$ ./lmatomic chat
+  🐦 lmatomic v1.12.1 — GLM-5.2 · 744B MoE · int4 · streaming CPU
   ✓ ready in 32s · resident 9.9 GB
   › ciao!
   ◆ Ciao! 😊 Come posso aiutarti oggi?
@@ -43,21 +43,21 @@ $ ./coli chat
 ## Guardalo in azione
 
 <p align="center">
-  <img src="docs/media/colibri-dashboard.png" width="900" alt="dashboard web di colibrì — metriche live, pannello hardware, livelli degli expert">
+  <img src="docs/media/lmatomic-dashboard.png" width="900" alt="dashboard web di LM Atomic — metriche live, pannello hardware, livelli degli expert">
 </p>
-<p align="center"><em>La dashboard web (<code>./coli web</code>), ridisegnata nella 1.12.0: uno spazio di lavoro con un dock per la chat,
+<p align="center"><em>La dashboard web (<code>./lmatomic web</code>), ridisegnata nella 1.12.0: uno spazio di lavoro con un dock per la chat,
 la modalità Brio, la pagina Brain e il Profiling, in tema chiaro o scuro. Qui Qwen3.6 che risponde su una macchina
 solo CPU, con gli expert letti dal disco.</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-brio.png" width="900" alt="la pagina Brio: un documento letto una volta, una probabilità per ogni risposta ammessa, e un'entropia">
+  <img src="docs/media/lmatomic-brio.png" width="900" alt="la pagina Brio: un documento letto una volta, una probabilità per ogni risposta ammessa, e un'entropia">
 </p>
 <p align="center"><em><strong>Modalità Brio</strong>: lo stesso modello, a cui si dice di non scrivere. Gli dai un documento e le sole risposte
 che può scegliere; legge la probabilità di ciascuna, non genera niente, e riporta un'entropia che dice quando non è
 sicuro. Qui: <strong>request changes al 99.9%</strong>, entropia 0.005, 4 token letti, 0 generati.</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-brain.png" width="900" alt="la pagina Brain: l'atlante misurato degli expert di GLM-5.2 disegnato come una corteccia, dieci regioni da esplorare">
+  <img src="docs/media/lmatomic-brain.png" width="900" alt="la pagina Brain: l'atlante misurato degli expert di GLM-5.2 disegnato come una corteccia, dieci regioni da esplorare">
 </p>
 <p align="center"><em>La pagina <strong>Brain</strong>, <strong>Explore</strong>: l'<a href="https://github.com/JustVugg/colibri/issues/175">atlante misurato degli expert</a> di GLM-5.2
 disegnato come una corteccia. 13.260 expert caratterizzati in dieci regioni (Python, SQL, matematica, poesia, legge, cinese…);
@@ -66,14 +66,14 @@ la posizione deriva dall'affinità di routing misurata, non da un embedding appr
 expert instradato in un turno lampeggia bianco.</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-brain-region.png" width="900" alt="dentro la regione Python: 1.142 expert, uno selezionato con le sue affinità misurate">
+  <img src="docs/media/lmatomic-brain-region.png" width="900" alt="dentro la regione Python: 1.142 expert, uno selezionato con le sue affinità misurate">
 </p>
 <p align="center"><em>Dentro la regione <strong>Python</strong>: 1.142 expert come una costellazione, ciascuno etichettato per layer e indice. Il pannello
 ne mostra uno, layer 17 expert 178: un generalista con entropia 3,13, la cui affinità misurata è 20,2% Python, 14,6% JSON,
 14,2% conversazione, 13,3% SQL.</em></p>
 
 <p align="center">
-  <img src="docs/media/colibri-profiling.png" width="900" alt="la pagina Profiling: dove il motore spende ogni turno">
+  <img src="docs/media/lmatomic-profiling.png" width="900" alt="la pagina Profiling: dove il motore spende ogni turno">
 </p>
 <p align="center"><em>La pagina <strong>Profiling</strong>: dove il motore spende ogni turno, per fase, con gli ultimi 30 turni come tendenza.
 Qui Qwen3.6 su una macchina CPU: 19,0 s di tempo totale per 36 token di prompt e 55 generati, 2,9 tok/s, 11,4 s di
@@ -82,7 +82,7 @@ servizio disco sovrapposti al calcolo.</em></p>
 ## La missione di ricerca
 
 L'inferenza di frontiera non dovrebbe richiedere per forza hardware da datacenter.
-L'obiettivo di Colibrì è semplice: **ridurre la dipendenza dall'hardware e il costo
+L'obiettivo di LM Atomic è semplice: **ridurre la dipendenza dall'hardware e il costo
 totale dell'inferenza, ottimizzando ogni parte del percorso che le misure indicano
 come limitante**.
 
@@ -123,7 +123,7 @@ perché la prossima ottimizzazione utile possa arrivare da chiunque sia disposto
 
 ## Ipotesi aperte, esperimenti e partecipazione
 
-Colibrì considera ogni ottimizzazione un'ipotesi finché un A/B end-to-end
+LM Atomic considera ogni ottimizzazione un'ipotesi finché un A/B end-to-end
 controllato non dimostra il contrario. Le domande principali sono:
 
 | ipotesi | evidenza attuale | esperimento ancora necessario |
@@ -163,7 +163,7 @@ Il modello non ha bisogno di *stare* in memoria veloce — ha bisogno di essere
   in streaming**, con una cache LRU per layer, un hot-store pinnato che impara,
   e un livello VRAM opzionale.
 
-Il motore è un singolo file C (`c/colibri.c`) più header piccoli. Niente BLAS,
+Il motore è un singolo file C (`c/glm52.c`) più header piccoli. Niente BLAS,
 niente Python a runtime, niente GPU obbligatoria.
 
 ## Come funziona
@@ -190,9 +190,9 @@ caricato dal disco in streaming (lento, ma corretto); su un host grande l'intero
 set di expert diventa residente (`CUDA_EXPERT_GB=auto PIN_GB=all`) e il disco
 esce completamente dal percorso di decode. Tra i livelli c'è una **cache che
 impara**: il motore registra quali expert il *tuo* carico di lavoro instrada
-(`.coli_usage`, aggiornato a ogni turno) e fissa automaticamente i più caldi —
-colibrì diventa letteralmente più veloce man mano che lo usi. Sugli host
-multi-socket, `COLI_NUMA=1` interlaccia i pesi residenti tra i controller di
+(`.lma_usage`, aggiornato a ogni turno) e fissa automaticamente i più caldi —
+LM Atomic diventa letteralmente più veloce man mano che lo usi. Sugli host
+multi-socket, `LMA_NUMA=1` interlaccia i pesi residenti tra i controller di
 memoria ([#82](https://github.com/JustVugg/colibri/issues/82)).
 
 ### Mai aspettare il disco due volte
@@ -205,7 +205,7 @@ residenti calcolano; le posizioni in batch leggono ogni expert unico una sola
 volta (**batch-union**); un thread di lookahead del router (`PILOT=1`) fa il
 prefetch degli expert del layer successivo — il routing è misurabilmente
 **prevedibile al 71.6% un layer in anticipo**. Sulle GPU, la pipeline residente
-(`COLI_CUDA_PIPE=2`) mantiene il flusso residuo on-device tra i layer, così il
+(`LMA_CUDA_PIPE=2`) mantiene il flusso residuo on-device tra i layer, così il
 loop CPU degli expert procede senza interruzioni; su Apple Silicon un backend
 [Metal](docs/metal.md) sperimentale esegue la matmul batch degli expert sulla
 GPU a memoria unificata.
@@ -215,7 +215,7 @@ GPU a memoria unificata.
 Il forward pass è validato **token-esatto contro un oracle `transformers`**
 (teacher-forcing 32/32). L'attenzione MLA memorizza uno stato KV compresso — 576
 float/token invece di 32.768 (**57× più piccolo**) — e lo persiste tra i
-riavvii (`.coli_kv`): le conversazioni riaprono "calde", senza alcun re-prefill,
+riavvii (`.lma_kv`): le conversazioni riaprono "calde", senza alcun re-prefill,
 byte-identiche a una sessione ininterrotta. L'attenzione sparsa DSA (il
 lightning indexer di GLM-5.2) è implementata fedelmente e validata forzando la
 selezione di tutte le chiavi per riprodurre esattamente l'attenzione densa.
@@ -263,19 +263,19 @@ Ti servono due cose: **il programma** (poche centinaia di KB) e **il modello**
 (372 GB). Guida passo passo per tutte le piattaforme nella
 [Quick Start](docs/quickstart.md).
 
-### 1. Procurati colibri
+### 1. Procurati LM Atomic
 
 **Scarica una release già compilata** — Linux, macOS e Windows, nessun
 compilatore necessario. Prendi l'archivio della tua piattaforma dalla pagina
 [Releases](https://github.com/JustVugg/colibri/releases) e scompattalo:
 
 ```bash
-mkdir colibri && tar xzf colibri-v1.8.0-linux-x86_64.tar.gz -C colibri && cd colibri
-python3 coli info                         # engine ready ✓
+mkdir lmatomic && tar xzf colibri-v1.8.0-linux-x86_64.tar.gz -C lmatomic && cd lmatomic
+python3 lmatomic info                         # engine ready ✓
 ```
 
-Dentro trovi il motore (`colibri`, `colibri.exe` su Windows), il launcher `coli`
-e i suoi script Python di supporto. Niente da rinominare o configurare: `coli`
+Dentro trovi il motore (`lmatomic`, `glm52.exe` su Windows), il launcher `lmatomic`
+e i suoi script Python di supporto. Niente da rinominare o configurare: `lmatomic`
 trova il motore accanto a sé. Serve solo avere
 [Python 3](https://www.python.org/downloads/) installato — il launcher e il
 gateway API sono script Python, mentre il motore è C puro senza dipendenze.
@@ -287,7 +287,7 @@ git clone https://github.com/JustVugg/colibri && cd colibri/c
 ./setup.sh                                # verifica gcc/OpenMP, compila, autotest
 ```
 
-Vuoi `coli` nel PATH? Da un checkout, `pip install -e .` lo registra (il motore
+Vuoi `lmatomic` nel PATH? Da un checkout, `pip install -e .` lo registra (il motore
 resta in `c/` — è un'installazione editabile dal clone, non un wheel).
 
 ### 2. Scarica il modello
@@ -318,17 +318,17 @@ Oppure converti tu stesso dalla sorgente FP8 — un unico comando riprendibile c
 non richiede mai i 756 GB completi su disco contemporaneamente:
 
 ```bash
-./coli convert --model /nvme/glm52_i4     # scarica e converti shard per shard (python, una tantum)
+./lmatomic convert --model /nvme/glm52_i4     # scarica e converti shard per shard (python, una tantum)
 ```
 
 ### 3. Esegui
 
 ```bash
-COLI_MODEL=/nvme/glm52_i4 ./coli chat     # budget RAM, cache e MTP rilevati automaticamente
-COLI_MODEL=/nvme/glm52_i4 ./coli plan     # mostra il piazzamento pianificato VRAM/RAM/disco
-COLI_MODEL=/nvme/glm52_i4 ./coli doctor   # controllo di idoneità (sola lettura)
-./coli web  --model /nvme/glm52_i4        # API + dashboard web sulla stessa porta
-./coli serve --model /nvme/glm52_i4       # solo API compatibile OpenAI
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic chat     # budget RAM, cache e MTP rilevati automaticamente
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic plan     # mostra il piazzamento pianificato VRAM/RAM/disco
+LMA_MODEL=/nvme/glm52_i4 ./lmatomic doctor   # controllo di idoneità (sola lettura)
+./lmatomic web  --model /nvme/glm52_i4        # API + dashboard web sulla stessa porta
+./lmatomic serve --model /nvme/glm52_i4       # solo API compatibile OpenAI
 ```
 
 #### Modalità Brio: una domanda a risposta chiusa
@@ -344,7 +344,7 @@ identica byte per byte per chi non la chiede.
 
 ```bash
 # nella TUI: lo stesso modello, a cui si dice di non scrivere
-./coli chat --model /nvme/qwen36_i4_gs64
+./lmatomic chat --model /nvme/qwen36_i4_gs64
 > /brio merge | request changes | close
 > 340 lines, 8 files, no tests. CI is green but nothing covers that path.
 
@@ -364,7 +364,7 @@ documento. Tutta la modalità, la forma di richiesta e risposta, e dove non
 serve: [docs/brio.md](docs/brio.md). Anche la dashboard ha una pagina Brio.
 
 
-Su Windows gli stessi comandi funzionano con `python coli chat --model D:\glm52_i4`.
+Su Windows gli stessi comandi funzionano con `python lmatomic chat --model D:\glm52_i4`.
 Il motore a runtime è puro C — python si usa solo per il convertitore (una tantum)
 e per il gateway API opzionale.
 
@@ -399,7 +399,7 @@ e per il gateway API opzionale.
 
 ## Sostenere il progetto
 
-colibrì è nato come progetto di una sola persona su un portatile con 12 core
+LM Atomic è nato come progetto di una sola persona su un portatile con 12 core
 e 25 GB di RAM; oggi i suoi numeri arrivano da una comunità di macchine reali.
 Se ti è utile:
 
@@ -415,15 +415,15 @@ Se ti è utile:
 ```
 Makefile                  punto d'ingresso root per build/check
 c/
-├── colibri.c             motore principale
+├── glm52.c             motore principale
 ├── quant.h               kernel matmul quantizzati (SIMD multi-architettura)
 ├── sample.h              campionamento, RNG, set di stop
-├── kv_persist.h          persistenza KV su disco (.coli_kv)
+├── kv_persist.h          persistenza KV su disco (.lma_kv)
 ├── telemetry.h           protocollo dashboard, statistiche, usage
 ├── st.h, tok.h, json.h   header di runtime
 ├── backend_cuda.*        livello CUDA opzionale
 ├── Makefile              build e check locali
-├── coli                  CLI utente
+├── lmatomic                  CLI utente
 ├── openai_server.py      gateway HTTP compatibile OpenAI
 ├── setup.sh              setup locale in un solo comando
 ├── tools/                conversione offline, fixture e benchmark
@@ -434,15 +434,15 @@ desktop/                  shell desktop Tauri v2 che racchiude la web UI
 docs/                     documentazione di riferimento, esperimenti, media
 ```
 
-Il percorso a runtime resta intenzionalmente piatto e leggibile: `colibri.c`
+Il percorso a runtime resta intenzionalmente piatto e leggibile: `glm52.c`
 più i suoi header. Dalla radice del repository, `make`, `make check` e
 `make clean` delegano al Makefile del motore.
 
-## Perché "colibrì"
+## Perché "LM Atomic"
 
-Il colibrì pesa pochi grammi, sta sospeso nel vuoto e visita un migliaio di
+Il LM Atomic pesa pochi grammi, sta sospeso nel vuoto e visita un migliaio di
 fiori al giorno. Questo motore tiene in vita un gigante da 744 miliardi di
-parametri con le razioni di un colibrì: 25 GB di RAM, dodici core CPU e
+parametri con le razioni di un LM Atomic: 25 GB di RAM, dodici core CPU e
 tanta pazienza col disco.
 
 Il nome è rimasto in italiano perché questa è la lingua in cui è stato scritto

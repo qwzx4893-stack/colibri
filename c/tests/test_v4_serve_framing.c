@@ -1,6 +1,6 @@
 /* Freeze DeepSeek V4's serving wire before adopting serve_codec.h. */
-#define COLI_V4_UNIT_GENERATE_STATS
-#define COLI_V4_SKIP_GENERATE_MAIN
+#define LMA_V4_UNIT_GENERATE_STATS
+#define LMA_V4_SKIP_GENERATE_MAIN
 #include "../deepseek_v4.c"
 
 #include <assert.h>

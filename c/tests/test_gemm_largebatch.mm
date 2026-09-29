@@ -1,8 +1,8 @@
-// Standalone large-batch correctness test for coli_metal_gemm — reproduces the
+// Standalone large-batch correctness test for lma_metal_gemm — reproduces the
 // long-context OpenCode prefill corruption WITHOUT the model or a 33-minute run.
 //
 // Isolation established (see INVESTIGATION_LOG_metal_moe_race.md): corruption <=> dense
-// GEMM on GPU (`coli_metal_gemm`), independent of MoE. The engine's existing kernel tests
+// GEMM on GPU (`lma_metal_gemm`), independent of MoE. The engine's existing kernel tests
 // only exercise S<=64, which is why this fault was never caught. The trigger is the DISPATCH
 // GRID (NT=S*O), not S alone: only the largest-O shape here (kv_b, O=28672) crosses the device
 // limit, and only at S=7478 (~5.4e7 tg) -- it is still clean at S=4376 (~3.1e7 tg), and the
@@ -53,14 +53,14 @@ static int run_gemm(int fmt, int O, int I, int S, const char *name) {
   srand(1234 + S*7 + fmt);
   for(size_t i=0;i<wn;i++) W[i]=(uint8_t)((fmt==I8)?((rand()%255)-127):(rand()&0xFF));
   for(int i=0;i<O;i++) Sc[i]=0.01f+(rand()%50)/50000.f;
-  coli_metal_register(W,wb); coli_metal_register(Sc,sb);
+  lma_metal_register(W,wb); lma_metal_register(Sc,sb);
 
   std::vector<float> x((size_t)S*I), yr((size_t)S*O), yg((size_t)S*O), yg2((size_t)S*O);
   for(auto&v:x) v=((rand()%2000)-1000)/1000.f;
 
   cpu_ref(fmt, W, Sc, x.data(), yr.data(), S, I, O);
-  int ok1 = coli_metal_gemm(yg.data(),  x.data(), W, Sc, fmt, S, I, O, 0);  /* gs=0: per-row scales */
-  int ok2 = coli_metal_gemm(yg2.data(), x.data(), W, Sc, fmt, S, I, O, 0);
+  int ok1 = lma_metal_gemm(yg.data(),  x.data(), W, Sc, fmt, S, I, O, 0);  /* gs=0: per-row scales */
+  int ok2 = lma_metal_gemm(yg2.data(), x.data(), W, Sc, fmt, S, I, O, 0);
 
   // GPU vs CPU: max normalized error + first diverging element.
   double maxabs=0, ymax=0; long badidx=-1;
@@ -84,13 +84,13 @@ static int run_gemm(int fmt, int O, int I, int S, const char *name) {
   if(detdiff) printf("  [%ld/%zu gpu elems differ run-to-run]", detdiff, (size_t)S*O);
   printf("\n");
 
-  coli_metal_unregister(W); coli_metal_unregister(Sc); free(W); free(Sc);
+  lma_metal_unregister(W); lma_metal_unregister(Sc); free(W); free(Sc);
   return clean?0:1;
 }
 
 int main(void){
-  if(!coli_metal_init()){ printf("Metal unavailable (skipping)\n"); return 0; }
-  printf("coli_metal_gemm large-batch sweep (GPU vs CPU, + determinism):\n");
+  if(!lma_metal_init()){ printf("Metal unavailable (skipping)\n"); return 0; }
+  printf("lma_metal_gemm large-batch sweep (GPU vs CPU, + determinism):\n");
   int fail=0;
   // Real GLM-5.2 matmul shapes. kv_b (O=28672,I=512) has the largest S*O.
   struct { int O,I; const char*n; } shapes[] = {
@@ -104,6 +104,6 @@ int main(void){
     printf("\n");
   }
   printf(fail? "GEMM large-batch: CORRUPTION DETECTED\n" : "GEMM large-batch: all clean\n");
-  coli_metal_shutdown();
+  lma_metal_shutdown();
   return fail;
 }

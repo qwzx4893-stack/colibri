@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Recurrent-state checkpoints (COLI_K3_CKPT) against the tiny K3 fixture.
+"""Recurrent-state checkpoints (LMA_K3_CKPT) against the tiny K3 fixture.
 
 The scenario is the agentic edit kv-prefix reuse cannot serve: turn 2 shares
 only the OPENING of turn 1's prompt and diverges after it (an edited question,
@@ -9,7 +9,7 @@ With checkpoints enabled the engine restores the photo taken at turn 1's
 prompt boundary and recomputes only the tail.
 
 What is asserted, all deterministic:
-  - OPT-IN INVARIANT: with COLI_K3_CKPT unset the engine emits no [K3-CKPT]
+  - OPT-IN INVARIANT: with LMA_K3_CKPT unset the engine emits no [K3-CKPT]
     line and behaves as before (this is the default-off run itself).
   - IDENTITY: every request's DATA bytes are identical with checkpoints off
     and on. The feature may only change WORK, never tokens.
@@ -126,19 +126,19 @@ def main():
 
         off, err_off = run_session(args.binary, model, {},
                                    work / "off.stderr")
-        on, err_on = run_session(args.binary, model, {"COLI_K3_CKPT": "4"},
+        on, err_on = run_session(args.binary, model, {"LMA_K3_CKPT": "4"},
                                  work / "on.stderr")
         disk_dir = work / "photos"
         disk_dir.mkdir()
         disk, err_disk = run_session(
             args.binary, model,
-            {"COLI_K3_CKPT": "4", "COLI_K3_CKPT_DIR": str(disk_dir)},
+            {"LMA_K3_CKPT": "4", "LMA_K3_CKPT_DIR": str(disk_dir)},
             work / "disk.stderr")
 
         # opt-in invariant: the default run must not know the feature exists
         if "[K3-CKPT]" in err_off:
             raise AssertionError(
-                "COLI_K3_CKPT unset but the engine logged checkpoint "
+                "LMA_K3_CKPT unset but the engine logged checkpoint "
                 "activity: the feature is not opt-in")
         print("ok opt-in: default run has no checkpoint activity")
 

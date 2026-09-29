@@ -1,8 +1,8 @@
-"""`coli doctor` must inspect the engine the model would actually run on (#783).
+"""`lmatomic doctor` must inspect the engine the model would actually run on (#783).
 
-engine_path was hardcoded to the GLM binary, so doctor reported against colibri
+engine_path was hardcoded to the GLM binary, so doctor reported against glm52
 whatever the model was. That misled in both directions: a user who had built
-kimi_k3 was told "engine is not built", and anyone with a stale colibri lying
+kimi_k3 was told "engine is not built", and anyone with a stale glm52 lying
 around would have been told the engine was ready for a model that never runs on
 it. A diagnostic that reports on the wrong file is worse than no diagnostic.
 """
@@ -15,10 +15,10 @@ import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-CLI = HERE / "coli"
+CLI = HERE / "lmatomic"
 
 ARCHES = [
-    ("glm_moe_dsa", "colibri"),
+    ("glm_moe_dsa", "glm52"),
     ("inkling", "inkling"),
     ("kimi_k3", "kimi_k3"),
     ("olmoe", "olmoe"),

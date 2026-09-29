@@ -1,6 +1,6 @@
 /* qwen36_tier.h -- optional CUDA VRAM expert tier for the qwen36 engine.
  *
- * Applies colibri's placement concept ("route -> place -> overlap -> learn")
+ * Applies lmatomic's placement concept ("route -> place -> overlap -> learn")
  * one level up from the GLM disk tier: experts live in RAM, the *hot* ones
  * are promoted into DEVICE_LOCAL VRAM across one or more GPUs and computed
  * there via the existing CUDA backend (backend_cuda.cu, expert-group API).
@@ -13,15 +13,15 @@
  *    blocks on placement. A VRAM miss falls back to the CPU int8 path and
  *    overlaps with the in-flight GPU groups.
  *
- * Enable with COLI_CUDA=1 [COLI_GPUS=0,1] [CUDA_EXPERT_GB=<G>|auto]
+ * Enable with LMA_CUDA=1 [LMA_GPUS=0,1] [CUDA_EXPERT_GB=<G>|auto]
  * [HEAT_FILE=<path>] [QT_NO_WARMSTART=1]. Compiled only when the build sets
- * -DCOLI_CUDA (CUDA=1); otherwise the inline stubs below keep the engine
+ * -DLMA_CUDA (CUDA=1); otherwise the inline stubs below keep the engine
  * CPU-only with zero overhead. */
 #ifndef QWEN36_TIER_H
 #define QWEN36_TIER_H
 #include <stdint.h>
 
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
 
 /* Init after model load. Returns 1 when the tier is active.
  * cap_experts_per_layer must equal n_experts (full RAM residency): the tier
@@ -30,7 +30,7 @@
  * chiamante lo determina dalla TAGLIA SU DISCO, non da meta.ebits, che su
  * qualche container mente (cfr. il rilevamento in qwen36.c). */
 /* R4 role split: park the dense-i8 lm_head on its own CUDA device
- * (COLI_LMHEAD_GPU=<dev>). One GEMV per token, at token end — outside the
+ * (LMA_LMHEAD_GPU=<dev>). One GEMV per token, at token end — outside the
  * per-layer latency chain — so a slower second card can host it without
  * pacing the expert stream. qt_init places no experts on that device. */
 int  qt_lmhead_init(const int8_t *q, const float *sc, int I, int O);
@@ -41,23 +41,23 @@ int  qt_lmhead_matmul(float *y, const float *x, int I, int O);
  * specific CUDA device, so configurations can be A/B'd instead of argued
  * about. One variable, not one per component:
  *
- *   COLI_PLACE="experts=0,lmhead=0,dnproj=1,dnout=1,attnproj=cpu"
+ *   LMA_PLACE="experts=0,lmhead=0,dnproj=1,dnout=1,attnproj=cpu"
  *
  * Target is `cpu` or a CUDA ordinal. A component may also be split across
  * cards by layer count, joined with '+' so it cannot be confused with the
  * component separator:
  *
- *   COLI_PLACE="dnproj=0:15+1:15"   first 15 DeltaNet layers on dev 0, rest on 1
+ *   LMA_PLACE="dnproj=0:15+1:15"   first 15 DeltaNet layers on dev 0, rest on 1
  *
  * Unnamed components keep their default (CPU; experts keep following
- * COLI_GPUS). Splitting matters because the DeltaNet projections hang
+ * LMA_GPUS). Splitting matters because the DeltaNet projections hang
  * serially in the layer chain anyway -- a slower card delays only its own
  * layers, never the whole stream, which is what sank asymmetric EXPERT
  * placement. `layer` is the model layer index; pass 0 for whole-model
  * components like lmhead. */
 #define QT_PLACE_CPU (-1)
 int  qt_place_of(const char *component, int layer);
-/* Automatic placement (COLI_PLACE unset or "auto"; "off" disables). The
+/* Automatic placement (LMA_PLACE unset or "auto"; "off" disables). The
  * engine offers each trunk component with its byte size BEFORE qt_init --
  * "lmhead" once (layer 0), "dnproj" per DeltaNet layer -- and qt_init decides
  * by bytes saved per token per byte of VRAM, pricing displaced experts by
@@ -68,7 +68,7 @@ void qt_trunk_offer(const char *component, int layer, size_t bytes);
 /* The automatic placement is a prediction; the engine measures it at startup
  * (one GEMV both ways, qwen36.c trunk_probe_gpu_wins) and withdraws the whole
  * trunk when the GPU loses, giving the bytes back to the expert budget. Only
- * the automatic placement can be withdrawn; a COLI_PLACE list stands. */
+ * the automatic placement can be withdrawn; a LMA_PLACE list stands. */
 int  qt_place_is_auto(void);
 void qt_trunk_withdraw(const char *why);
 
@@ -140,7 +140,7 @@ void qt_fill_wait(void);   /* blocks until every enqueued upload is resident (no
 /* One telemetry block on stderr: residency, hits/misses, uploads per device. */
 void qt_stats(void);
 
-#else /* !COLI_CUDA: inline stubs, engine stays CPU-only */
+#else /* !LMA_CUDA: inline stubs, engine stays CPU-only */
 
 static inline int  qt_init(int a,int b,int c,int d,int e,int f,int g,int h){(void)h;(void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g;return 0;}
 static inline int  qt_init_fp8(int a,int b,int c,int d,int e,int f,const float*g){(void)a;(void)b;(void)c;(void)d;(void)e;(void)f;(void)g;return 0;}
@@ -172,5 +172,5 @@ static inline void qt_note_block(int a,int b,const uint8_t*c,const uint8_t*d,con
 static inline void qt_fill_wait(void){}
 static inline void qt_stats(void){}
 
-#endif /* COLI_CUDA */
+#endif /* LMA_CUDA */
 #endif /* QWEN36_TIER_H */

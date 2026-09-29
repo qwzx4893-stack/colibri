@@ -3,8 +3,8 @@
  * (per-row .qs), indexes it with st_init, loads both through qt_from_disk, and
  * checks the byte-count/.qs-size format inference picks fmt=5 vs fmt=2 correctly
  * and the loaded weights dequantize identically to pack_int3_g64's output. */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <stdio.h>

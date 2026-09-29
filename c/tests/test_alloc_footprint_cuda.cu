@@ -1,4 +1,4 @@
-/* coli_cuda_alloc_footprint / coli_cuda_tensor_vram (#687)
+/* lma_cuda_alloc_footprint / lma_cuda_tensor_vram (#687)
  *
  * The expert tier charged `remaining` the LOGICAL byte count of each expert
  * while the allocator was taking more, so auto could claim the card to within
@@ -53,7 +53,7 @@ int main(void) {
     }
     int devices[8], ndev = 0;
     for (int i = 0; i < count && ndev < 8; i++) devices[ndev++] = i;
-    if (!coli_cuda_init(devices, ndev)) {
+    if (!lma_cuda_init(devices, ndev)) {
         std::printf("cuda init failed\n");
         return 77;
     }
@@ -65,7 +65,7 @@ int main(void) {
                              1048576, 1048577, 1572864, 2097152, 6291456 };
     for (size_t b : sizes) {
         char d[128];
-        size_t got = coli_cuda_alloc_footprint(b);
+        size_t got = lma_cuda_alloc_footprint(b);
         std::snprintf(d, sizeof d, "%zu -> %zu", b, got);
         check(got >= b, "footprint never below the request", d);
     }
@@ -73,7 +73,7 @@ int main(void) {
     /* 2. It tracks the real allocator, not a formula. */
     for (size_t b : { (size_t)786432, (size_t)1572864, (size_t)6291456 }) {
         double real = measured_footprint(b, 64);
-        size_t got = coli_cuda_alloc_footprint(b);
+        size_t got = lma_cuda_alloc_footprint(b);
         char d[160];
         std::snprintf(d, sizeof d, "%zu: probe %zu vs measured %.0f", b, got, real);
         check(real > 0 && (double)got == real, "footprint agrees with a live measurement", d);
@@ -83,7 +83,7 @@ int main(void) {
      *    suite would pass on a function that just doubled everything. */
     {
         size_t b = 6291456;               /* 6 MiB, the int4-g64 weight array */
-        size_t got = coli_cuda_alloc_footprint(b);
+        size_t got = lma_cuda_alloc_footprint(b);
         char d[128];
         std::snprintf(d, sizeof d, "6 MiB -> %zu (overhead %lld)", got, (long long)got - (long long)b);
         check(got == b, "an aligned request is charged exactly, not inflated", d);
@@ -93,9 +93,9 @@ int main(void) {
      *    rather than by timing, which would be flaky under load. */
     {
         size_t fb = 0, fa = 0, t = 0;
-        coli_cuda_alloc_footprint(786432);          /* prime */
+        lma_cuda_alloc_footprint(786432);          /* prime */
         cudaMemGetInfo(&fb, &t);
-        for (int i = 0; i < 500; i++) coli_cuda_alloc_footprint(786432);
+        for (int i = 0; i < 500; i++) lma_cuda_alloc_footprint(786432);
         cudaMemGetInfo(&fa, &t);
         char d[128];
         std::snprintf(d, sizeof d, "500 repeat calls moved free VRAM by %lld B",
@@ -112,12 +112,12 @@ int main(void) {
         size_t ng = (I + gs - 1) / gs, sc = (size_t)O * ng;
         std::vector<unsigned char> w(wb, 0x11);
         std::vector<float> s(sc, 1.0f);
-        ColiCudaTensor *t = nullptr;
-        if (!coli_cuda_tensor_upload_g(&t, w.data(), s.data(), 4, I, O, 0, gs)) {
+        LmaCudaTensor *t = nullptr;
+        if (!lma_cuda_tensor_upload_g(&t, w.data(), s.data(), 4, I, O, 0, gs)) {
             std::printf("FAIL upload\n"); return 1;
         }
-        size_t logical = coli_cuda_tensor_bytes(t);
-        size_t vram    = coli_cuda_tensor_vram(t);
+        size_t logical = lma_cuda_tensor_bytes(t);
+        size_t vram    = lma_cuda_tensor_vram(t);
         char d[192];
         std::snprintf(d, sizeof d, "logical %zu, vram %zu, padding %lld",
                       logical, vram, (long long)vram - (long long)logical);
@@ -126,7 +126,7 @@ int main(void) {
         std::snprintf(d, sizeof d, "%.4f MiB", 3.0 * (vram - logical) / 1048576.0);
         std::printf("     per-expert unaccounted (x3 matrices): %s\n", d);
         std::printf("     #687 measured 0.741 MiB/expert, sigma 0.019\n");
-        coli_cuda_tensor_free(t);
+        lma_cuda_tensor_free(t);
     }
 
     std::printf(failures ? "\ntest_alloc_footprint_cuda: FAILED\n"

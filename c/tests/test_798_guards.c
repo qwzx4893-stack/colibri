@@ -1,8 +1,8 @@
 /* Guards for the #798 defect set (unchecked allocation / snprintf results on the
  * config- and shard-parsing path):
  *
- *  - st.h: checked realloc on the colibri.fmt stamp table (fmt_name/fmt_val) growth.
- *  - st.h: checked strdup on the two colibri.fmt stamp-ingest strings.
+ *  - st.h: checked realloc on the lma.fmt stamp table (fmt_name/fmt_val) growth.
+ *  - st.h: checked strdup on the two lma.fmt stamp-ingest strings.
  *  - json.h: checked realloc on j_parse_val's object (keys/kids) and array (kids)
  *    growth paths.
  *  - route_trace.h: checked snprintf return in rt_save's temp-path build.
@@ -114,14 +114,14 @@ static void check(int cond, const char *what){
     if (!cond) { printf("FAIL: %s\n", what); g_nfails++; }
 }
 
-/* ---- safetensors fixture writer: one U8 tensor, optional colibri.fmt stamp for it ---- */
+/* ---- safetensors fixture writer: one U8 tensor, optional lma.fmt stamp for it ---- */
 static void write_shard(const char *path, const char *tname, const unsigned char *data, int nbytes,
                          const char *stamp_name, const char *stamp_val) {
     char hdr[1024]; int hl;
     if (stamp_name) {
         hl = snprintf(hdr, sizeof(hdr),
             "{\"%s\":{\"dtype\":\"U8\",\"shape\":[%d],\"data_offsets\":[0,%d]},"
-            "\"__metadata__\":{\"colibri.fmt\":\"{\\\"%s\\\":\\\"%s\\\"}\"}}",
+            "\"__metadata__\":{\"lma.fmt\":\"{\\\"%s\\\":\\\"%s\\\"}\"}}",
             tname, nbytes, nbytes, stamp_name, stamp_val);
     } else {
         hl = snprintf(hdr, sizeof(hdr),
@@ -166,7 +166,7 @@ static char g_dirA[512];
 static char g_jsonbuf[512] __attribute__((unused));   /* only the fork-based subtests use it (not built on Windows) */
 
 /* ==================================================================================
- * st.h fmt-table realloc + fmt strdup guards: one shard, one tensor, one colibri.fmt
+ * st.h fmt-table realloc + fmt strdup guards: one shard, one tensor, one lma.fmt
  * stamp entry for that same tensor. Call ordering inside st_init_multi for THIS
  * fixture (verified against the current source, documented so a future edit that
  * shifts it is caught by a wrong ordinal rather than a silently-vacuous test):
@@ -237,9 +237,9 @@ static void test_fmt_table_injection(void) {
     /* fmt_val table growth (realloc #2) */
     oom_subtest("fmt_val realloc", 2, -1, "OOM reallocating format-stamp table", "fmt_val");
     /* strdup of the stamp's tensor-name key (strdup #2, "sn" in the source) */
-    oom_subtest("fmt_name strdup (sn)", -1, 2, "OOM duplicating", "colibri.fmt");
+    oom_subtest("fmt_name strdup (sn)", -1, 2, "OOM duplicating", "lma.fmt");
     /* strdup of the stamp's format-value string (strdup #3, "sv" in the source) */
-    oom_subtest("fmt_val strdup (sv)", -1, 3, "OOM duplicating", "colibri.fmt");
+    oom_subtest("fmt_val strdup (sv)", -1, 3, "OOM duplicating", "lma.fmt");
 #else
     printf("st.h allocation-failure injection: skipped on Windows (no fork)\n");
 #endif

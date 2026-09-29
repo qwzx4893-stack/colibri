@@ -1,6 +1,6 @@
 # Benchmarks & measured numbers
 
-Everything on this page is a measurement, not a promise. If you run colibrì on
+Everything on this page is a measurement, not a promise. If you run LM Atomic on
 hardware not listed here, **please open an issue with your numbers** — real
 datapoints are what move this project.
 
@@ -27,9 +27,9 @@ does the rest.
 ### SSD note
 
 Cold starts are heavy on random reads (~11 GB/token), but reads don't
-meaningfully wear an SSD — colibrì's streaming is read-only. The real concerns
+meaningfully wear an SSD — LM Atomic's streaming is read-only. The real concerns
 under heavy use are (1) **swap traffic** if the system runs out of RAM (writes
-do wear the drive — keep a sane `--ram` budget; colibrì's auto-budget is designed
+do wear the drive — keep a sane `--ram` budget; LM Atomic's auto-budget is designed
 to stay clear of swap) and (2) **sustained thermals**: hours at full read duty
 cycle will heat cheaper drives. Monitor drive temperature and health.
 
@@ -50,7 +50,7 @@ gcc -O2 -fopenmp iobench.c -o iobench
 # after a buffered run still reads cache. Reboot or use a fresh shard for a real cold read.
 
 # 2) chat; watch the per-turn stats line (tok/s, expert hit-rate, RSS):
-COLI_MODEL=/path/to/glm52_i4 ./coli chat
+LMA_MODEL=/path/to/glm52_i4 ./lmatomic chat
 
 # 3) full automated datapoint — machine info + cold/warm decode + disk, one command:
 python tools/datapoint.py --snap /path/to/model --shard /path/to/container/model-00000.safetensors
@@ -59,11 +59,11 @@ python tools/datapoint.py --snap /path/to/model --shard /path/to/container/model
 #  SERVE=1 engine alive for cold, warm-identical, and rotating-prompt measurements)
 
 # 4) record expert usage, then pin the hottest experts in your spare RAM:
-STATS=stats.txt ./coli chat
-PIN=stats.txt PIN_GB=20 ./coli chat        # scale PIN_GB to your free RAM
+STATS=stats.txt ./lmatomic chat
+PIN=stats.txt PIN_GB=20 ./lmatomic chat        # scale PIN_GB to your free RAM
 
 # 5) quality benchmarks (MMLU/HellaSwag/ARC):
-./coli bench
+./lmatomic bench
 ```
 
 **A GPU-backend datapoint needs a correctness line next to its throughput.**
@@ -72,9 +72,9 @@ garbage runs at full speed and reports no error. Measured in #1502 on gfx1151, a
 HIP build produced perplexity 727 against 7.0 for the same model on the same
 machine, at identical tok/s, and only a quality check caught it. So for any row
 taken with CUDA, HIP, Metal or Vulkan engaged, record one of: a greedy output
-byte-identical to the CPU path on the same prompt (what colibri's tiers promise,
-and what `coli run` with the backend off gives you in one more command), a
-`./coli bench` score within noise of the CPU run, or a perplexity on a fixed text
+byte-identical to the CPU path on the same prompt (what LM Atomic's tiers promise,
+and what `lmatomic run` with the backend off gives you in one more command), a
+`./lmatomic bench` score within noise of the CPU run, or a perplexity on a fixed text
 alongside the CPU figure. A row without it is a speed claim, not a datapoint.
 
 The default datapoint measures serving behavior, not repeated startup: the same
@@ -114,9 +114,9 @@ These are estimates, not measurements.
 
 A 512-token decode sweep on an Apple Mac Studio with M4 Max and 128 GB unified
 memory measured the effect of the GLM-5.3-Flash expert-cache `--cap` while
-keeping the rest of the workload fixed. The model was GLM-5.3-Flash Colibri
+keeping the rest of the workload fixed. The model was GLM-5.3-Flash LM Atomic
 int4-g64 with the Metal routed-MoE path enabled, `--ram 96`, `--ctx 8192`,
-and a two-SSD model mirror routed 60/40 (`COLI_DISK_WEIGHTS=3,2`).
+and a two-SSD model mirror routed 60/40 (`LMA_DISK_WEIGHTS=3,2`).
 Usage-history saving was disabled for the isolated benchmark runs.
 
 | `--cap` | resident expert cache | decode | Metal MoE attempts | CPU fallback |
@@ -160,26 +160,26 @@ Real numbers from real machines, stock build (`setup.sh`, gcc 13), greedy decodi
 | Intel Core Ultra 9 185H (16C/22T, avx-vnni) · **native Windows 11, no WSL** · 32 GB · Crucial P3 QLC NTFS · RTX 5070 Ti ([#128](https://github.com/JustVugg/colibri/issues/128), [#273](https://github.com/JustVugg/colibri/issues/273)) | — | int8 MTP head · warm cache · GPU-resident pipeline at decode | 0.03 cold → 0.5 warm CPU → **1.07 tok/s** with the pipe2 decode gate (#274) |
 | Dell Pro Max GB10 (DGX Spark: Grace, **aarch64 i8mm/sve2**) · Linux · 121 GB unified LPDDR5x · GB10 sm_121 ([#136](https://github.com/JustVugg/colibri/issues/136), [#161](https://github.com/JustVugg/colibri/issues/161)) | **5.58 GB/s** O_DIRECT | int8 MTP head · warm cache | 0.50 tok/s warm · **2.4 tok/s full-k8**, **3.33 tok/s** with `CACHE_ROUTE` (#199) |
 | Intel i5-13600K (14C/20T, avx-vnni) · native Linux · 62 GB · Samsung 980 PRO PCIe 4.0 (NTFS/ntfs3) · RTX 5070 Ti ([#605](https://github.com/JustVugg/colibri/issues/605)) | **5.90 GB/s** O_DIRECT | MTP off · `PIN=auto PIN_GB=20 DIRECT=1 PIPE=1 --ram 50 --cap 32 --topp 0.7` · 750 VRAM + 307 RAM pinned (5.8 GB) | **0.98 tok/s** (peak 1.07) · hit 54.7% (pin 37.9 + lru 16.7) · 360 experts/token · RSS 42.0 GB — up from 0.56 tok/s / hit 45.4% untuned |
-| **6 × RTX 5090 · dual Xeon Silver 4510 · 251 GB** (author's rig, [experiment log](experiments/glm52-6x5090-2026-07-12.md)) | NVMe | `CUDA_EXPERT_GB=auto PIN_GB=all` full residency · `COLI_CUDA_PIPE=2 TC_W4A16` · DRAFT=0 | **5.8–6.8 tok/s** decode · TTFT ~13 s · hit 89–100% |
+| **6 × RTX 5090 · dual Xeon Silver 4510 · 251 GB** (author's rig, [experiment log](experiments/glm52-6x5090-2026-07-12.md)) | NVMe | `CUDA_EXPERT_GB=auto PIN_GB=all` full residency · `LMA_CUDA_PIPE=2 TC_W4A16` · DRAFT=0 | **5.8–6.8 tok/s** decode · TTFT ~13 s · hit 89–100% |
 | Apple M5 Max (6P+12E) · macOS 26.5 · 128 GB unified · internal SSD · **Metal** ([#387](https://github.com/JustVugg/colibri/issues/387)) | macOS figures cache-influenced (caveat #86) | `MTP=0 CAP_RAISE=0 AUTOPIN=0 --ram 90 --cap 1` | **0.4 → 2.0 tok/s at identical output** — two additive levers, no routing substitution, no expert pruning |
 | Ryzen 9 5950X (16C/32T, Zen 3, AVX2 only) · Ubuntu 26.04 · 62.7 GB · Samsung 990 PRO Gen4 · RX 7900 XTX, ROCm 7.2.4 ([#680](https://github.com/JustVugg/colibri/issues/680)) | 4.88 GB/s buffered · **5.87 GB/s** O_DIRECT | CPU-tuned | **0.77 tok/s** — the HIP expert tier underperformed the AVX2 CPU on this box |
-| Ryzen AI 365 · native Windows · 32 GB DDR5-5600 · NVMe · **Vulkan** ([#999](https://github.com/JustVugg/colibri/issues/999)) | 3.32 GB/s buffered · **1.53 GB/s** O_DIRECT | `COLI_VULKAN=1 COLI_VK_DENSE=1 COLI_VK_ATTN=1` · `PIN_GB=0` | **0.19–0.24 tok/s** |
+| Ryzen AI 365 · native Windows · 32 GB DDR5-5600 · NVMe · **Vulkan** ([#999](https://github.com/JustVugg/colibri/issues/999)) | 3.32 GB/s buffered · **1.53 GB/s** O_DIRECT | `LMA_VULKAN=1 LMA_VK_DENSE=1 LMA_VK_ATTN=1` · `PIN_GB=0` | **0.19–0.24 tok/s** |
 | Apple M1 Max (8P+2E, 32-core GPU) · macOS 26.6 · 64 GB unified · internal 2 TB SSD · **Metal** ([#1030](https://github.com/JustVugg/colibri/issues/1030)) | 4.4 GB/s (engine probe) | Metal on, settings-tuned | **0.13 → 0.61 tok/s from settings alone** · Metal 2.5× over CPU · **a larger `--ram` was consistently slower** |
 | Ryzen 7 5800X (8C/16T, Zen 3) · Ubuntu 22.04 · 32 GB DDR4-3200 · Samsung 980 PRO ([#1070](https://github.com/JustVugg/colibri/issues/1070)) | 10.02 GB/s buffered · **2.50 GB/s** O_DIRECT | **DeepSeek V4 Flash** · `--ram 22` | **0.93 tok/s** · hit 52.5% · TTFT 16.9 s |
-| Ryzen 7 9850X3D (8C/16T) · native Windows 11 · 64 GB DDR5 · WD_Black SN8100 · RTX 5090 sm_120 ([#1091](https://github.com/JustVugg/colibri/issues/1091)) | up to **10.64 GB/s** | `COLI_CUDA=1 CUDA_DENSE=1 CUDA_EXPERT_GB=auto PIN_GB=20 DIRECT=1` | **0.89 tok/s median** |
+| Ryzen 7 9850X3D (8C/16T) · native Windows 11 · 64 GB DDR5 · WD_Black SN8100 · RTX 5090 sm_120 ([#1091](https://github.com/JustVugg/colibri/issues/1091)) | up to **10.64 GB/s** | `LMA_CUDA=1 CUDA_DENSE=1 CUDA_EXPERT_GB=auto PIN_GB=20 DIRECT=1` | **0.89 tok/s median** |
 | Ryzen 9 5950X (16C/32T, Zen 3, **AVX2 only**) · Linux · 62.7 GB ([#1119](https://github.com/JustVugg/colibri/issues/1119)) | ~2.7 GB/s O_DIRECT | **DeepSeek V4 Flash** · CPU-only | **1.24 tok/s** — no I/O flag and no +40% expert cache moved it, which points at the AVX2 kernels rather than storage |
-| EPYC 7282 (16C, Zen 2 AVX2) · Ubuntu 24.04 · **128 GB** DDR4-3200 8-channel · 2× Micron 3400 RAID 0 ([#1154](https://github.com/JustVugg/colibri/issues/1154)) | — | **DeepSeek V4 Flash** · `COLI_TEMP=0`, 128 tokens | **0.68 cold / 0.69 warm tok/s** · RSS 123.8 GB · load 30 s |
+| EPYC 7282 (16C, Zen 2 AVX2) · Ubuntu 24.04 · **128 GB** DDR4-3200 8-channel · 2× Micron 3400 RAID 0 ([#1154](https://github.com/JustVugg/colibri/issues/1154)) | — | **DeepSeek V4 Flash** · `LMA_TEMP=0`, 128 tokens | **0.68 cold / 0.69 warm tok/s** · RSS 123.8 GB · load 30 s |
 | Ryzen 7 4800H · Linux · 64 GB · NVMe ([#1173](https://github.com/JustVugg/colibri/issues/1173)) | 1.65 GB/s buffered · **1.37 GB/s** O_DIRECT | **DeepSeek V4 Flash** · rotating prompts, n=4 | **0.47 tok/s** (ondemand, 2.9 GHz cap) → **0.60 tok/s** (performance governor) · hit 81% · CPU 56.8 → 92.4 °C |
 | i9-14900K (24C/32T) · native Windows 11 · 128 GB DDR5 · Samsung 990 Pro, SN850P partial mirror · RTX 3090 24 GB ([#1183](https://github.com/JustVugg/colibri/issues/1183)) | — | GLM-5.2 int4 · CUDA expert tier | **0.71 tok/s median** — the 24 GB VRAM point on the curve |
-| Apple M4 Max (16C, 40-core GPU) · macOS · 128 GB unified · **XPG MARS 980 Gen5 over Thunderbolt 5** ([#1210](https://github.com/JustVugg/colibri/issues/1210)) | — (TB5 enclosure) | `COLI_METAL=1 DIRECT=1 MTP=0 PIPE_WORKERS=8` · `PIN_GB=90` | 0.88 tok/s at `--ram 90` → **1.06–1.17 tok/s** pinned · hit 68–73% · RSS 96.7 GB |
+| Apple M4 Max (16C, 40-core GPU) · macOS · 128 GB unified · **XPG MARS 980 Gen5 over Thunderbolt 5** ([#1210](https://github.com/JustVugg/colibri/issues/1210)) | — (TB5 enclosure) | `LMA_METAL=1 DIRECT=1 MTP=0 PIPE_WORKERS=8` · `PIN_GB=90` | 0.88 tok/s at `--ram 90` → **1.06–1.17 tok/s** pinned · hit 68–73% · RSS 96.7 GB |
 | Threadripper PRO 7965WX (24C/48T, Zen 4 avx512-vnni) · Linux · 123 GB · **two NVMe on independent controllers** (990 PRO 4 TB + 9100) ([#1249](https://github.com/JustVugg/colibri/issues/1249)) | 6.70 / 8.05 GB/s single-drive O_DIRECT | `DIRECT=1`, CPU-only (RTX 5090 present, not engaged) | one drive **0.80** → both **1.10 tok/s**, **+37.5%** · with `DIRECT=0` the same split is worth only +16% · expert wait 98.9 → 55.5 s |
 | Intel i9-12900K (8P+8E, avx-vnni, no avx512) · Debian trixie · **64 GB** DDR4-3200 · Samsung 990 Pro 2 TB ext4 · RTX 3090 (commit `72d3d37`, 2026-07-18) | **6.44 GB/s** O_DIRECT 8T · 5.78 GB/s buffered true-cold | int8 MTP head · cap 26/layer · default (MTP on) | 0.31 cold / 0.33 warm · hit 40-42% · MTP acceptance 43% (2.29 tok/fw) · RSS 47.9 GB · profile **48% disk / 34% matmul / 12% attn** · ~9.9 GB read/token |
 | 〃 | 〃 | **`MTP=0`** | **0.34 tok/s** · hit **54.9%** · 600 experts/token vs 1,062 with MTP on |
 | 〃 | 〃 | `MTP=0` + CUDA expert tier (3090) | 0.35-0.36 · hit 52.9-55.1% · **+13-16% over default, of which the GPU itself is +0-6%** |
-| 〃 second drive: 200 GB LV on a Crucial P310, 57 interleaved expert shards (139 GB, ~40%) symlinked — **file-level split, not block striping** | 990 Pro 6.44 + P310-LV 4.40 GB/s O_DIRECT, independent controllers | `MTP=0`, `coli serve` mux | N=1 **0.324 (+5.5%)** · N=2 **0.426 (+3.1%)** — see the note below on why this is so much smaller than #1249 |
+| 〃 second drive: 200 GB LV on a Crucial P310, 57 interleaved expert shards (139 GB, ~40%) symlinked — **file-level split, not block striping** | 990 Pro 6.44 + P310-LV 4.40 GB/s O_DIRECT, independent controllers | `MTP=0`, `lmatomic serve` mux | N=1 **0.324 (+5.5%)** · N=2 **0.426 (+3.1%)** — see the note below on why this is so much smaller than #1249 |
 | 〃 | 〃 | `MTP=0 REPIN=1`, six consecutive N=2 rounds | **0.461 aggregate** · 0.404 → 0.405 → **0.456** → 0.458 → 0.433 → **0.461**: pins converge in ~3 rounds (~300 tokens) and hold |
 | Apple M4 Pro (8P+4E, 24 GB unified) · macOS 15.6 · libomp, 8 physical-core threads · **OLMoE int8**, fully resident (v1.9.0) | model in page cache; no disk in the loop | 226-token teacher-forced eval (`PPL=1`), `cap` 32 vs 64, **paired** (alternating within one session), 8 pairs | median **19.1 tok/s at cap 32** vs **16.3 at cap 64** · cap 32 wins **7 of 8 pairs** · hit rate 74.1% vs 96.7% — see the note |
-| AMD EPYC 9V45 · Azure D128ads v7 (64 cores / 128 threads, 2 NUMA) · Ubuntu 24.04 · 504 GB · 4x NVMe RAID0 ([#1384](https://github.com/JustVugg/colibri/issues/1384)) | 17.9 GB/s O_DIRECT, flat from 8 to 64 threads | int4 gs64 + int8 MTP · cap 16 · CPU only · v1.10.2 | **2.83 tok/s** rotating median · hit 97% · cold TTFT 13 s; warmed (cap 256, `COLI_NUMA=1`, 100% hit, 512-token runs) **6.91 tok/s** · expert matmul 70 ms/tok + attention 54 ms/tok |
+| AMD EPYC 9V45 · Azure D128ads v7 (64 cores / 128 threads, 2 NUMA) · Ubuntu 24.04 · 504 GB · 4x NVMe RAID0 ([#1384](https://github.com/JustVugg/colibri/issues/1384)) | 17.9 GB/s O_DIRECT, flat from 8 to 64 threads | int4 gs64 + int8 MTP · cap 16 · CPU only · v1.10.2 | **2.83 tok/s** rotating median · hit 97% · cold TTFT 13 s; warmed (cap 256, `LMA_NUMA=1`, 100% hit, 512-token runs) **6.91 tok/s** · expert matmul 70 ms/tok + attention 54 ms/tok |
 | AMD EPYC 9V45 · Azure E64ads v7 (32 cores / 64 threads) · Ubuntu 24.04 · 504 GB · 4x NVMe RAID0 ([#1379](https://github.com/JustVugg/colibri/issues/1379)) | 9.0 GB/s O_DIRECT | int4 gs64 + int8 MTP · cap 16 · CPU only · v1.10.2 | **2.34 tok/s** rotating median · hit 97% · CPU-bound (matmul 4.8 s + attention 4.4 s per 32-token request) |
 | Azure E64pds v6 **Arm64** (32 cores) · Ubuntu 24.04 · 504 GB · 4x NVMe RAID0 ([#1380](https://github.com/JustVugg/colibri/issues/1380)) | 2.5 GB/s O_DIRECT at 8 threads, 10.2 GB/s at 64 | int4 gs64 + int8 MTP · cap 16 · CPU only · v1.10.2 | **1.23 tok/s** rotating median · hit 97% · matmul half 2.5x the x86 sibling at equal threads (i8mm status pending) |
 
@@ -251,7 +251,7 @@ ceiling — **when experts stream from disk, the drive, not the GPU, sets the
 rate**. On multi-socket hosts, NUMA placement is a further lever:
 interleaving the resident weights across nodes measured **+13% (2-socket) and +40% (4-socket CPU-only)**
 ([#82](https://github.com/JustVugg/colibri/issues/82)). On a 2-socket Xeon Silver
-4510 host with 6× RTX 5090, selective `COLI_NUMA=1` raised effective CPU-expert
+4510 host with 6× RTX 5090, selective `LMA_NUMA=1` raised effective CPU-expert
 bandwidth from **42.42 to 58.26/65.89 GB/s** and greedy decode from **7.66 to
 9.02/9.17 tok/s** (64 tokens, `TEMP=0 DRAFT=0`, byte-identical output). Do not
 blanket-interleave a GPU host: it also spreads DMA staging pages and has measured
@@ -288,7 +288,7 @@ scale-granularity/rotation/lattice ablation lives in
 ```bash
 cd c
 pip install tokenizers datasets
-./coli bench                                   # hellaswag, arc_challenge, mmlu — 40 questions each
-./coli bench hellaswag --limit 200             # one task, more questions
-./coli bench mmlu arc_challenge --ram 100      # pick tasks, set a RAM budget
+./lmatomic bench                                   # hellaswag, arc_challenge, mmlu — 40 questions each
+./lmatomic bench hellaswag --limit 200             # one task, more questions
+./lmatomic bench mmlu arc_challenge --ram 100      # pick tasks, set a RAM budget
 ```

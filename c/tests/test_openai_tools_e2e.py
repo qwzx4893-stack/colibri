@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 
 SERVER = Path(__file__).resolve().parent.parent / "openai_server.py"
-MODEL_ID = "glm-5.2-colibri"
+MODEL_ID = "glm-5.2-lmatomic"
 
 # Mock engine: replies are keyed on the prompt so one process covers every case.
 # Prompts received are appended to MOCK_LOG for assertions on the rendering.
@@ -91,7 +91,7 @@ class ToolCallingE2E(unittest.TestCase):
             probe.bind(("127.0.0.1", 0))
             cls.port = probe.getsockname()[1]
         env = dict(os.environ, MOCK_LOG=str(cls.mock_log))
-        env.pop("COLI_API_KEY", None)
+        env.pop("LMA_API_KEY", None)
         cls.server = subprocess.Popen(
             [sys.executable, str(SERVER), "--model", cls.tmp.name,
              "--engine", str(mock), "--port", str(cls.port)],

@@ -162,13 +162,13 @@ class MessagesHTTPTest(unittest.TestCase):
         messages = [{"role": "user", "content": "The capital of France is?"},
                     {"role": "assistant", "content": "The capital is"}]
         with patch("openai_server.ARCH", "glm53"):
-            with patch.dict(os.environ, {"COLI_CONTINUE_ASSISTANT": "0"}):
+            with patch.dict(os.environ, {"LMA_CONTINUE_ASSISTANT": "0"}):
                 with self.post(self.base_body(messages=messages)) as response:
                     self.assertEqual(response.status, 200)
                 self.assertEqual(self.engine.prompts[-1], render_chat_glm53(messages))
                 self.assertTrue(self.engine.prompts[-1].endswith("<|assistant|><think>"))
 
-            with patch.dict(os.environ, {"COLI_CONTINUE_ASSISTANT": "1"}):
+            with patch.dict(os.environ, {"LMA_CONTINUE_ASSISTANT": "1"}):
                 with self.post(self.base_body(messages=messages)) as response:
                     self.assertEqual(response.status, 200)
                 self.assertEqual(self.engine.prompts[-1],
@@ -341,7 +341,7 @@ class MessagesHTTPTest(unittest.TestCase):
         with self.post(self.base_body(thinking={"type": "enabled"})) as response:
             payload = json.load(response)
         self.assertEqual(payload["content"], [
-            {"type": "thinking", "thinking": "reasoning", "signature": "colibri-local"},
+            {"type": "thinking", "thinking": "reasoning", "signature": "lmatomic-local"},
             {"type": "text", "text": "answer"},
         ])
 
@@ -351,7 +351,7 @@ class MessagesHTTPTest(unittest.TestCase):
             with self.post(self.base_body(thinking={"type": "enabled"})) as response:
                 payload = json.load(response)
         self.assertEqual(payload["content"], [
-            {"type": "thinking", "thinking": "reasoning", "signature": "colibri-local"},
+            {"type": "thinking", "thinking": "reasoning", "signature": "lmatomic-local"},
             {"type": "text", "text": "answer"},
         ])
 
@@ -398,7 +398,7 @@ class MessagesHTTPTest(unittest.TestCase):
                                  ["signature_delta"])
                 signature = next(i for i, p in enumerate(payloads)
                                  if p.get("delta", {}).get("type") == "signature_delta")
-                self.assertEqual(payloads[signature]["delta"]["signature"], "colibri-local")
+                self.assertEqual(payloads[signature]["delta"]["signature"], "lmatomic-local")
                 thinking_stop = next(i for i, p in enumerate(payloads)
                                      if p["type"] == "content_block_stop" and p["index"] == 0)
                 text_start = next(i for i, p in enumerate(payloads)
@@ -414,7 +414,7 @@ class MessagesHTTPTest(unittest.TestCase):
             payload = json.load(response)
         self.assertEqual(payload["content"], [
             {"type": "thinking", "thinking": "unfinished reasoning",
-             "signature": "colibri-local"},
+             "signature": "lmatomic-local"},
         ])
         self.assertEqual(payload["stop_reason"], "max_tokens")
 

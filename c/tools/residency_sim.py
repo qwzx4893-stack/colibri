@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline GLM expert-residency policy simulator.
 
-The simulator consumes Colibri ROUTE_TRACE output without loading a model. It
+The simulator consumes LM Atomic ROUTE_TRACE output without loading a model. It
 replays GLM's routed-expert unions through bounded per-layer caches and compares
 placement policies under the same expert-residency byte budget. It deliberately
 models demand residency only: no speculative reads, routing changes, or token

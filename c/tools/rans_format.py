@@ -14,9 +14,9 @@ FORMAT SUMMARY (docs/int4-rans256-g0.md is the full specification):
     (N=256 independent rANS streams, round-robin symbol assignment j -> j%N),
     zero-pad to 16;
   - the shared static table ships once per shard in
-    __metadata__["colibri.int4-rans256-g0.table"] (JSON: table_id, n_streams,
+    __metadata__["lma.int4-rans256-g0.table"] (JSON: table_id, n_streams,
     scale_bits, M, freq[16], start[16], slot_to_symbol_b64, table_crc32);
-  - __metadata__["colibri.fmt"] maps each entropy-coded WEIGHT tensor name to
+  - __metadata__["lma.fmt"] maps each entropy-coded WEIGHT tensor name to
     the format NAME "int4-rans256-g0". THE STAMP IS MANDATORY: entropy-coded
     sizes are data-dependent, so no byte-arithmetic inference exists for this
     format — the stamp is the ONLY signal a U8 tensor is entropy-coded, not a
@@ -42,8 +42,8 @@ N_STREAMS = 256
 SCALE_BITS = 14                # M = 16384; generous for a 16-symbol alphabet
 M = 1 << SCALE_BITS
 TABLE_ID = "g0"                # shared-global-table generation 0
-METADATA_KEY = "colibri.fmt"   # same key/shape as the fmt=8 stamp convention
-TABLE_KEY = "colibri.int4-rans256-g0.table"
+METADATA_KEY = "lma.fmt"   # same key/shape as the fmt=8 stamp convention
+TABLE_KEY = "lma.int4-rans256-g0.table"
 RANS_L = 1 << 23
 SLACK = 64                     # readable bytes past a record buffer (SIMD contract)
 

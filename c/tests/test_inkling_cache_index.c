@@ -1,6 +1,6 @@
 /* Model-free regression for Inkling's expert -> slot index. The fixture uses
  * two tiny slots: no checkpoint, tokenizer, GPU or meaningful RAM required. */
-#define COLI_CACHE_INDEX_TEST 1
+#define LMA_CACHE_INDEX_TEST 1
 #define main inkling_main_unused
 #include "../inkling.c"
 #undef main

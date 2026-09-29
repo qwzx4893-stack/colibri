@@ -1,5 +1,5 @@
 /* qwen36_tier.c -- CUDA VRAM expert tier for the qwen36 engine. See header. */
-#ifdef COLI_CUDA
+#ifdef LMA_CUDA
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,7 +21,7 @@
 #define QT_QCAP 48            /* upload queue depth (staging ~1.6 MB/entry) */
 
 typedef struct {
-    ColiCudaTensor *tg, *tu, *td;
+    LmaCudaTensor *tg, *tu, *td;
     uint32_t heat;
     uint8_t resident, queued, planned;
     /* raw RAM pointers (slots are never evicted when cap==n_experts) -- lets
@@ -177,45 +177,45 @@ static void *uploader(void *arg){
                 pthread_cond_broadcast(&G.cv_take);
                 pthread_mutex_unlock(&G.mx); free(w); free(sc); continue;
             }
-            ColiCudaTensor *a=v->tg,*b=v->tu,*ct=v->td;
+            LmaCudaTensor *a=v->tg,*b=v->tu,*ct=v->td;
             v->tg=v->tu=v->td=NULL;
             pthread_mutex_unlock(&G.mx);
-            if(a)coli_cuda_tensor_free(a); if(b)coli_cuda_tensor_free(b); if(ct)coli_cuda_tensor_free(ct);
+            if(a)lma_cuda_tensor_free(a); if(b)lma_cuda_tensor_free(b); if(ct)lma_cuda_tensor_free(ct);
         } else pthread_mutex_unlock(&G.mx);
 
         int dv = G.dev[home(eid)];
         /* passo fra le tre matrici nello staging: int4 impacchettato = mezzo
          * byte per elemento, int8 = uno. */
         size_t mb=(size_t)G.D*G.Ih/(G.wfmt==4?2:1);
-        ColiCudaTensor *tg=NULL,*tu=NULL,*td=NULL;
+        LmaCudaTensor *tg=NULL,*tu=NULL,*td=NULL;
         int ok;
         if(G.wfmt==8){
             /* e4m3 bytes as they came from the checkpoint, block scales
              * [ceil(O/128), ceil(I/128)] per matrix -- the layout #817's
              * kernels and tensor_upload(fmt=8) already agree on */
-            ok = coli_cuda_tensor_upload(&tg, w,      sc,            8, G.D,  G.Ih, dv)
-              && coli_cuda_tensor_upload(&tu, w+mb,   sc+G.sc_gu,    8, G.D,  G.Ih, dv)
-              && coli_cuda_tensor_upload(&td, w+2*mb, sc+2*G.sc_gu,  8, G.Ih, G.D,  dv);
+            ok = lma_cuda_tensor_upload(&tg, w,      sc,            8, G.D,  G.Ih, dv)
+              && lma_cuda_tensor_upload(&tu, w+mb,   sc+G.sc_gu,    8, G.D,  G.Ih, dv)
+              && lma_cuda_tensor_upload(&td, w+2*mb, sc+2*G.sc_gu,  8, G.Ih, G.D,  dv);
         } else if(G.wfmt==1){
             /* int8, scale per riga: qt_init ha gia' rifiutato il caso raggruppato,
              * che questo formato non sa esprimere. */
-            ok = coli_cuda_tensor_upload(&tg, w,      sc,          1, G.D,  G.Ih, dv)
-              && coli_cuda_tensor_upload(&tu, w+mb,   sc+G.Ih,     1, G.D,  G.Ih, dv)
-              && coli_cuda_tensor_upload(&td, w+2*mb, sc+2*G.Ih,   1, G.Ih, G.D,  dv);
+            ok = lma_cuda_tensor_upload(&tg, w,      sc,          1, G.D,  G.Ih, dv)
+              && lma_cuda_tensor_upload(&tu, w+mb,   sc+G.Ih,     1, G.D,  G.Ih, dv)
+              && lma_cuda_tensor_upload(&td, w+2*mb, sc+2*G.Ih,   1, G.Ih, G.D,  dv);
         } else if(G.egs){
-            ok = coli_cuda_tensor_upload_g(&tg, w,      sc,             4, G.D,  G.Ih, dv, G.egs)
-              && coli_cuda_tensor_upload_g(&tu, w+mb,   sc+G.sc_gu,     4, G.D,  G.Ih, dv, G.egs)
-              && coli_cuda_tensor_upload_g(&td, w+2*mb, sc+2*G.sc_gu,   4, G.Ih, G.D,  dv, G.egs);
+            ok = lma_cuda_tensor_upload_g(&tg, w,      sc,             4, G.D,  G.Ih, dv, G.egs)
+              && lma_cuda_tensor_upload_g(&tu, w+mb,   sc+G.sc_gu,     4, G.D,  G.Ih, dv, G.egs)
+              && lma_cuda_tensor_upload_g(&td, w+2*mb, sc+2*G.sc_gu,   4, G.Ih, G.D,  dv, G.egs);
         } else {
-            ok = coli_cuda_tensor_upload(&tg, w,      sc,          2, G.D,  G.Ih, dv)
-              && coli_cuda_tensor_upload(&tu, w+mb,   sc+G.Ih,     2, G.D,  G.Ih, dv)
-              && coli_cuda_tensor_upload(&td, w+2*mb, sc+2*G.Ih,   2, G.Ih, G.D,  dv);
+            ok = lma_cuda_tensor_upload(&tg, w,      sc,          2, G.D,  G.Ih, dv)
+              && lma_cuda_tensor_upload(&tu, w+mb,   sc+G.Ih,     2, G.D,  G.Ih, dv)
+              && lma_cuda_tensor_upload(&td, w+2*mb, sc+2*G.Ih,   2, G.Ih, G.D,  dv);
         }
         free(w); free(sc);
         if(!ok){
-            if(tg) coli_cuda_tensor_free(tg);
-            if(tu) coli_cuda_tensor_free(tu);
-            if(td) coli_cuda_tensor_free(td);
+            if(tg) lma_cuda_tensor_free(tg);
+            if(tu) lma_cuda_tensor_free(tu);
+            if(td) lma_cuda_tensor_free(td);
         }
         pthread_mutex_lock(&G.mx);
         QSlot *s=qs(layer,eid);
@@ -233,9 +233,9 @@ static void *uploader(void *arg){
  * The dense-i8 quantization (engine-side) provides q/sc with the same
  * per-row semantics quant_matmul's fmt=1 applies (y[o] = acc * sc[o]),
  * so CPU and GPU compute the same numbers up to accumulation order. */
-static struct { ColiCudaTensor *t; int dev, dev_ok, on; } G_lmh;
+static struct { LmaCudaTensor *t; int dev, dev_ok, on; } G_lmh;
 
-/* ---- placement table (COLI_PLACE) --------------------------------------- */
+/* ---- placement table (LMA_PLACE) --------------------------------------- */
 /* Parsed lazily on first query and cached: qt_place_of runs per layer during
  * init and must not re-parse the environment 30 times. */
 #define QT_PLACE_MAX 8
@@ -271,7 +271,7 @@ static void place_add(const char *name, size_t nlen, const char *spec){
 
 static void place_parse(void){
     G_place_done = 1;
-    const char *e = getenv("COLI_PLACE");
+    const char *e = getenv("LMA_PLACE");
     if(!e || !*e) return;
     const char *p = e;
     while(*p){
@@ -286,7 +286,7 @@ static void place_parse(void){
         spec[si] = 0;
         place_add(name, nlen, spec);
     }
-    fprintf(stderr,"[place] COLI_PLACE=%s\n", e);
+    fprintf(stderr,"[place] LMA_PLACE=%s\n", e);
 }
 
 /* Was this component named at all? Distinguishes "experts=cpu" (an explicit
@@ -301,9 +301,9 @@ static int qt_place_named(const char *component){
 /* One fused qkv++z tensor per DeltaNet layer. Indexed by model layer index,
  * so the array is n_layers wide and the attention slots stay empty. */
 #define QT_DN_MAX_LAYERS 128
-static struct { ColiCudaTensor *t; int dev, on; } G_dnp[QT_DN_MAX_LAYERS];
+static struct { LmaCudaTensor *t; int dev, on; } G_dnp[QT_DN_MAX_LAYERS];
 
-/* ---- automatic placement (COLI_PLACE unset or "auto") ------------------ */
+/* ---- automatic placement (LMA_PLACE unset or "auto") ------------------ */
 /* The hand-written list above is a measurement tool. Nobody running a 6 GB
  * card should have to work out that 1.2 GB of dense trunk is worth more than
  * 800 experts (#1040); the engine knows every size involved and decides.
@@ -329,7 +329,7 @@ static struct { ColiCudaTensor *t; int dev, on; } G_dnp[QT_DN_MAX_LAYERS];
  * lands in the same table qt_place_of() reads, so nothing downstream
  * changes. Placed bytes are subtracted from that device's expert budget,
  * which the hand-written list never did (the 0.7 GB above was the
- * discovery). COLI_PLACE=off keeps today's behaviour: nothing placed. */
+ * discovery). LMA_PLACE=off keeps today's behaviour: nothing placed. */
 #define QT_OFFER_MAX 1024
 static struct { char name[16]; int layer; size_t bytes; int dev; } G_offer[QT_OFFER_MAX];
 static int G_offer_n;
@@ -345,7 +345,7 @@ int qt_place_of(const char *component, int layer){
          * matrices of qwen38 by their own names) */
         for(int o = 0; o < G_offer_n; o++)
             if(G_offer[o].layer == layer && !strcmp(G_offer[o].name, component)) return G_offer[o].dev;
-        return QT_PLACE_CPU;               /* experts follow COLI_GPUS */
+        return QT_PLACE_CPU;               /* experts follow LMA_GPUS */
     }
     if(!G_place_done) place_parse();
     for(int i = 0; i < G_place_n; i++){
@@ -372,7 +372,7 @@ void qt_trunk_offer(const char *component, int layer, size_t bytes){
 }
 
 static int auto_mode(void){
-    const char *e = getenv("COLI_PLACE");
+    const char *e = getenv("LMA_PLACE");
     return !e || !*e || !strcmp(e, "auto");
 }
 
@@ -420,7 +420,7 @@ static double auto_displaced_value(int di, size_t room, int k, size_t exp_bytes,
     return value;
 }
 
-/* Whether the trunk placement is the automatic one (COLI_PLACE unset or
+/* Whether the trunk placement is the automatic one (LMA_PLACE unset or
  * "auto"): the only decision the engine's startup probe may overturn. A
  * hand-written list, or "off", is the user's word and stands. */
 int qt_place_is_auto(void){ return G_auto_on && auto_mode(); }
@@ -534,7 +534,7 @@ static size_t dev_alloc_footprint(size_t bytes){
 int qt_init(int nl, int ne, int D, int Ih, int cap, int topk, int expert_gs,
             int expert_is_int4){
     if(G.on) return 0;
-    const char *e=getenv("COLI_CUDA");
+    const char *e=getenv("LMA_CUDA");
     if(!(e && *e=='1')) return 0;
     if(cap != ne && !G_fp8_stream){
         fprintf(stderr,"[qtier] cap=%d != n_experts=%d -> tier disabled (needs full RAM residency)\n",cap,ne);
@@ -545,30 +545,30 @@ int qt_init(int nl, int ne, int D, int Ih, int cap, int topk, int expert_gs,
     { const char *e=getenv("QT_UPLOAD_SYNC"); G_upload_sync=e&&*e&&*e!='0'; }
     G.nl=nl; G.ne=ne; G.D=D; G.Ih=Ih; G.topk=topk;
     /* Placement state is re-derived per init: the device fold-in below reads
-     * COLI_PLACE before the automatic placement has decided anything, and a
+     * LMA_PLACE before the automatic placement has decided anything, and a
      * parse latched from an earlier init (tests start the tier many times)
      * would otherwise stand in for the current environment. */
     G_place_done = 0; G_place_n = 0; G_auto_on = 0;
 
-    /* devices: COLI_GPUS="0,1" (default: first two visible devices).
-     * COLI_GPU is the singular the planner writes for a one-device plan
-     * (resource_plan.py) and colibri.c reads; accept it here as well, or a
-     * `coli chat --gpu 1` lands on every visible device. */
-    const char *gl=getenv("COLI_GPUS");
-    if(!gl || !*gl) gl=getenv("COLI_GPU");
+    /* devices: LMA_GPUS="0,1" (default: first two visible devices).
+     * LMA_GPU is the singular the planner writes for a one-device plan
+     * (resource_plan.py) and glm52.c reads; accept it here as well, or a
+     * `lmatomic chat --gpu 1` lands on every visible device. */
+    const char *gl=getenv("LMA_GPUS");
+    if(!gl || !*gl) gl=getenv("LMA_GPU");
     if (gl && *gl) {
         char buf[128]; snprintf(buf,sizeof buf,"%s",gl);
         for(char *t=strtok(buf,","); t && G.ndev<QT_MAX_DEV; t=strtok(NULL,","))
             G.dev[G.ndev++]=atoi(t);
     } else {
-        int available=coli_cuda_available_device_count();
+        int available=lma_cuda_available_device_count();
         int want=available<2?available:2;
         for(int i=0;i<want && i<QT_MAX_DEV;i++) G.dev[G.ndev++]=i;
-        fprintf(stderr,"[qtier] COLI_GPUS unset: selecting %d visible device(s)\n",G.ndev);
+        fprintf(stderr,"[qtier] LMA_GPUS unset: selecting %d visible device(s)\n",G.ndev);
     }
-    /* A device named only in COLI_PLACE still needs a CUDA context before
+    /* A device named only in LMA_PLACE still needs a CUDA context before
      * anything can be uploaded to it. Fold those in here rather than making
-     * the caller repeat every device in COLI_GPUS as well -- forgetting that
+     * the caller repeat every device in LMA_GPUS as well -- forgetting that
      * would silently drop a component back to the CPU mid-A/B. */
     {
         static const char *comps[] = {"lmhead","dnproj","dnout","attnproj","shexp"};
@@ -578,19 +578,19 @@ int qt_init(int nl, int ne, int D, int Ih, int cap, int topk, int expert_gs,
                 if(d==QT_PLACE_CPU) continue;
                 int seen=0; for(int i=0;i<G.ndev;i++) if(G.dev[i]==d) seen=1;
                 if(!seen){ G.dev[G.ndev++]=d;
-                    fprintf(stderr,"[place] dev %d aus COLI_PLACE zur CUDA-Init ergaenzt\n",d); }
+                    fprintf(stderr,"[place] dev %d aus LMA_PLACE zur CUDA-Init ergaenzt\n",d); }
             }
     }
     if(G.ndev<1){ fprintf(stderr,"[qtier] no visible CUDA devices -> CPU path\n"); return 0; }
     qt_affmask aff; qt_aff_get(&aff); qt_aff_widen(&aff);   /* CUDA's threads are born here */
-    int cuda_ok_=coli_cuda_init(G.dev,G.ndev);
+    int cuda_ok_=lma_cuda_init(G.dev,G.ndev);
     qt_aff_restore(&aff);
-    if(!cuda_ok_){ fprintf(stderr,"[qtier] coli_cuda_init failed -> CPU path\n"); return 0; }
-    int have=coli_cuda_device_count();
+    if(!cuda_ok_){ fprintf(stderr,"[qtier] lma_cuda_init failed -> CPU path\n"); return 0; }
+    int have=lma_cuda_device_count();
     if(have<G.ndev){ G.ndev=have; }
     if(G.ndev<1){ fprintf(stderr,"[qtier] no CUDA devices -> CPU path\n"); return 0; }
     if(G_fp8_stream){
-        if(!G_fp8_lut_set || !coli_cuda_fp8_set_lut(G_fp8_lut)){
+        if(!G_fp8_lut_set || !lma_cuda_fp8_set_lut(G_fp8_lut)){
             fprintf(stderr,"[qtier] fmt=8 decode table not published -> CPU path\n");
             return 0;
         }
@@ -637,7 +637,7 @@ int qt_init(int nl, int ne, int D, int Ih, int cap, int topk, int expert_gs,
     size_t capacity[QT_MAX_DEV]; int capdev[QT_MAX_DEV]; int ncap = G.ndev;
     const char *bg=getenv("CUDA_EXPERT_GB");
     for(int i=0;i<G.ndev;i++){
-        size_t freeb=0,totb=0; coli_cuda_mem_info(G.dev[i],&freeb,&totb);
+        size_t freeb=0,totb=0; lma_cuda_mem_info(G.dev[i],&freeb,&totb);
         capdev[i] = G.dev[i];
         capacity[i] = (bg && strcmp(bg,"auto") && atof(bg)>0)
                    ? (size_t)(atof(bg)*1024.0*1024.0*1024.0)
@@ -666,11 +666,11 @@ int qt_init(int nl, int ne, int D, int Ih, int cap, int topk, int expert_gs,
         if(G_offer_n) auto_place(nl, ne, topk, capacity, G.heat0);
         else { G_auto_on = 1; G_auto_lmh = QT_PLACE_CPU; for(int l=0;l<QT_DN_MAX_LAYERS;l++) G_auto_dnp[l]=QT_PLACE_CPU; }
     } else {
-        const char *e = getenv("COLI_PLACE");
+        const char *e = getenv("LMA_PLACE");
         if(e && !strcmp(e, "off")){ G_auto_on = 1; G_auto_lmh = QT_PLACE_CPU; for(int l=0;l<QT_DN_MAX_LAYERS;l++) G_auto_dnp[l]=QT_PLACE_CPU; }
     }
 
-    /* R4 role split: the lm_head device (COLI_LMHEAD_GPU) is initialized above
+    /* R4 role split: the lm_head device (LMA_LMHEAD_GPU) is initialized above
      * but removed from the expert PLACEMENT list. Zeroing its budget instead
      * is not enough: home() still hashes experts onto it, and those can never
      * be placed — measured as a hit-rate collapse 89.9% -> 49.5% (only the
@@ -680,9 +680,9 @@ int qt_init(int nl, int ne, int D, int Ih, int cap, int topk, int expert_gs,
      * device, experts stay on it — a role split needs two cards. */
     {
         int reserved[QT_MAX_DEV], nres=0;
-        /* lm_head: COLI_LMHEAD_GPU stays honoured, COLI_PLACE wins when both
+        /* lm_head: LMA_LMHEAD_GPU stays honoured, LMA_PLACE wins when both
          * are set (it is the newer, general form). */
-        const char *lhx=getenv("COLI_LMHEAD_GPU");
+        const char *lhx=getenv("LMA_LMHEAD_GPU");
         int ld=qt_place_of("lmhead",0);
         if(ld==QT_PLACE_CPU && lhx && *lhx) ld=atoi(lhx);
         if(ld!=QT_PLACE_CPU){
@@ -710,7 +710,7 @@ int qt_init(int nl, int ne, int D, int Ih, int cap, int topk, int expert_gs,
             if(present){
                 G.dev[0]=ed; G.ndev=1;
                 fprintf(stderr,"[place] Experten auf Device %d festgelegt\n",ed);
-            } else fprintf(stderr,"[place] experts=%d nicht verfuegbar -> COLI_GPUS bleibt\n",ed);
+            } else fprintf(stderr,"[place] experts=%d nicht verfuegbar -> LMA_GPUS bleibt\n",ed);
         } else if(!G_auto_on && G_place_n && qt_place_named("experts")){
             fprintf(stderr,"[place] experts=cpu -> VRAM-Tier aus\n");
             goto fail_storage;
@@ -731,7 +731,7 @@ int qt_init(int nl, int ne, int D, int Ih, int cap, int topk, int expert_gs,
 
     /* Expert budget per device: the allowance minus the trunk that landed
      * there. The hand-written list gets the same subtraction now: with
-     * COLI_PLACE="dnproj=0" the 0.7 GB of projections used to come out of the
+     * LMA_PLACE="dnproj=0" the 0.7 GB of projections used to come out of the
      * expert cache unannounced (the R4 measurement). Devices may have been
      * dropped from the expert list by the role split above; match by ordinal. */
     for(int i=0;i<G.ndev;i++){
@@ -763,7 +763,7 @@ int qt_init(int nl, int ne, int D, int Ih, int cap, int topk, int expert_gs,
     G.on=1;
     fprintf(stderr,"[qtier] CUDA VRAM expert tier active: %d device(s), %.2f MB/expert\n",
             G.ndev, G.exp_bytes/1048576.0);
-    /* The launcher and coli doctor recognise a Windows CUDA_DLL build by this
+    /* The launcher and lmatomic doctor recognise a Windows CUDA_DLL build by this
      * literal in the binary (they cannot read an import table for a DLL
      * loaded at run time); without it a working GPU build of this engine read
      * as CPU-only and --gpu was refused (#1533). */
@@ -790,7 +790,7 @@ int qt_ready(void){ return G.on; }
 int qt_lmhead_init(const int8_t *q, const float *sc, int I, int O){
     if(!G_lmh.dev_ok||!G.on||!q||!sc) return 0;
     int dev=G_lmh.dev;
-    if(!coli_cuda_tensor_upload(&G_lmh.t,q,sc,1,I,O,dev)){
+    if(!lma_cuda_tensor_upload(&G_lmh.t,q,sc,1,I,O,dev)){
         fprintf(stderr,"[lmh] lm_head upload failed -> stays on CPU\n");
         return 0;
     }
@@ -806,7 +806,7 @@ int qt_dnproj_init(int layer, const int8_t *q, const float *sc,
     if(device == QT_PLACE_CPU || !q || !sc) return 0;
     /* No G.on requirement: the projections are independent of the expert tier,
      * so they can be measured on a card that holds no experts at all. */
-    if(!coli_cuda_tensor_upload(&G_dnp[layer].t, q, sc, 1, I, O, device)){
+    if(!lma_cuda_tensor_upload(&G_dnp[layer].t, q, sc, 1, I, O, device)){
         fprintf(stderr,"[dnp] layer %d upload failed -> stays on CPU\n", layer);
         return 0;
     }
@@ -821,13 +821,13 @@ int qt_dnproj_init(int layer, const int8_t *q, const float *sc,
  * tier learning its name. The engine offers sizes through qt_trunk_offer(),
  * asks qt_place_of() where each went, and hands the quantized bytes here. */
 #define QT_DENSE_MAX 1024
-static struct { ColiCudaTensor *t; int dev, on; size_t bytes; } G_dense[QT_DENSE_MAX];
+static struct { LmaCudaTensor *t; int dev, on; size_t bytes; } G_dense[QT_DENSE_MAX];
 static int G_dense_n;
 int qt_dense_init(const int8_t *q, const float *sc, int I, int O, int device){
     if(device == QT_PLACE_CPU || !q || !sc || I <= 0 || O <= 0) return -1;
     if(G_dense_n >= QT_DENSE_MAX) return -1;
     int h = G_dense_n;
-    if(!coli_cuda_tensor_upload(&G_dense[h].t, q, sc, 1, I, O, device)){
+    if(!lma_cuda_tensor_upload(&G_dense[h].t, q, sc, 1, I, O, device)){
         fprintf(stderr,"[dense] upload [%d x %d] to dev %d failed -> stays on CPU\n", O, I, device);
         return -1;
     }
@@ -837,7 +837,7 @@ int qt_dense_init(const int8_t *q, const float *sc, int I, int O, int device){
 }
 int qt_dense_matmul_batch(int h, float *y, const float *x, int S, int I, int O){
     if(h < 0 || h >= G_dense_n || !G_dense[h].on || S <= 0) return 0;
-    if(coli_cuda_matmul(&G_dense[h].t, y, x, NULL, NULL, 1, S, I, O, G_dense[h].dev, 0)) return 1;
+    if(lma_cuda_matmul(&G_dense[h].t, y, x, NULL, NULL, 1, S, I, O, G_dense[h].dev, 0)) return 1;
     fprintf(stderr,"[dense] handle %d GPU matmul failed; CPU from here on\n", h);
     G_dense[h].on = 0;
     return 0;
@@ -852,7 +852,7 @@ int qt_dnproj_ready(int layer){
 }
 int qt_dnproj_matmul_batch(int layer, float *y, const float *x, int S, int I, int O){
     if(!qt_dnproj_ready(layer) || S <= 0) return 0;
-    if(coli_cuda_matmul(&G_dnp[layer].t,y,x,NULL,NULL,1,S,I,O,G_dnp[layer].dev,0))
+    if(lma_cuda_matmul(&G_dnp[layer].t,y,x,NULL,NULL,1,S,I,O,G_dnp[layer].dev,0))
         return 1;
     fprintf(stderr,"[dnp] layer %d GPU matmul failed; CPU from here on\n", layer);
     G_dnp[layer].on = 0;
@@ -866,7 +866,7 @@ int qt_dnproj_matmul(int layer, float *y, const float *x, int I, int O){
 int qt_lmhead_matmul(float *y, const float *x, int I, int O){
     if(!G_lmh.on) return 0;
     /* cached-tensor path: upload params are ignored once *t exists */
-    if(coli_cuda_matmul(&G_lmh.t,y,x,NULL,NULL,1,1,I,O,G_lmh.dev,0)) return 1;
+    if(lma_cuda_matmul(&G_lmh.t,y,x,NULL,NULL,1,1,I,O,G_lmh.dev,0)) return 1;
     fprintf(stderr,"[lmh] GPU matmul failed; falling back to CPU from here on\n");
     G_lmh.on=0;
     return 0;
@@ -1112,7 +1112,7 @@ static void qt_lfru_tick_locked(void){
 uint32_t qt_issue(int layer,const int *eids,int K,const float *x){
     if(!G.on||K>QT_MAX_ROWS) return 0;
     uint32_t mask=0;
-    ColiCudaTensor *tg[QT_MAX_DEV][QT_MAX_ROWS],*tu[QT_MAX_DEV][QT_MAX_ROWS],*td[QT_MAX_DEV][QT_MAX_ROWS];
+    LmaCudaTensor *tg[QT_MAX_DEV][QT_MAX_ROWS],*tu[QT_MAX_DEV][QT_MAX_ROWS],*td[QT_MAX_DEV][QT_MAX_ROWS];
     static int rows[QT_MAX_ROWS]={0};
     if(!rows[0]) for(int i=0;i<QT_MAX_ROWS;i++) rows[i]=1;
     for(int i=0;i<G.ndev;i++) G.is_cnt[i]=0;
@@ -1145,7 +1145,7 @@ uint32_t qt_issue(int layer,const int *eids,int K,const float *x){
         if(!c) continue;
         float *xr=G.is_x + (size_t)di*QT_MAX_ROWS*G.D;     /* per-device input block */
         for(int j=0;j<c;j++) memcpy(xr+(size_t)j*G.D, x, (size_t)G.D*sizeof(float));
-        if(!coli_cuda_expert_group_issue(tg[di],tu[di],td[di],rows,c,xr)){
+        if(!lma_cuda_expert_group_issue(tg[di],tu[di],td[di],rows,c,xr)){
             /* issue failed -> hand these k back to the CPU */
             for(int j=0;j<c;j++) mask &= ~(1u<<G.is_k[di][j]);
             G.is_cnt[di]=0;
@@ -1162,7 +1162,7 @@ int qt_take(uint32_t mask,const float *val,int K,float *out){
     /* Drain every device before deciding whether this layer is usable. */
     if(mask) for(int di=0;di<G.ndev;di++){
         if(!G.is_cnt[di]) continue;
-        result[di]=coli_cuda_expert_group_take(G.dev[di]);
+        result[di]=lma_cuda_expert_group_take(G.dev[di]);
         if(!result[di]){
             fprintf(stderr,"[qtier] dev %d: expert group result unavailable\n",G.dev[di]);
             ok=0;
@@ -1192,7 +1192,7 @@ void qt_stats(void){
             res, G.nl*G.ne, (unsigned long long)G.uploads,
             (unsigned long long)G.miss, (unsigned long long)G.q_full_skips);
     for(int i=0;i<G.ndev;i++){
-        size_t tc=0,tb=0; coli_cuda_stats(G.dev[i],&tc,&tb);
+        size_t tc=0,tb=0; lma_cuda_stats(G.dev[i],&tc,&tb);
         hits+=G.hits[i];
         /* tb counts every tensor on the device, trunk included; say how much of
          * it is trunk so "used > budget" does not read like an overrun. */
@@ -1204,18 +1204,18 @@ void qt_stats(void){
     fprintf(stderr,"[qtier] VRAM hit rate: %.1f %% | LFRU swaps %llu\n",
             tot>0? 100.0*hits/tot : 0.0, (unsigned long long)G.swaps);
     { uint64_t calls=0,ex=0,rows=0; double h2d=0,kms=0,d2h=0;
-      coli_cuda_group_stats(&calls,&ex,&rows,&h2d,&kms,&d2h);
+      lma_cuda_group_stats(&calls,&ex,&rows,&h2d,&kms,&d2h);
       if(calls) fprintf(stderr,"[qtier] group_stats: %llu calls, %llu experts | h2d %.0f ms, kernel %.0f ms, d2h %.0f ms\n",
               (unsigned long long)calls,(unsigned long long)ex,h2d,kms,d2h); }
 }
 
 static void dense_free_all(void){
-    for(int h = 0; h < G_dense_n; h++){ if(G_dense[h].t) coli_cuda_tensor_free(G_dense[h].t); G_dense[h].t = NULL; G_dense[h].on = 0; }
+    for(int h = 0; h < G_dense_n; h++){ if(G_dense[h].t) lma_cuda_tensor_free(G_dense[h].t); G_dense[h].t = NULL; G_dense[h].on = 0; }
     G_dense_n = 0;
-    if(G_lmh.t) coli_cuda_tensor_free(G_lmh.t);
+    if(G_lmh.t) lma_cuda_tensor_free(G_lmh.t);
     memset(&G_lmh,0,sizeof G_lmh);
     for(int l=0;l<QT_DN_MAX_LAYERS;l++)
-        if(G_dnp[l].t) coli_cuda_tensor_free(G_dnp[l].t);
+        if(G_dnp[l].t) lma_cuda_tensor_free(G_dnp[l].t);
     memset(G_dnp,0,sizeof G_dnp);
 }
 void qt_shutdown(void){
@@ -1242,12 +1242,12 @@ void qt_shutdown(void){
     pthread_mutex_unlock(&G.mx);
     /* The uploader is stopped, but a decode group may still own the tensors. */
     for(int di=0;di<G.ndev;di++)
-        if(G.is_cnt[di]) coli_cuda_expert_group_take(G.dev[di]);
+        if(G.is_cnt[di]) lma_cuda_expert_group_take(G.dev[di]);
     for(size_t i=0;i<(size_t)G.nl*G.ne;i++){
         QSlot *s=&G.slot[i];
-        if(s->tg) coli_cuda_tensor_free(s->tg);
-        if(s->tu) coli_cuda_tensor_free(s->tu);
-        if(s->td) coli_cuda_tensor_free(s->td);
+        if(s->tg) lma_cuda_tensor_free(s->tg);
+        if(s->tu) lma_cuda_tensor_free(s->tu);
+        if(s->td) lma_cuda_tensor_free(s->td);
     }
     free(G.slot); G.slot=NULL;
     free(G.is_x); G.is_x=NULL; G.is_x_floats=0;
@@ -1260,7 +1260,7 @@ void qt_shutdown(void){
     memset(G.is_cnt,0,sizeof G.is_cnt);
     G.on=0;
     G_fp8_stream=0;
-    coli_cuda_shutdown();
+    lma_cuda_shutdown();
 }
 
-#endif /* COLI_CUDA */
+#endif /* LMA_CUDA */

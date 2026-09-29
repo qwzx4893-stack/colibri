@@ -3,7 +3,7 @@
 
 The fixture is deliberately produced by Hugging Face's official
 Glm5NextTextModel.  It covers KDA, DSA, mHC, dense FFN and routed MoE before a
-Colibri runtime exists, so the future engine has an independent target instead
+LM Atomic runtime exists, so the future engine has an independent target instead
 of validating itself.
 """
 from __future__ import annotations
@@ -399,7 +399,7 @@ def write_fp8_case(torch, model, output: Path) -> None:
     dequantized = (dequantized * scales[:, None, :, None]).reshape_as(weight)
     expected = torch.mv(dequantized, activation_qdq)
     with output.open("w", encoding="utf-8") as stream:
-        stream.write("#ifndef COLIBRI_GLM53_FP8_CASE_H\n#define COLIBRI_GLM53_FP8_CASE_H\n\n")
+        stream.write("#ifndef LMA_GLM53_FP8_CASE_H\n#define LMA_GLM53_FP8_CASE_H\n\n")
         stream.write(f"#define GLM53_FP8_ROWS {rows}\n#define GLM53_FP8_COLUMNS {columns}\n\n")
         write_u8_array(torch, stream, "glm53_fp8_weight", quantized,
                        "[GLM53_FP8_ROWS * GLM53_FP8_COLUMNS]")
@@ -435,7 +435,7 @@ def write_kda_case(torch, model, output: Path) -> None:
         use_qk_l2norm_in_kernel=True,
     )
     with output.open("w", encoding="utf-8") as stream:
-        stream.write("#ifndef COLIBRI_GLM53_KDA_CASE_H\n#define COLIBRI_GLM53_KDA_CASE_H\n\n")
+        stream.write("#ifndef LMA_GLM53_KDA_CASE_H\n#define LMA_GLM53_KDA_CASE_H\n\n")
         stream.write(f"#define GLM53_KDA_STEPS 2\n#define GLM53_KDA_HEADS {HEADS}\n")
         stream.write(f"#define GLM53_KDA_DIM {HEAD_DIM}\n#define GLM53_KDA_KERNEL 4\n\n")
         write_c_array(stream, "glm53_kda_qkv", raw[0],
@@ -492,7 +492,7 @@ def write_indexer_case(torch, model, output: Path) -> None:
     with torch.no_grad():
         expected = indexer(hidden, q_resid, valid, None)
     with output.open("w", encoding="utf-8") as stream:
-        stream.write("#ifndef COLIBRI_GLM53_INDEXER_CASE_H\n#define COLIBRI_GLM53_INDEXER_CASE_H\n\n")
+        stream.write("#ifndef LMA_GLM53_INDEXER_CASE_H\n#define LMA_GLM53_INDEXER_CASE_H\n\n")
         stream.write(f"#define GLM53_INDEX_SEQUENCE {ids.shape[1]}\n")
         stream.write(f"#define GLM53_INDEX_HEADS {indexer.n_heads}\n")
         stream.write(f"#define GLM53_INDEX_DIM {indexer.head_dim}\n")
@@ -540,7 +540,7 @@ def write_sparse_attention_case(torch, model, output: Path) -> None:
                 probabilities = torch.softmax(scores.float() / (HEAD_DIM ** 0.5), dim=-1)
                 expected[0, position, head] = probabilities @ values[0, selected, head].float()
     with output.open("w", encoding="utf-8") as stream:
-        stream.write("#ifndef COLIBRI_GLM53_SPARSE_ATTENTION_CASE_H\n#define COLIBRI_GLM53_SPARSE_ATTENTION_CASE_H\n\n")
+        stream.write("#ifndef LMA_GLM53_SPARSE_ATTENTION_CASE_H\n#define LMA_GLM53_SPARSE_ATTENTION_CASE_H\n\n")
         stream.write("#define GLM53_SA_SEQUENCE 8\n")
         stream.write(f"#define GLM53_SA_HEADS {HEADS}\n#define GLM53_SA_KEY_DIM {HEAD_DIM}\n")
         stream.write(f"#define GLM53_SA_VALUE_DIM {HEAD_DIM}\n#define GLM53_SA_WIDTH {width}\n\n")
@@ -568,7 +568,7 @@ def write_mhc_case(torch, model, output: Path) -> None:
             comb.to(streams.dtype), streams.unsqueeze(-3)
         ).squeeze(-2)
     with output.open("w", encoding="utf-8") as stream:
-        stream.write("#ifndef COLIBRI_GLM53_MHC_CASE_H\n#define COLIBRI_GLM53_MHC_CASE_H\n\n")
+        stream.write("#ifndef LMA_GLM53_MHC_CASE_H\n#define LMA_GLM53_MHC_CASE_H\n\n")
         stream.write(f"#define GLM53_MHC_COPIES 2\n#define GLM53_MHC_DIM {HIDDEN}\n")
         stream.write("#define GLM53_MHC_ITERATIONS 3\n\n")
         write_c_array(stream, "glm53_mhc_streams", streams,

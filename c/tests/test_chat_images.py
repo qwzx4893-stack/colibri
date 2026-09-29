@@ -1,4 +1,4 @@
-"""`coli chat` reads a pasted image itself and sends a data: URI: the server no
+"""`lmatomic chat` reads a pasted image itself and sends a data: URI: the server no
 longer opens local paths for a client (see ImageUrlPathGuard in
 test_openai_server). A path the user pastes must therefore never reach the
 request as a path."""
@@ -11,15 +11,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-CLI = Path(__file__).resolve().parent.parent / "coli"
+CLI = Path(__file__).resolve().parent.parent / "lmatomic"
 
 
 def load_cli():
-    loader = importlib.machinery.SourceFileLoader("coli_images_t", str(CLI))
+    loader = importlib.machinery.SourceFileLoader("lma_images_t", str(CLI))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     argv = sys.argv
-    sys.argv = ["coli"]
+    sys.argv = ["lmatomic"]
     try:
         loader.exec_module(module)
     finally:

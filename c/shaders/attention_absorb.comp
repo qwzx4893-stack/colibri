@@ -1,6 +1,6 @@
 #version 450
 // MLA weight-absorption attention core (decode), the VK equivalent of
-// coli_cuda_attention_absorb / glm.c's CPU absorb loop. One workgroup per
+// lma_cuda_attention_absorb / glm.c's CPU absorb loop. One workgroup per
 // (query row s = WorkGroupID.y, head h = WorkGroupID.x); the whole core for
 // one head runs in a single dispatch:
 //   qabs[i]  = sum_d q_nope[d] * dequant(Wkv_b[h*(Q+V)+d])[i]        (absorbed query)

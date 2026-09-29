@@ -18,7 +18,7 @@
 #include <cuda_runtime.h>   /* under HIP, backend_gpu_compat.h (via backend_cuda.cu) provides these */
 #endif
 
-/* pull in the kernel definitions (same idiom as the CPU tests' #include "../colibri.c") */
+/* pull in the kernel definitions (same idiom as the CPU tests' #include "../glm52.c") */
 #include "../backend_cuda.cu"
 
 static void cpu_ref(const float *x,const float *W,const float *bias,int D,int E,

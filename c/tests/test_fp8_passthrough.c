@@ -12,11 +12,11 @@
  *
  * fmt=8, PUBLIC ordinal: this format was minted fmt=6 during original
  * development of this branch, before dev's own #465 (E8/IQ3) claimed that
- * ordinal upstream; re-tagged fmt=100 (PRIVATE ORDINAL BLOCK, see colibri.c's
+ * ordinal upstream; re-tagged fmt=100 (PRIVATE ORDINAL BLOCK, see glm52.c's
  * QT struct comment) from that point forward -- there was never a build in
  * this branch's history where this format was reachable as fmt=6 -- graduated
  * to fmt=7 when the maintainer assigned that ordinal on #524, and renumbered
- * to fmt=8 after #705 merged claiming 7 for MXFP4 (see colibri.c's QT
+ * to fmt=8 after #705 merged claiming 7 for MXFP4 (see glm52.c's QT
  * comment). */
 #include "../quant.h"
 #include <stdio.h>

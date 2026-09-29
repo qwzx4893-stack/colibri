@@ -1,6 +1,6 @@
 """Version accessor for the pip package.
 
-The single source of truth is c/version.py (#394): coli --version and the
+The single source of truth is c/version.py (#394): lmatomic --version and the
 GitHub Release workflow read it, so the pip metadata must read the SAME file
 instead of carrying a second literal that would drift on the first bump.
 
@@ -18,6 +18,6 @@ except OSError:
     from importlib.metadata import PackageNotFoundError, version
 
     try:
-        __version__ = version("colibri-engine")
+        __version__ = version("lmatomic")
     except PackageNotFoundError:
         __version__ = "0.0.0+unknown"

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Quali file Python deve contenere un archivio di release, calcolati.
 
-#1296: `coli convert` nel pacchetto v1.10.0 moriva con "can't open file
+#1296: `lmatomic convert` nel pacchetto v1.10.0 moriva con "can't open file
 'tools/convert_fp8_to_int4.py'". Il workflow copiava una lista scritta a mano,
-e la lista era indietro rispetto al codice. Tre script invocati da coli e tre
+e la lista era indietro rispetto al codice. Tre script invocati da lmatomic e tre
 moduli importati non c'erano.
 
 Uno dei tre e' istruttivo: openai_server.py fa
@@ -18,7 +18,7 @@ era stato spedito. Un import cercato con una regex, o a occhio, non lo trova:
 per questo qui si usa ast.
 
 Tre modi di raggiungere un file, e contano tutti:
-  - import, seguiti in chiusura a partire da coli
+  - import, seguiti in chiusura a partire da lmatomic
   - subprocess, cioe' os.path.join(TOOLS, "qualcosa.py"), seguiti a loro volta
   - dati letti accanto al modulo, cioe' iq3_pack.py che apre iq3xxs_grid.json
 
@@ -32,7 +32,7 @@ stringa-letterale che nomina un file ESISTENTE accanto al modulo e con una
 estensione da dati (DATA_SUFFIXES). Quindi:
   - non trova un percorso costruito a pezzi, o un nome calcolato a runtime;
   - non spedisce un sorgente citato in un messaggio -- e ce ne sono molti:
-    `coli` nomina colibri.c, family_registry.py nomina cinque motori. Nessuno
+    `lmatomic` nomina glm52.c, family_registry.py nomina cinque motori. Nessuno
     di questi va nell'archivio, ed e' il motivo per cui qui c'e' una lista di
     estensioni e non "tutto cio' che non e' .py".
 Sbaglia quindi per eccesso, mai per difetto: al peggio spedisce qualche KB in
@@ -124,7 +124,7 @@ def named_tools(path, src):
     """Gli script sotto tools/ nominati da una stringa, non da una chiamata.
 
     #1368: i convertitori per famiglia sono dichiarati in family_registry.py
-    come semplici stringhe ("convert_glm53.py"), perche' e' coli a comporre il
+    come semplici stringhe ("convert_glm53.py"), perche' e' lmatomic a comporre il
     comando a runtime. Non c'e' nessun `os.path.join(TOOLS, "...")` da trovare,
     quindi invoked_scripts() non li vede e l'archivio uscirebbe senza il
     convertitore -- che e' precisamente #1296, un giro piu' tardi.
@@ -149,24 +149,24 @@ def named_tools(path, src):
 
 
 def needed(src):
-    """Tutto cio' che coli raggiunge, come percorsi sotto <c-dir>.
+    """Tutto cio' che lmatomic raggiunge, come percorsi sotto <c-dir>.
 
     A subprocess-launched script is reached the same way an imported
     module is: its own imports are followed too, not just its own file.
-    #1296's own precedent -- a script invoked by coli missing from the
+    #1296's own precedent -- a script invoked by lmatomic missing from the
     archive -- had a sibling shape one level deeper that #1296 itself did
-    not catch: a script invoked by coli imports a module that neither
-    coli nor any file coli imports ever mentions by name, so that module
+    not catch: a script invoked by lmatomic imports a module that neither
+    lmatomic nor any file lmatomic imports ever mentions by name, so that module
     was never added to `reached` and never copied, even though the
     script that needs it was. The script paths below are pushed onto the
     same import-following queue as every other reached file, so their
-    imports close the same way coli's own do.
+    imports close the same way lmatomic's own do.
 
     I file di dati letti accanto a un modulo si raccolgono lungo la stessa
     visita: sono foglie, non hanno archi uscenti, quindi non entrano in coda.
     """
     local = local_modules(src)
-    reached, queue = set(), [src / "coli"]
+    reached, queue = set(), [src / "lmatomic"]
     scripts, script_paths, data = set(), set(), set()
     while queue:
         path = queue.pop()
@@ -182,7 +182,7 @@ def needed(src):
             scripts.add(script)
             candidate = src / "tools" / script
             if not candidate.exists():
-                raise SystemExit(f"FAIL: coli invokes tools/{script}, which does not exist")
+                raise SystemExit(f"FAIL: lmatomic invokes tools/{script}, which does not exist")
             script_paths.add(candidate)
             queue.append(candidate)
         for name in imports_of(path):
@@ -213,7 +213,7 @@ def main(argv):
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, dest)
     if missing:
-        print("FAIL: coli reaches these and they are not in the archive:")
+        print("FAIL: lmatomic reaches these and they are not in the archive:")
         for name in missing:
             print(f"  {name}")
         return 1
@@ -222,7 +222,7 @@ def main(argv):
     # bugia di display che in #856 fece concordare l'autodiagnosi col bug.
     py = sum(1 for path in files if path.suffix == ".py")
     print(f"{py} Python files and {len(files) - py} data files reachable "
-          f"from coli ({'all present' if check else 'copied'})")
+          f"from lmatomic ({'all present' if check else 'copied'})")
     return 0
 
 

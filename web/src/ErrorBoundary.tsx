@@ -18,7 +18,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
   state: State = { error: null, stack: "" }
   static getDerivedStateFromError(error: Error): Partial<State> { return { error } }
   componentDidCatch(error: Error, info: { componentStack?: string }) {
-    console.error("[colibrì] render crash:", error, info.componentStack)
+    console.error("[LM Atomic] render crash:", error, info.componentStack)
     this.setState({ stack: info.componentStack ?? "" })
   }
   render() {

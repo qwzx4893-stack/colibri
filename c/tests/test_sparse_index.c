@@ -12,7 +12,7 @@ int main(void) {
     const int SQ=GLM53_INDEX_SEQUENCE, H=GLM53_INDEX_HEADS, D=GLM53_INDEX_DIM;
     const int P=GLM53_INDEX_POOL, TK=GLM53_INDEX_TOPK, W=GLM53_INDEX_WIDTH;
     int *sel = malloc((size_t)SQ*W*sizeof(int));
-    if (coli_sparse_index_select(sel, glm53_index_queries, glm53_index_keys,
+    if (lma_sparse_index_select(sel, glm53_index_queries, glm53_index_keys,
                                  glm53_index_gates, glm53_index_weights, glm53_index_ape,
                                  glm53_index_valid, SQ, H, D, P, TK, 1)) {
         printf("select ha fallito\n"); return 1; }
@@ -30,7 +30,7 @@ int main(void) {
     /* --- attenzione sui blocchi selezionati --- */
     const int S2=GLM53_SA_SEQUENCE, H2=GLM53_SA_HEADS, KD=GLM53_SA_KEY_DIM, VD=GLM53_SA_VALUE_DIM;
     float *out = malloc((size_t)S2*H2*VD*sizeof(float));
-    if (coli_sparse_attention(out, glm53_sa_queries, glm53_sa_keys, glm53_sa_values,
+    if (lma_sparse_attention(out, glm53_sa_queries, glm53_sa_keys, glm53_sa_values,
                               glm53_sa_indices, S2, GLM53_SA_WIDTH, H2, KD, VD)) {
         printf("attention ha fallito\n"); return 1; }
     float worst=0.f; int at=0;

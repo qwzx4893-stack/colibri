@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert OLMoE HuggingFace checkpoint to colibri int4 format.
+"""Convert OLMoE HuggingFace checkpoint to lmatomic int4 format.
 
 DEPRECATED: produces the split gate_proj/up_proj/down_proj tensor layout. The
 current engine (olmoe.c) only loads the merged 'merged_weight' format — use
@@ -66,7 +66,7 @@ def is_expert_weight(name: str) -> bool:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Convert OLMoE HF checkpoint -> colibri int4")
+    ap = argparse.ArgumentParser(description="Convert OLMoE HF checkpoint -> lmatomic int4")
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--repo", help="HuggingFace repo ID")
     src.add_argument("--model", help="Local HF checkpoint directory")

@@ -84,7 +84,7 @@ class ToolCallingV4E2E(unittest.TestCase):
             probe.bind(("127.0.0.1", 0))
             cls.port = probe.getsockname()[1]
         env = dict(os.environ, MOCK_LOG=str(cls.mock_log))
-        env.pop("COLI_API_KEY", None)
+        env.pop("LMA_API_KEY", None)
         cls.server = subprocess.Popen(
             [sys.executable, str(SERVER), "--model", cls.tmp.name,
              "--engine", str(mock), "--arch", "deepseek_v4", "--port", str(cls.port)],

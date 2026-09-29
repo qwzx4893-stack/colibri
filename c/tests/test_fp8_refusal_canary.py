@@ -5,7 +5,7 @@ batched fmt=8 serve path with one regex (its REFUSAL constant, the family
 `(qt_addrow|qt_matvec_rows): unsupported fmt=`), in two load-bearing
 places: the pass lane's engine-death scan, and the expect-bite mode the
 fleet's old-binary half PASSES ONLY THROUGH.  The product strings live in
-c/colibri.c (qt_addrow's refusal and qt_matvec_rows'); an innocent reword
+c/glm52.c (qt_addrow's refusal and qt_matvec_rows'); an innocent reword
 of either -- "unsupported" to "unhandled", dropping the function-name
 prefix -- would not break any build or unit suite, but it would silently
 degrade the bite proof's machine-match into a generic "engine died", and
@@ -37,7 +37,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))          # sibling import under any invocation style
 from test_fp8_serve_batch_e2e import REFUSAL
 
-COLIBRI_C = HERE.parent / "colibri.c"
+LMA_C = HERE.parent / "glm52.c"
 FUNCTIONS = ("qt_addrow", "qt_matvec_rows")
 
 # One C string literal (escapes included), and an fprintf-to-stderr whose
@@ -63,7 +63,7 @@ class RefusalShapeCanaryTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.messages = stderr_messages(COLIBRI_C.read_text(encoding="utf-8"))
+        cls.messages = stderr_messages(LMA_C.read_text(encoding="utf-8"))
 
     def messages_of(self, function):
         return [m for m in self.messages if m.startswith(function + ":")]
@@ -73,7 +73,7 @@ class RefusalShapeCanaryTest(unittest.TestCase):
             named = self.messages_of(function)
             self.assertTrue(
                 named,
-                f"colibri.c has no stderr message starting '{function}:' -- the "
+                f"glm52.c has no stderr message starting '{function}:' -- the "
                 f"refusal site was renamed or removed, and the D-I2 bite matcher "
                 f"(test_fp8_serve_batch_e2e.REFUSAL) can no longer identify this "
                 f"death; update the matcher and the fleet bite lane together")
@@ -102,7 +102,7 @@ class RefusalShapeCanaryTest(unittest.TestCase):
         fmt=` words -- a matcher loosened to the words alone would accept
         any future non-absorb `unsupported fmt=` message as the bite."""
         self.assertIsNone(REFUSAL.search("malloc: out of memory allocating 42 GB"))
-        self.assertIsNone(REFUSAL.search("colibri engine exited unexpectedly"))
+        self.assertIsNone(REFUSAL.search("lmatomic engine exited unexpectedly"))
         self.assertIsNone(REFUSAL.search(""))
         self.assertIsNone(REFUSAL.search("qt_resolve_fmt: unsupported fmt=9 refusing"))
         # The REAL in-tree near-miss (not synthetic): layer_cuda_shard_kvb's

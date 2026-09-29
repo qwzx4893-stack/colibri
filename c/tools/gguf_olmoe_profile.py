@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OLMoE profile: GGUF tensor layout -> colibri container layout.
+"""OLMoE profile: GGUF tensor layout -> lmatomic container layout.
 
 This module owns everything OLMoE-specific about the conversion and nothing
 about file I/O or CLI:
@@ -67,7 +67,7 @@ def parse_expert(name):
 
 
 def dense_target(name):
-    """colibri name for a GGUF dense tensor, or None if not a known dense tensor."""
+    """lmatomic name for a GGUF dense tensor, or None if not a known dense tensor."""
     if name in DENSE_SIMPLE:
         return DENSE_SIMPLE[name]
     match = DENSE_LAYERED_RE.match(name)
@@ -134,7 +134,7 @@ def quantize_row(weights):
 
 
 def merge_expert(gate, up, down):
-    """Quantize and merge one expert's gate/up/down into colibri's layout.
+    """Quantize and merge one expert's gate/up/down into lmatomic's layout.
 
     merged_weight = int8(gate | up | down) flattened;
     qs            = f32(gate rows | up rows | down rows).

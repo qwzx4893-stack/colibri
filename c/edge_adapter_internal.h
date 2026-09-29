@@ -1,5 +1,5 @@
-#ifndef COLIBRI_EDGE_ADAPTER_INTERNAL_H
-#define COLIBRI_EDGE_ADAPTER_INTERNAL_H
+#ifndef LMA_EDGE_ADAPTER_INTERNAL_H
+#define LMA_EDGE_ADAPTER_INTERNAL_H
 
 /* Engine-private helpers shared by the built-in adapters. */
 
@@ -7,19 +7,19 @@
 
 #include <stdio.h>
 
-static int coli_edge_adapter_error(char *error, size_t error_size,
+static int lma_edge_adapter_error(char *error, size_t error_size,
                                    const char *message) {
     if (error && error_size) snprintf(error, error_size, "%s", message);
     return -1;
 }
 
-static void coli_edge_capability_string(char *output, size_t output_size,
+static void lma_edge_capability_string(char *output, size_t output_size,
                                         const char *value) {
     if (!output || !output_size) return;
     snprintf(output, output_size, "%s", value ? value : "");
 }
 
-static int coli_edge_argmax(const float *values, uint32_t count,
+static int lma_edge_argmax(const float *values, uint32_t count,
                             int32_t *token, float *score) {
     if (!values || !count || !token) return -1;
     uint32_t best = 0;
@@ -30,4 +30,4 @@ static int coli_edge_argmax(const float *values, uint32_t count,
     return 0;
 }
 
-#endif /* COLIBRI_EDGE_ADAPTER_INTERNAL_H */
+#endif /* LMA_EDGE_ADAPTER_INTERNAL_H */

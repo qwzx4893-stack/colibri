@@ -25,9 +25,9 @@ that decides whether a decision can be automated.
 ## It needs a running server
 
 There are three ways to use brio mode and they are all clients of the same
-server: the **HTTP endpoint**, the **terminal** (`coli chat --attach`) and the
+server: the **HTTP endpoint**, the **terminal** (`lmatomic chat --attach`) and the
 **Brio page** in the web interface. What does not exist is a one-shot form —
-no `coli brio <model> ...` that loads, answers and exits.
+no `lmatomic brio <model> ...` that loads, answers and exits.
 
 That is not an omission. The whole point is the snapshot: the shared prefix is
 read once and kept in the engine's memory, so every question after the first is
@@ -38,7 +38,7 @@ So start the server once and keep it:
 
 ```bash
 cd c
-COLI_MODEL=/nvme/qwen36 ./coli serve --host 127.0.0.1 --port 8000 --model-id qwen36
+LMA_MODEL=/nvme/qwen36 ./lmatomic serve --host 127.0.0.1 --port 8000 --model-id qwen36
 ```
 
 and then reach it however you prefer:
@@ -46,7 +46,7 @@ and then reach it however you prefer:
 | from | how |
 |---|---|
 | your own code | `POST /v1/brio`, below |
-| the terminal | `coli chat --attach http://127.0.0.1:8000`, then `/brio` |
+| the terminal | `lmatomic chat --attach http://127.0.0.1:8000`, then `/brio` |
 | the browser | open the server's address, Brio in the navigation dock |
 
 All three end up in the same place, so a snapshot warmed by one of them is
@@ -183,14 +183,14 @@ const { json, fields } = await r.json();
 
 ### For code written against Jev: `POST /v1/systemone`
 
-If your application already speaks TypeSafe's Jev API, point it at colibri
+If your application already speaks TypeSafe's Jev API, point it at LM Atomic
 and change the base URL; the request and the reply are the same shape. The
 route accepts any `model` name (a Jev client sends `jev-latest`) and answers
 with the model the server actually runs.
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/systemone \
-  -H "Authorization: Bearer $COLI_API_KEY" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $LMA_API_KEY" -H "Content-Type: application/json" \
   -d '{
     "state": "Hi, I have been trying to connect my Stripe account for 3 days and the integration keeps failing. I am losing sales. Please help ASAP.",
     "model": "jev-latest",
@@ -283,7 +283,7 @@ The conversation so far becomes the context, so you can chat, then switch to
 scoring without restating anything.
 
 ```
-coli chat --attach http://127.0.0.1:8000
+lmatomic chat --attach http://127.0.0.1:8000
 
 › /brio merge | request changes | close
   ✦ brio · 3 options · the model no longer generates, it assigns probabilities
@@ -364,7 +364,7 @@ option list leaking into the prompt, and the length normalisation.
 ## Nested snapshots
 
 The useful prefixes are nested: the shared instructions, and the instructions plus
-this question. The engine keeps a few snapshots (`COLI_PIN_SLOTS`, default 4) and
+this question. The engine keeps a few snapshots (`LMA_PIN_SLOTS`, default 4) and
 always restores the deepest one that is a strict prefix of the new prompt.
 
 With a single snapshot you have to choose which level to keep, and the other is paid

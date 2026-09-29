@@ -36,7 +36,7 @@ class BuildConfigStampTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def check(self, *version):
-        marker = f"-DCOLI_STAMP_TEST_{time.monotonic_ns()}"
+        marker = f"-DLMA_STAMP_TEST_{time.monotonic_ns()}"
         self.parse(*version, f"EXTRA_CFLAGS={marker}")
         self.assertTrue(STAMP.exists(), "the stamp was not written")
         text = STAMP.read_text(encoding="utf-8")

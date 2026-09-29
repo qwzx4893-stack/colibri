@@ -113,9 +113,9 @@ def main():
         SERVE="1",
         SERVE_BATCH="1",
         KV_SLOTS=str(args.kv_slots),
-        COLI_KV_SHARE="0",
+        LMA_KV_SHARE="0",
         DRAFT="0",
-        COLI_TEMP="0",
+        LMA_TEMP="0",
     )
     proc = subprocess.Popen(
         [args.engine, "8", "4", "4"],

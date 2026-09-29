@@ -2,8 +2,8 @@
  * matmul_i3 (NEON/AVX-512 + scalar tail) vs reference dequant-matmul, per-row helpers,
  * the .qs-size format tag, and the quality claim in miniature (per-group int3
  * beats per-row int4 on rows with outliers — the #132 result this format ships). */
-#define main coli_glm_main_unused
-#include "../colibri.c"
+#define main lma_glm_main_unused
+#include "../glm52.c"
 #undef main
 
 #include <stdio.h>

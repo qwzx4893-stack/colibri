@@ -138,8 +138,8 @@ static void case_int8_decode(void) {
     printf("int8 container, decode-path offer (no warmstart)\n");
     Model m; build_model(&m); fill_int8(&m);
 
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", "0", 1);
     setenv("QT_NO_WARMSTART", "1", 1);
     fake_uploads = 0;
 
@@ -184,8 +184,8 @@ static void case_int4_decode(void) {
     printf("int4 container, decode-path offer (no warmstart)\n");
     Model m; build_model(&m); fill_int4(&m);
 
-    setenv("COLI_CUDA", "1", 1);
-    setenv("COLI_GPUS", "0", 1);
+    setenv("LMA_CUDA", "1", 1);
+    setenv("LMA_GPUS", "0", 1);
     setenv("QT_NO_WARMSTART", "1", 1);
     fake_uploads = 0;
 

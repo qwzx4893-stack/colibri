@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Exhaustive optimization dossier for a colibri engine run.
+"""Exhaustive optimization dossier for a lmatomic engine run.
 
 This is NOT a pass/fail test. It runs the engine with every instrumentation flag
-on (PROF, COLI_CUDA_PROFILE, CACHE_ROUTE, DISK_SPLIT, LOOKA) and prints a section-
+on (PROF, LMA_CUDA_PROFILE, CACHE_ROUTE, DISK_SPLIT, LOOKA) and prints a section-
 by-section report answering, for each subsystem:
 
     WHAT is doing it    — which phase/kernel/tier
@@ -12,14 +12,14 @@ by-section report answering, for each subsystem:
     HOW TO IMPROVE      — the concrete knob, named
 
 Activation (opt-in only — NOT in `make test`):
-    COLI_EFFICIENCY_MODEL=<model_dir> python tests/test_efficiency_report.py
+    LMA_EFFICIENCY_MODEL=<model_dir> python tests/test_efficiency_report.py
 
 Optional env:
-    COLI_EFFICIENCY_CUDA=1        also exercise the CUDA dense/expert tiers
-    COLI_EFFICIENCY_NGEN=N        decode tokens (default 24)
-    COLI_EFFICIENCY_RAM_GB=N      RAM budget (default 28)
-    COLI_EFFICIENCY_VRAM_GB=N     CUDA expert-tier budget GB (default 4)
-    COLI_EFFICIENCY_PROMPT=...    prompt (default: a code-gen prompt)
+    LMA_EFFICIENCY_CUDA=1        also exercise the CUDA dense/expert tiers
+    LMA_EFFICIENCY_NGEN=N        decode tokens (default 24)
+    LMA_EFFICIENCY_RAM_GB=N      RAM budget (default 28)
+    LMA_EFFICIENCY_VRAM_GB=N     CUDA expert-tier budget GB (default 4)
+    LMA_EFFICIENCY_PROMPT=...    prompt (default: a code-gen prompt)
 
 Exit code is always 0 (it's a dossier, not a gate). Lines marked FLAG point at
 the most likely lever to move tok/s for the observed bottleneck.
@@ -57,35 +57,35 @@ def _line(label, value, flag=None, note=""):
 
 
 def main() -> int:
-    model = os.environ.get("COLI_EFFICIENCY_MODEL")
+    model = os.environ.get("LMA_EFFICIENCY_MODEL")
     if not model:
         print(__doc__)
-        print("\nNot activated: set COLI_EFFICIENCY_MODEL=<model_dir> to run.")
+        print("\nNot activated: set LMA_EFFICIENCY_MODEL=<model_dir> to run.")
         return 0
     model = str(Path(model).resolve())
     if not Path(model).is_dir():
         print(f"ERROR: {model} is not a directory", file=sys.stderr)
         return 0
 
-    ngen = int(os.environ.get("COLI_EFFICIENCY_NGEN", "24"))
-    ram_gb = os.environ.get("COLI_EFFICIENCY_RAM_GB", "28")
-    vram_gb = os.environ.get("COLI_EFFICIENCY_VRAM_GB", "4")
+    ngen = int(os.environ.get("LMA_EFFICIENCY_NGEN", "24"))
+    ram_gb = os.environ.get("LMA_EFFICIENCY_RAM_GB", "28")
+    vram_gb = os.environ.get("LMA_EFFICIENCY_VRAM_GB", "4")
     prompt = os.environ.get(
-        "COLI_EFFICIENCY_PROMPT",
+        "LMA_EFFICIENCY_PROMPT",
         "Write a Python function that computes the factorial of a number. "
         "Include error handling and a docstring.")
-    use_cuda = os.environ.get("COLI_EFFICIENCY_CUDA") == "1"
+    use_cuda = os.environ.get("LMA_EFFICIENCY_CUDA") == "1"
 
     # Turn ON every instrumentation flag so the dossier has maximum detail.
-    # These are all observability toggles (PROF/COLI_CUDA_PROFILE/CACHE_ROUTE/
+    # These are all observability toggles (PROF/LMA_CUDA_PROFILE/CACHE_ROUTE/
     # DISK_SPLIT/LOOKA); none change the computed output.
     overlay = dict(
         NGEN=str(ngen), TEMP="0", RAM_GB=ram_gb, PROMPT=prompt,
         PROF="1", CACHE_ROUTE="1", DISK_SPLIT="1", LOOKA="1", ROUTE_AGREE="1",
     )
     if use_cuda:
-        overlay.update(COLI_CUDA="1", COLI_GPU="0", CUDA_DENSE="1",
-                       COLI_CUDA_PROFILE="1", CUDA_EXPERT_GB=vram_gb)
+        overlay.update(LMA_CUDA="1", LMA_GPU="0", CUDA_DENSE="1",
+                       LMA_CUDA_PROFILE="1", CUDA_EXPERT_GB=vram_gb)
 
     print("=" * 78)
     print(f"OPTIMIZATION DOSSIER — {Path(model).name}")

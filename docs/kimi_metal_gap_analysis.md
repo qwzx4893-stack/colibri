@@ -103,18 +103,18 @@ Legend: = implemented, = CPU only, = no GPU backend
 
 | Function | Status | Notes |
 |---|---|---|
-| `coli_metal_init()` | | Init device, queue, residency set |
-| `coli_metal_reload()` | | Re-compile shaders after source change |
-| `coli_metal_register()` / `unregister()` | | Pin/unpin host pointer for zero-copy |
-| `coli_metal_matmul()` | | fmt=1 (int8), fmt=2 (int4-g64), fmt=3 (int2), fmt=4 (grouped int4) |
-| `coli_metal_gemm()` | | Large row-batch GEMM (prefill), fmt=1/2/4, chunked dispatch |
-| `coli_metal_layer_decode()` | | Full MLA decode layer: RMSNorm, attention, shared exp, router, top-8, down |
-| `coli_metal_moe_block()` | | Batched routed expert SwiGLU, fmt=1/2 |
-| `coli_metal_moe_block_begin()` / `_end()` | | Async two-phase: submit without wait, then scatter |
-| `coli_metal_rtop8()` | | Standalone top-8 select (serial + parallel variants) |
-| `coli_metal_stats()` | | Reset counters |
-| `coli_metal_mem_info()` | | Residency, usage, slab info |
-| `coli_metal_shutdown()` | | Teardown |
+| `lma_metal_init()` | | Init device, queue, residency set |
+| `lma_metal_reload()` | | Re-compile shaders after source change |
+| `lma_metal_register()` / `unregister()` | | Pin/unpin host pointer for zero-copy |
+| `lma_metal_matmul()` | | fmt=1 (int8), fmt=2 (int4-g64), fmt=3 (int2), fmt=4 (grouped int4) |
+| `lma_metal_gemm()` | | Large row-batch GEMM (prefill), fmt=1/2/4, chunked dispatch |
+| `lma_metal_layer_decode()` | | Full MLA decode layer: RMSNorm, attention, shared exp, router, top-8, down |
+| `lma_metal_moe_block()` | | Batched routed expert SwiGLU, fmt=1/2 |
+| `lma_metal_moe_block_begin()` / `_end()` | | Async two-phase: submit without wait, then scatter |
+| `lma_metal_rtop8()` | | Standalone top-8 select (serial + parallel variants) |
+| `lma_metal_stats()` | | Reset counters |
+| `lma_metal_mem_info()` | | Residency, usage, slab info |
+| `lma_metal_shutdown()` | | Teardown |
 
 ### Inline Shader Kernels (SIL)
 
@@ -141,7 +141,7 @@ Legend: = implemented, = CPU only, = no GPU backend
 
 ### Metal `layer_decode` Attention Kernels
 
-The fused decode layer (`coli_metal_layer_decode`) encodes attention inline via
+The fused decode layer (`lma_metal_layer_decode`) encodes attention inline via
 `encode_attention()` which dispatches per-halbkhead loops. These are not separate
 pipelines — they are encoded into the same command buffer as a loop over the 96
 half-heads (each half-head is 64 dims for KDA / the MLA equivalent). The kernels
@@ -163,18 +163,18 @@ function body. These handle:
 
 | Function | Status | Notes |
 |---|---|---|
-| `coli_vk_init()` | | Init device, queue, pipeline |
-| `coli_vk_matmul()` | | fmt=1 (int8), fmt=2 (int4-g64), fmt=7 (MXFP4 integrated) |
-| `coli_vk_expert_upload()` | | Upload expert tier to VRAM |
-| `coli_vk_expert_apply()` | | Single expert apply (W1, W2, W3) |
-| `coli_vk_matmul_pair()` | | Paired W1/W3 matmul for GLU |
-| `coli_vk_set_budget()` | | Set VRAM pressure budget |
-| `coli_vk_mem_info()` | | Memory and tier stats |
-| `coli_vk_shutdown()` | | Teardown |
+| `lma_vk_init()` | | Init device, queue, pipeline |
+| `lma_vk_matmul()` | | fmt=1 (int8), fmt=2 (int4-g64), fmt=7 (MXFP4 integrated) |
+| `lma_vk_expert_upload()` | | Upload expert tier to VRAM |
+| `lma_vk_expert_apply()` | | Single expert apply (W1, W2, W3) |
+| `lma_vk_matmul_pair()` | | Paired W1/W3 matmul for GLU |
+| `lma_vk_set_budget()` | | Set VRAM pressure budget |
+| `lma_vk_mem_info()` | | Memory and tier stats |
+| `lma_vk_shutdown()` | | Teardown |
 
 ### Key Gap: fmt=7 MXFP4
 
-Vulkan supports MXFP4+int8 via `fmt=7` in `coli_vk_matmul` and `coli_vk_pair`.
+Vulkan supports MXFP4+int8 via `fmt=7` in `lma_vk_matmul` and `lma_vk_pair`.
 Metal does **not** support `fmt=7` today — only fmt=1/2/3/4. This means the
 expert W1/W2/W3 MXFP4 weights cannot run on Metal and fall back to CPU.
 
@@ -186,9 +186,9 @@ expert W1/W2/W3 MXFP4 weights cannot run on Metal and fall back to CPU.
 
 1. **KDA attention** — No Metal kernel for any of KDA's 96 conv4, recurrence, decay, or
    O projection. All 69 KDA layers run on CPU.
-2. **MLA attention (non-fused)** — `coli_metal_layer_decode` covers only S1 (decode,
+2. **MLA attention (non-fused)** — `lma_metal_layer_decode` covers only S1 (decode,
    single token). Prefill (S>1, batched MLA) and the per-halbkhead inline kernels
-   have not been extracted to a standalone `coli_metal_mla_forward()` API.
+   have not been extracted to a standalone `lma_metal_mla_forward()` API.
 3. **MXFP4 matmul** — Metal `mm_gemv` does not include `fmt=7`. Vulkan has it.
 4. **rmsnorm_, SiTU-`g` — No Metal kernel for standalone RMSNorm on arbitrary tensors.
    The `g_a_rms` pipeline exists but is only callable inside `layer_decode`.
@@ -197,9 +197,9 @@ expert W1/W2/W3 MXFP4 weights cannot run on Metal and fall back to CPU.
 
 ### Important (performance blockers)
 
-7. **Stand-alone matmul wrapper** — `coli_metal_matmul()` exists and works, but
-   `kimi_k3.c` has no `#ifdef COLI_METAL` dispatch to call it from `w_matmul()`.
-   The GLM engine (`colibri.c`) has this dispatch; K3 does not.
+7. **Stand-alone matmul wrapper** — `lma_metal_matmul()` exists and works, but
+   `kimi_k3.c` has no `#ifdef LMA_METAL` dispatch to call it from `w_matmul()`.
+   The GLM engine (`glm52.c`) has this dispatch; K3 does not.
 8. **Dense forward** — 24 MLA layers use `dense_forward` (3 matmuls + SiTU-GLU).
    No Metal wrapper exists.
 9. **Head forward** — Final res_mix + RMSNorm + lm_head. No Metal path.
@@ -217,7 +217,7 @@ expert W1/W2/W3 MXFP4 weights cannot run on Metal and fall back to CPU.
 | Required | Count | Impact |
 |---|---|---|
 | Standalone RMSNorm kernel | 1 | Enables dense, head, and any arbitrary tensor |
-| `w_matmul` → `coli_metal_matmul` dispatch in `kimi_k3.c` | 1 | Enables dense_forward and head forward |
+| `w_matmul` → `lma_metal_matmul` dispatch in `kimi_k3.c` | 1 | Enables dense_forward and head forward |
 | SiTU-GLU kernel | 1 | Needed for dense + shared experts on GPU |
 | Embedding on GPU | 1 | Avoids CPU-GPU boundary for first layer |
 | Head forward Metal path | 1 | End-to-end for the 24 MLA layers |
@@ -245,21 +245,21 @@ larger Metal function, and what must be implemented from scratch.
 
 | Operation | Vulkan | Metal | Reusable? | Action |
 |---|---|---|---|---|
-| Quantized GEMV | `qmatmul.comp` → `coli_vk_matmul()` (fmt 1,2,4,5,7) | `mm_gemv` → `coli_metal_matmul()` (fmt 1,2,3,4) | **Yes** — same algorithm, more fmt coverage | REUSE Metal. Add `#ifdef COLI_METAL` dispatch in `kimi_k3.c:w_matmul()` to call `coli_metal_matmul()` for fmt 1,2,3,4 |
-| RMSNorm | `rmsnorm.comp` → `coli_vk_attn_qprep()` chain | `g_a_rms` pipeline → inside `layer_decode` only | **Partial** — pipeline exists, no standalone API | EXTEND: extract `g_a_rms` to `coli_metal_rmsnorm(src, dst, w, n, d)` standalone call |
-| Fused gate+up+silu | `qmatmul_gate_up.comp` → `coli_vk_gate_up()` (fmt 3,6,5,7) | `moe_gemv` + `g_moe_silu` inside `moe_block()` | **Partial** — kernels exist inside MoE path | EXTEND: extract `coli_metal_gate_up(x, wgate, wup, out, fmt, n, d)` standalone API |
-| Batched expert (MoE) | `coli_vk_expert_group()` → `_issue()` / `_take()` | `moe_block()` / `moe_block_begin()` / `_end()` | **Yes** — Metal has both sync + async variants | REUSE Metal. Wire `moe_block_begin/end` into `kimi_k3.c:expert_apply_union()` |
-| Router GEMV | General `qmatmul` path | `r_router` → `coli_metal_rtop8()`, serial/parallel | **Yes** | REUSE Metal (already supports top-K with sigmoid+bias+renorm) |
+| Quantized GEMV | `qmatmul.comp` → `lma_vk_matmul()` (fmt 1,2,4,5,7) | `mm_gemv` → `lma_metal_matmul()` (fmt 1,2,3,4) | **Yes** — same algorithm, more fmt coverage | REUSE Metal. Add `#ifdef LMA_METAL` dispatch in `kimi_k3.c:w_matmul()` to call `lma_metal_matmul()` for fmt 1,2,3,4 |
+| RMSNorm | `rmsnorm.comp` → `lma_vk_attn_qprep()` chain | `g_a_rms` pipeline → inside `layer_decode` only | **Partial** — pipeline exists, no standalone API | EXTEND: extract `g_a_rms` to `lma_metal_rmsnorm(src, dst, w, n, d)` standalone call |
+| Fused gate+up+silu | `qmatmul_gate_up.comp` → `lma_vk_gate_up()` (fmt 3,6,5,7) | `moe_gemv` + `g_moe_silu` inside `moe_block()` | **Partial** — kernels exist inside MoE path | EXTEND: extract `lma_metal_gate_up(x, wgate, wup, out, fmt, n, d)` standalone API |
+| Batched expert (MoE) | `lma_vk_expert_group()` → `_issue()` / `_take()` | `moe_block()` / `moe_block_begin()` / `_end()` | **Yes** — Metal has both sync + async variants | REUSE Metal. Wire `moe_block_begin/end` into `kimi_k3.c:expert_apply_union()` |
+| Router GEMV | General `qmatmul` path | `r_router` → `lma_metal_rtop8()`, serial/parallel | **Yes** | REUSE Metal (already supports top-K with sigmoid+bias+renorm) |
 | Top-K select | No dedicated kernel | `r_top8` / `r_top8_par` pipelines | **Yes** (Metal-only) | REUSE Metal already covers this |
-| KV cache management | `VkKvLayer` → `kv_ensure()` / `kv_row()` / `kv_reset()` | Encoded inside `layer_decode()` inline | **Partial** — cache logic exists but not standalone | EXTEND: extract `coli_metal_kv_ensure(layer, ntoks, nheadd, ldim, rdim)`, `kv_row()`, `kv_reset()` |
-| MLA attention absorb | `attention_absorb.comp` → `coli_vk_attention_absorb()` + `_project()` | Inline in `layer_decode` (per-halbkhead loop) | **Partial** — logic exists, embedded | EXTEND: extract to `coli_metal_attn_absorb(q, v_b, L, R, ctx, out)` standalone API |
+| KV cache management | `VkKvLayer` → `kv_ensure()` / `kv_row()` / `kv_reset()` | Encoded inside `layer_decode()` inline | **Partial** — cache logic exists but not standalone | EXTEND: extract `lma_metal_kv_ensure(layer, ntoks, nheadd, ldim, rdim)`, `kv_row()`, `kv_reset()` |
+| MLA attention absorb | `attention_absorb.comp` → `lma_vk_attention_absorb()` + `_project()` | Inline in `layer_decode` (per-halbkhead loop) | **Partial** — logic exists, embedded | EXTEND: extract to `lma_metal_attn_absorb(q, v_b, L, R, ctx, out)` standalone API |
 | MoE silu activation | Fused inside `qmatmul_gate_up.comp` | `g_moe_silu` pipeline | **Yes** | REUSE Metal's `g_moe_silu` covers the elementwise SiLU dual activation |
-| MXFP4 matmul | `qmatmul.comp` fmt=7 → `coli_vk_matmul()` | **Not supported** (fmt 0..4 only) | **No** — Vulkan-only | IMPLEMENT: add `fmt=7` block to `mm_gemv` and `moe_gemv` shaders + grow `coli_metal_matmul` switch. Critical for Kimi K3 expert weights (W1/W2/W3) |
-| Dual-GEMV pair | `coli_vk_matmul_pair()` — two resident matmuls on one input | **No equivalent** | **No** — Vulkan-only | IMPLEMENT: `coli_metal_matmul_pair(src, w1, w3, out, fmt, n, d1, d3)`. Needed for KDA conv+recurrence projections and GLU gate+up fusion |
-| Second device (dual GPU) | `coli_vk_init_dev2()` — expert tier on second GPU | Metal only supports one device | **No** | N/A — Apple Silicon has single GPU; not applicable |
+| MXFP4 matmul | `qmatmul.comp` fmt=7 → `lma_vk_matmul()` | **Not supported** (fmt 0..4 only) | **No** — Vulkan-only | IMPLEMENT: add `fmt=7` block to `mm_gemv` and `moe_gemv` shaders + grow `lma_metal_matmul` switch. Critical for Kimi K3 expert weights (W1/W2/W3) |
+| Dual-GEMV pair | `lma_vk_matmul_pair()` — two resident matmuls on one input | **No equivalent** | **No** — Vulkan-only | IMPLEMENT: `lma_metal_matmul_pair(src, w1, w3, out, fmt, n, d1, d3)`. Needed for KDA conv+recurrence projections and GLU gate+up fusion |
+| Second device (dual GPU) | `lma_vk_init_dev2()` — expert tier on second GPU | Metal only supports one device | **No** | N/A — Apple Silicon has single GPU; not applicable |
 | VRAM pressure-proofing | `mem_budget()` + `alloc_priority()` | **No equivalent** | **No** — Vulkan-only | N/A — Metal uses residency sets with automatic eviction; not a gap |
-| Large-batch GEMM | `qmatmul` with 2D block dispatch | `coli_metal_gemm()` (full chunked 2D dispatch) | **Yes** — Metal has it, Vulkan doesn't | REUSE Metal. Wire into `kimi_k3.c:w_matmul()` for prefill S>1 |
-| SiLU activation | Fused inside `gate_up` | `g_moe_silu` inside `moe_block` | **Partial** — exists but not standalone | EXTEND: extract to `coli_metal_silu(src, dst, n)` for dense + shared expert paths |
+| Large-batch GEMM | `qmatmul` with 2D block dispatch | `lma_metal_gemm()` (full chunked 2D dispatch) | **Yes** — Metal has it, Vulkan doesn't | REUSE Metal. Wire into `kimi_k3.c:w_matmul()` for prefill S>1 |
+| SiLU activation | Fused inside `gate_up` | `g_moe_silu` inside `moe_block` | **Partial** — exists but not standalone | EXTEND: extract to `lma_metal_silu(src, dst, n)` for dense + shared expert paths |
 
 ### Summary by Action Category
 
@@ -294,8 +294,8 @@ dequantization pattern.
 
 - `W` struct: added `void *metal` alongside `void *vk`
 - `kimima_forward_metal()`: entry point exists, returns 0 (NOT IMPLEMENTED)
-- `w_matmul()`: `#ifdef COLI_METAL` dispatch hook present, falls through to CPU
-- `model_init()`: reads `K3_METAL` env, calls `coli_metal_init()`, logs status
-- `main()`: three exit paths all call `coli_metal_shutdown()` on cleanup
+- `w_matmul()`: `#ifdef LMA_METAL` dispatch hook present, falls through to CPU
+- `model_init()`: reads `K3_METAL` env, calls `lma_metal_init()`, logs status
+- `main()`: three exit paths all call `lma_metal_shutdown()` on cleanup
 - `Makefile`: `$(METAL_OBJ)` added to kimi_k3 link line
 - `K3_METAL` env flag documented in header comment

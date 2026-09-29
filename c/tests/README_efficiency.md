@@ -13,14 +13,14 @@ Two layers:
 
 ```bash
 # CPU-only (safe, fast to validate):
-COLI_EFFICIENCY_MODEL=../glm52_i4_g64 make efficiency-report
+LMA_EFFICIENCY_MODEL=../glm52_i4_g64 make efficiency-report
 
 # CUDA (dense + expert tiers — needs a CUDA build, see below):
-COLI_EFFICIENCY_MODEL=../glm52_i4_g64 COLI_EFFICIENCY_CUDA=1 make efficiency-report
+LMA_EFFICIENCY_MODEL=../glm52_i4_g64 LMA_EFFICIENCY_CUDA=1 make efficiency-report
 ```
 
 It turns ON every observability flag the engine supports — `PROF=1`,
-`COLI_CUDA_PROFILE=1`, `CACHE_ROUTE=1` (auto-unlocks `route_agree`/`route_kl`),
+`LMA_CUDA_PROFILE=1`, `CACHE_ROUTE=1` (auto-unlocks `route_agree`/`route_kl`),
 `DISK_SPLIT=1`, `LOOKA=1` — so nothing the engine can tell you is left dark.
 None of these change the computed output; they only add telemetry.
 
@@ -80,7 +80,7 @@ make efficiency-cuda   # tiny CUDA tests (needs CUDA build)
 ## CUDA build prerequisite
 
 The default `make glm.exe` builds **without** CUDA. The CUDA tests and the CUDA
-dossier need a host built with `-DCOLI_CUDA` plus the runtime DLL:
+dossier need a host built with `-DLMA_CUDA` plus the runtime DLL:
 
 ```bash
 make clean && make glm.exe CUDA_DLL=1 && make cuda-dll

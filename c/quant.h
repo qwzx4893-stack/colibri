@@ -1,8 +1,8 @@
 /* quant.h — quantized matmul kernels (header-only, all functions static).
  * Multi-architecture SIMD: AVX2 / AVX-512 / AVX-VNNI / ARM NEON / NEON-SDOT /
  * NEON-i8mm / POWER VSX.  Pure compute — no Model or QT dependency. */
-#ifndef COLI_QUANT_H
-#define COLI_QUANT_H
+#ifndef LMA_QUANT_H
+#define LMA_QUANT_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -422,14 +422,14 @@ static void matmul_i3(float *y, const float *x, const uint8_t *q3, const float *
 
 /* ---- fmt=8: native FP8-e4m3 passthrough (Z.ai GLM-5.2-FP8 read path) ------
  * PUBLIC ordinal. This format was minted fmt=6 during original development,
- * then re-tagged fmt=100 (PRIVATE ORDINAL BLOCK, see colibri.c's QT struct
+ * then re-tagged fmt=100 (PRIVATE ORDINAL BLOCK, see glm52.c's QT struct
  * comment) after #465 (E8/IQ3, above) claimed ordinal 6 upstream out from
  * under it; graduated to fmt=7 when the maintainer assigned that ordinal on
  * #524; renumbered a second time to fmt=8 after #705 merged into dev claiming
  * fmt=7 for MXFP4 (Kimi K3 Vulkan tier, backend_vulkan.c) while this PR was
  * still open. Both renumbers were pure retags, per the private-block
  * convention's own "find-and-replace, zero on-disk impact" promise: nothing
- * on disk carries the ordinal. See qt_resolve_fmt in colibri.c ("THE DESIGN
+ * on disk carries the ordinal. See qt_resolve_fmt in glm52.c ("THE DESIGN
  * LANDMINE") for the disambiguation this needs against BOTH fmt=1 (int8) and
  * fmt=6 (E8/IQ3).
  *
@@ -1254,7 +1254,7 @@ static void matmul_mxfp4(float *y, const float *x, const uint8_t *q4, const uint
  * chiamanti possono sollevarla a livello layer: in kimi_k3 gate e up consumano
  * lo stesso z, e ogni expert del layer consuma le stesse righe — prima ogni
  * chiamata riquantizzava da capo, con un malloc/free a giro (issue del PR #1071
- * per colibri.c; qui è la stessa malattia in forma mxfp4).
+ * per glm52.c; qui è la stessa malattia in forma mxfp4).
  * EN: per-32-group int8 activation quantization for the mxfp4 IDOT kernel.
  * Extracted with the loop order unchanged (bit-identical) so callers can hoist
  * it to layer level: gate/up share one z, and every expert of the layer
@@ -1515,4 +1515,4 @@ static void matmul_e8(float *y, const float *x, const uint8_t *q, const float *u
     }
 }
 
-#endif /* COLI_QUANT_H */
+#endif /* LMA_QUANT_H */

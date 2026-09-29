@@ -2,7 +2,7 @@
  * path calls matmul_q once per prompt row; the new path shares every int8
  * weight decode between two rows.  Compare raw float bytes across even/odd
  * row counts, vector tails, and both sides of the OpenMP threshold. */
-#define COLI_QWEN_BATCH_TEST 1
+#define LMA_QWEN_BATCH_TEST 1
 #define main qwen36_main_unused
 #include "../qwen36.c"
 #undef main
@@ -107,7 +107,7 @@ static void shared_case(const char *format,int quantized) {
 
 int main(void) {
     /* This gate owns the dense-int8 mode regardless of the caller's shell. */
-    unsetenv("COLI_DENSE_I8");
+    unsetenv("LMA_DENSE_I8");
     one_shape(1, 17, 13);       /* decode-shaped fallback */
     one_shape(2, 32, 31);       /* one vector block, one row pair */
     one_shape(4, 64, 73);       /* even prompt, serial OpenMP clause */

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a deterministic tiny HF OLMoE checkpoint for Colibri tests.
+"""Build a deterministic tiny HF OLMoE checkpoint for LM Atomic tests.
 
 The result is a source checkpoint.  Convert it with
 ``tools/convert_olmoe_merged.py`` before running the C engine.

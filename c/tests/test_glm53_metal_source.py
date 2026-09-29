@@ -15,17 +15,17 @@ MAKE = (ROOT / "Makefile").read_text(encoding="utf-8")
 
 class Glm53MetalSourceTests(unittest.TestCase):
     def test_backend_is_opt_in(self):
-        self.assertIn('#ifdef COLI_METAL\n#include "backend_metal.h"', SRC)
-        self.assertIn('getenv("COLI_METAL")', SRC)
-        self.assertIn('coli_metal_init()', SRC)
-        self.assertIn('coli_metal_available()', SRC)
+        self.assertIn('#ifdef LMA_METAL\n#include "backend_metal.h"', SRC)
+        self.assertIn('getenv("LMA_METAL")', SRC)
+        self.assertIn('lma_metal_init()', SRC)
+        self.assertIn('lma_metal_available()', SRC)
 
     def test_resident_matmul_has_metal_dispatch_and_cpu_fallback(self):
         start = SRC.index("static void mv(float *out, const Mat *w, const float *x)")
         end = SRC.index("static void rms(", start)
         body = SRC[start:end]
         self.assertIn("g_metal_ready", body)
-        self.assertIn("coli_metal_matmul", body)
+        self.assertIn("lma_metal_matmul", body)
         self.assertIn("w->fmt == 1 || w->fmt == 4", body)
         self.assertIn("matmul_i4_grouped", body)
         self.assertIn("matmul_q", body)
@@ -34,7 +34,7 @@ class Glm53MetalSourceTests(unittest.TestCase):
         start = SRC.index("static void mat_release(Mat *mat)")
         end = SRC.index("static void model_release", start)
         body = SRC[start:end]
-        self.assertIn("coli_metal_tensor_free", body)
+        self.assertIn("lma_metal_tensor_free", body)
 
     def test_glm53_links_metal_object(self):
         start = MAKE.index("glm53$(EXE):")

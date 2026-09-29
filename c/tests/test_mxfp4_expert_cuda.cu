@@ -25,7 +25,7 @@ static int check_case(int S, int D, int I, float b1, float b2) {
         for (size_t j = 0; j < g.size(); j++)
             g[j] = b1 * tanhf(g[j] / b1) * (1.f / (1.f + expf(-g[j]))) * b2 * tanhf(u[j] / b2);
         mxfp4_ref(want.data(), g.data(), dw.data(), ds.data(), S, I, D);
-        if (!coli_cuda_expert_mxfp4(got.data(), x.data(), gw.data(), gs.data(), uw.data(), us.data(),
+        if (!lma_cuda_expert_mxfp4(got.data(), x.data(), gw.data(), gs.data(), uw.data(), us.data(),
                                    dw.data(), ds.data(), S, D, I, b1, b2)) return 1;
         for (size_t j = 0; j < got.size(); j++) {
             if (!std::isfinite(got[j]) || fabsf(got[j] - want[j]) > 2e-5f + 2e-4f * fabsf(want[j])) {
@@ -38,7 +38,7 @@ static int check_case(int S, int D, int I, float b1, float b2) {
         for (size_t j = 0; j < ds.size(); j++) ds[j]++;
     }
     got[0] = 123.f;
-    if (coli_cuda_expert_mxfp4(got.data(), x.data(), gw.data(), gs.data(), uw.data(), us.data(),
+    if (lma_cuda_expert_mxfp4(got.data(), x.data(), gw.data(), gs.data(), uw.data(), us.data(),
                              dw.data(), ds.data(), S, D, I, 0.f, b2) || got[0] != 123.f) return 1;
     printf("ok SiTU expert S=%d D=%d I=%d b1=%g b2=%g\n", S, D, I, b1, b2);
     return 0;
@@ -46,13 +46,13 @@ static int check_case(int S, int D, int I, float b1, float b2) {
 int main() {
     int n = 0, device = 0;
     if (cudaGetDeviceCount(&n) != cudaSuccess || !n) { puts("SKIP no CUDA device"); return 0; }
-    if (!coli_cuda_init(&device, 1)) return 1;
+    if (!lma_cuda_init(&device, 1)) return 1;
     int failed = check_case(1, 64, 128, 1.5f, 2.5f) |
                  check_case(3, 33, 65, 4.f, 3.f) |
                  check_case(2, 129, 31, 0.5f, 0.75f);
-    coli_cuda_shutdown();
-    if (!coli_cuda_init(&device, 1)) return 1;
+    lma_cuda_shutdown();
+    if (!lma_cuda_init(&device, 1)) return 1;
     failed |= check_case(1, 64, 128, 1.5f, 2.5f);
-    coli_cuda_shutdown();
+    lma_cuda_shutdown();
     return failed;
 }

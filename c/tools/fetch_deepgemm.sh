@@ -27,7 +27,7 @@ dest=${2:-${DEEPGEMM_HOME:-$here/third_party/deepgemm}}
 case "$dest" in /*|[A-Za-z]:*) ;; *) dest="$here/$dest" ;; esac
 patch="$here/patches-deepgemm-sm120-msvc.patch"
 cutlass_pin=${CUTLASS_PIN:-$CUTLASS_PIN_DEFAULT}
-marker="$dest/.coli-deepgemm-fetched"
+marker="$dest/.lmatomic-deepgemm-fetched"
 
 die() { echo "fetch_deepgemm: $*" >&2; exit 1; }
 command -v git >/dev/null 2>&1 || die "git is required (MSYS2: pacman -S git)"

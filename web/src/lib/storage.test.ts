@@ -14,11 +14,11 @@ function memoryStorage(initial: Record<string, string> = {}): StringStorage & { 
 
 describe("browser settings persistence", () => {
   it("persists endpoint and model but removes legacy API credentials", () => {
-    const storage = memoryStorage({ "colibri.apiKey": "legacy-secret" })
+    const storage = memoryStorage({ "lmatomic.apiKey": "legacy-secret" })
     persistPublicSettings(storage, "https://localhost/v1", "test-model")
     expect(Object.fromEntries(storage.values)).toEqual({
-      "colibri.baseUrl": "https://localhost/v1",
-      "colibri.model": "test-model",
+      "lmatomic.baseUrl": "https://localhost/v1",
+      "lmatomic.model": "test-model",
     })
   })
 
@@ -26,7 +26,7 @@ describe("browser settings persistence", () => {
     const storage = memoryStorage()
     const setItem = vi.spyOn(storage, "setItem")
     persistPublicSettings(storage, "http://localhost/v1", "test-model")
-    expect(setItem).not.toHaveBeenCalledWith("colibri.apiKey", expect.anything())
+    expect(setItem).not.toHaveBeenCalledWith("lmatomic.apiKey", expect.anything())
   })
 
   it("uses a fallback when storage access is unavailable", () => {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-diag_harness.py — Comprehensive model diagnostic harness for the colibri GLM-5.2 engine.
+diag_harness.py — Comprehensive model diagnostic harness for the lmatomic GLM-5.2 engine.
 
 Runs a full campaign of tests against any model snapshot:
   Phase 0 (system):     startup telemetry — GPU, RAM, cache cap, load time, MTP, idot kernel
@@ -290,12 +290,12 @@ class DiagnosticHarness:
         if args.ram: base_env["RAM_GB"] = str(args.ram)
         if args.cuda:
             base_env.update({
-                "COLI_CUDA": "1",
-                "COLI_GPU": str(args.gpu) if args.gpu is not None else "0",
+                "LMA_CUDA": "1",
+                "LMA_GPU": str(args.gpu) if args.gpu is not None else "0",
                 "CUDA_DENSE": "1",
-                "COLI_CUDA_ATTN": "1",
-                "COLI_CUDA_PIPE": "2",
-                "COLI_CUDA_PIPE_S_MIN": "1",
+                "LMA_CUDA_ATTN": "1",
+                "LMA_CUDA_PIPE": "2",
+                "LMA_CUDA_PIPE_S_MIN": "1",
             })
         self.runner = EngineRunner(self.glm, self.snap, self.out_dir, base_env, timeout=args.timeout)
         self.runner.default_cap = args.cap
@@ -414,7 +414,7 @@ class DiagnosticHarness:
             "LOOKA": "1", "DISK_SPLIT": "1", "ROUTE_AGREE": "1",
         }
         if self.args.cuda:
-            diag_env["COLI_CUDA_PROFILE"] = "1"
+            diag_env["LMA_CUDA_PROFILE"] = "1"
         prompt = ("Write a short paragraph explaining how photosynthesis works. "
                   "Include the roles of sunlight, water, and carbon dioxide.")
         stdout, stderr, rc, elapsed = self.runner.run_prompt(
@@ -674,7 +674,7 @@ class DiagnosticHarness:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Comprehensive model diagnostic harness for colibri GLM-5.2")
+    ap = argparse.ArgumentParser(description="Comprehensive model diagnostic harness for lmatomic GLM-5.2")
     ap.add_argument("--snap", required=True, help="model snapshot directory")
     ap.add_argument("--glm", default=None, help="engine binary path (default: ./glm.exe or ./glm)")
     ap.add_argument("--phase", default="all",
@@ -684,7 +684,7 @@ def main():
     ap.add_argument("--ngen", type=int, default=64, help="generation length for smoke/throughput (default 64)")
     ap.add_argument("--quality-limit", type=int, default=40, help="questions per benchmark task (default 40)")
     ap.add_argument("--ram", type=float, default=0, help="RAM_GB override (0=auto)")
-    ap.add_argument("--cuda", action="store_true", help="enable COLI_CUDA GPU tier")
+    ap.add_argument("--cuda", action="store_true", help="enable LMA_CUDA GPU tier")
     ap.add_argument("--gpu", type=int, default=None, help="GPU device ordinal (with --cuda)")
     ap.add_argument("--cap", type=int, default=75, help="experts-per-layer cache cap (default 75)")
     ap.add_argument("--timeout", type=int, default=600, help="per-run timeout in seconds (default 600)")

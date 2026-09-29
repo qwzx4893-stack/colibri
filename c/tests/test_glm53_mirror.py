@@ -84,15 +84,15 @@ class GLM53MirrorRoutingTests(unittest.TestCase):
         self.assertIn("0x45d9f3bu", SRC.lower())
 
     def test_explicit_disk_weights_supported(self):
-        self.assertIn('getenv("COLI_DISK_WEIGHTS")', SRC)
-        self.assertIn("(COLI_DISK_WEIGHTS)", SRC)
+        self.assertIn('getenv("LMA_DISK_WEIGHTS")', SRC)
+        self.assertIn("(LMA_DISK_WEIGHTS)", SRC)
 
     def test_missing_weights_use_startup_probe(self):
         self.assertIn("glm53_mirror_probe_weight", SRC)
         self.assertIn("(startup bandwidth probe)", SRC)
 
         # The old prototype silently used equal weights. That would violate
-        # Colibri's documented default mirror semantics.
+        # LM Atomic's documented default mirror semantics.
         self.assertNotIn("(equal fallback)", SRC)
         self.assertNotIn("using equal weights", SRC)
 

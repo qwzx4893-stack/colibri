@@ -76,7 +76,7 @@ def download_file_curl(fn, base_url, expected_size):
     url = f"{base_url}/{fn}"
     cmd = ["curl", "-L", "-C", "-", "--retry", "999", "--retry-delay", "5",
            "--connect-timeout", "15", "--speed-time", "30", "--speed-limit", "1000",
-           "-o", partpath, "-H", "User-Agent: colibri-download/1.0", url]
+           "-o", partpath, "-H", "User-Agent: lmatomic-download/1.0", url]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if os.path.exists(partpath) and os.path.getsize(partpath) >= expected_size:
         os.replace(partpath, outpath)

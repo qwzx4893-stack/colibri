@@ -1,5 +1,5 @@
 #version 450
-// Quantized mat-vec/mat-mat mirroring colibri's CUDA quant_matmul:
+// Quantized mat-vec/mat-mat mirroring lmatomic's CUDA quant_matmul:
 //   y[s,o] = ( sum_i x[s,i] * dequant(W[o,i]) ) * scale[o]
 // fmt: 1=int8, 2=int4 (packed 2/byte, nibble-8), 5=int3-g64 (per 64-input group:
 // 24 bytes = 16B low plane [2 bits/val] + 8B high plane [1 bit/val], values v+4 in
@@ -8,7 +8,7 @@
 // as uint32 words; bytes/nibbles/planes are extracted manually.
 //
 // Optimized decode (S=1) GEMV, techniques adapted from llama.cpp's mul_mat_vec
-// (MIT) to colibri's per-row int4/int8 layout:
+// (MIT) to lmatomic's per-row int4/int8 layout:
 //   - x[s,:] loaded ONCE into shared memory, reused across every output row in
 //     the workgroup (x lives in host-visible scratch, so this avoids re-reading
 //     it over the BAR for each row);

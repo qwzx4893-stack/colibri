@@ -9,7 +9,7 @@ SRC = (ROOT / "glm53.c").read_text(encoding="utf-8")
 class Glm53MetalRoutedSourceTests(unittest.TestCase):
     def test_metal_slots_are_page_aligned_and_registered(self):
         self.assertIn("posix_memalign(&p, 16384, need)", SRC)
-        self.assertIn("coli_metal_register(slot->own, slot->own_len)", SRC)
+        self.assertIn("lma_metal_register(slot->own, slot->own_len)", SRC)
         self.assertIn("metal_slot = g_metal_ready", SRC)
 
     def test_cpu_mmap_path_is_preserved(self):
@@ -21,7 +21,7 @@ class Glm53MetalRoutedSourceTests(unittest.TestCase):
         )
 
     def test_routed_experts_use_clamped_batched_api(self):
-        self.assertIn("coli_metal_moe_block_clamped(", SRC)
+        self.assertIn("lma_metal_moe_block_clamped(", SRC)
         self.assertIn("here, c->hidden, c->moe_inter, 4, 64", SRC)
         self.assertIn("out, tokens, c->swiglu_limit", SRC)
 

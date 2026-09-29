@@ -1,9 +1,9 @@
 #version 450
 // RMS norm over S rows of length D: y[s,i] = x[s,i] * w[i] / sqrt(mean(x[s,:]^2) + eps).
-// Mirrors colibri.c rmsnorm() (fp32 accumulate here vs f64 on CPU: for the q-latent
+// Mirrors glm52.c rmsnorm() (fp32 accumulate here vs f64 on CPU: for the q-latent
 // D=1536 the difference is ~1e-7 relative — far under the quantized-weight noise).
 // One 256-thread workgroup per row; used to CHAIN q_a -> norm -> q_b inside one
-// submit (coli_vk_attn_qprep) so the middle CPU roundtrip and its fence disappear.
+// submit (lma_vk_attn_qprep) so the middle CPU roundtrip and its fence disappear.
 
 layout(local_size_x = 256) in;
 
