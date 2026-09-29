@@ -229,6 +229,104 @@ def auto_tune(model_dir, launcher=None, log=print, max_tokens=24, prompt=None):
     return {"measured": results, "recommended_preset": best}
 
 
+DAILY_USE_TARGET_TOK_S = 30.0
+
+
+def measure_steady_state_tok_s(model_dir, launcher=None, log=print, engine_env=None,
+                               reps=3, warmup_tokens=24, measure_tokens=48,
+                               prompt=None):
+    """The Automatic 30 tok/s Policy's measurement: steady-state decode speed,
+    not a burst. Each rep opens one server session, sends a WARMUP request
+    (tokens discarded from the timing) so the session's cache/prediction state
+    has actually settled, then a MEASURE request on the same session (kv_prefix
+    keeps the conversation continuous) and times only that second call. Runs
+    `reps` independent sessions and returns the statistics needed for a
+    build-time decision made on a stable number, not a single sample: median,
+    min, max, and the individual per-rep values. This is deliberately NOT
+    called per-token or mid-session -- the policy decision (Exact vs
+    High-Fidelity) is made once, here, at Model Agent build time."""
+    launcher = launcher or str(CDIR / "lmatomic")
+    prompt = prompt or "Write two sentences about how binary search works."
+    samples = []
+    for i in range(reps):
+        port = _free_port()
+        env = dict(os.environ, LMA_TEMP="0")
+        if engine_env:
+            env.update(engine_env)
+        env.pop("PROF", None)
+        srv = subprocess.Popen([sys.executable, launcher, "serve", "--model", str(model_dir), "--port", str(port),
+                                "--model-id", "steady"], env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            for _ in range(240):
+                try:
+                    urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2).read(); break
+                except Exception:
+                    time.sleep(0.5)
+            else:
+                log(f"  [steady-state] rep {i+1}/{reps}: engine did not come up, skipping")
+                continue
+
+            def ask(messages, max_tokens):
+                body = json.dumps({"model": "steady", "messages": messages,
+                                   "max_tokens": max_tokens, "temperature": 0}).encode()
+                req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/chat/completions", body,
+                                             {"Content-Type": "application/json"})
+                t0 = time.time()
+                resp = json.loads(urllib.request.urlopen(req, timeout=900).read())
+                dt = time.time() - t0
+                gen = resp.get("usage", {}).get("completion_tokens", 0)
+                text = resp["choices"][0]["message"]["content"]
+                return gen, dt, text
+
+            warm_msgs = [{"role": "user", "content": prompt}]
+            wgen, wdt, wtext = ask(warm_msgs, warmup_tokens)
+            meas_msgs = warm_msgs + [{"role": "assistant", "content": wtext},
+                                     {"role": "user", "content": "Continue with one more sentence."}]
+            mgen, mdt, _ = ask(meas_msgs, measure_tokens)
+            tok_s = mgen / mdt if mdt > 0 else 0.0
+            samples.append(tok_s)
+            log(f"  [steady-state] rep {i+1}/{reps}: {tok_s:.3f} tok/s (warmup {wgen} tok discarded, "
+                f"measured on {mgen} tok)")
+        except Exception as e:
+            log(f"  [steady-state] rep {i+1}/{reps}: failed ({e}), skipping")
+        finally:
+            srv.terminate()
+            try:
+                srv.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                srv.kill()
+    if not samples:
+        return None
+    samples.sort()
+    n = len(samples)
+    median = samples[n // 2] if n % 2 else (samples[n // 2 - 1] + samples[n // 2]) / 2
+    return {"samples": [round(s, 4) for s in samples], "median_tok_s": round(median, 4),
+            "min_tok_s": round(min(samples), 4), "max_tok_s": round(max(samples), 4), "reps": n}
+
+
+def decide_exact_vs_high_fidelity(steady_state):
+    """The Automatic 30 tok/s Policy's decision, made once at build time from
+    measure_steady_state_tok_s()'s median (never from a single burst, never
+    re-evaluated token-by-token -- see the module docstring). Exact Mode is
+    kept whenever it already clears the target: no quality is ever traded for
+    speed the user does not need. Below target, this only RECORDS the
+    decision -- it does not itself build a High-Fidelity representation; see
+    the phase's final report for why (Shared Expert Basis measured against
+    real weights before committing to build any of that infrastructure)."""
+    if not steady_state:
+        return {"mode": "exact", "reason": "steady-state measurement unavailable; defaulting to Exact"}
+    med = steady_state["median_tok_s"]
+    if med >= DAILY_USE_TARGET_TOK_S:
+        return {"mode": "exact", "reason": f"Exact Mode sustains {med:.1f} tok/s (median of {steady_state['reps']} "
+                                            f"steady-state runs) >= {DAILY_USE_TARGET_TOK_S:.0f} tok/s target — "
+                                            f"no quality reduction needed or attempted.",
+                "median_tok_s": med}
+    return {"mode": "needs_high_fidelity",
+            "reason": f"Exact Mode sustains {med:.1f} tok/s (median of {steady_state['reps']} steady-state runs) "
+                      f"< {DAILY_USE_TARGET_TOK_S:.0f} tok/s target.",
+            "median_tok_s": med}
+
+
 def decide(graph, fp_all, hw):
     """Turn measured locality and measured hardware into an execution strategy."""
     cm = (hw or {}).get("cost_model", {})
@@ -301,6 +399,18 @@ def build_agent(model_dir, out_dir, hw_profile=None, calibrate=True, log=print, 
     if strategy is not None and tuned is not None:
         strategy["auto_tuned_preset"] = tuned["recommended_preset"]
         strategy["auto_tune_measured"] = tuned["measured"]
+    perf_policy = None
+    if kw.get("measure_policy", True) and calibrate:
+        log(f"[agent] measuring steady-state decode speed against the "
+            f"{DAILY_USE_TARGET_TOK_S:.0f} tok/s daily-use target (3 sessions, warmup discarded)")
+        engine_env = (tuned["measured"][tuned["recommended_preset"]]["env"]
+                     if tuned and tuned.get("recommended_preset") else None)
+        steady = measure_steady_state_tok_s(model_dir, log=log, engine_env=engine_env)
+        perf_policy = decide_exact_vs_high_fidelity(steady)
+        perf_policy["steady_state"] = steady
+        log(f"  policy: {perf_policy['mode']} — {perf_policy['reason']}")
+    if strategy is not None and perf_policy is not None:
+        strategy["performance_policy"] = perf_policy
     profile = {
         "schema": SCHEMA, "kind": "model_agent",
         "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -336,10 +446,13 @@ def main(argv=None):
     ap.add_argument("--out", required=True, help="directory for hardware_profile.json / agent_profile.json / traces")
     ap.add_argument("--no-calibrate", action="store_true")
     ap.add_argument("--no-auto-tune", action="store_true", help="skip the short real preset auto-tune pass")
+    ap.add_argument("--no-measure-policy", action="store_true",
+                    help="skip the steady-state Exact-vs-High-Fidelity 30 tok/s measurement")
     ap.add_argument("--max-tokens", type=int, default=96)
     ap.add_argument("--disk-gb", type=float, default=4.0)
     a = ap.parse_args(argv)
     prof = load_or_build(a.model, a.out, calibrate=not a.no_calibrate, auto_tune=not a.no_auto_tune,
+                         measure_policy=not a.no_measure_policy,
                          max_tokens=a.max_tokens, disk_gb=a.disk_gb)
     print(json.dumps({k: prof[k] for k in ("model_hash", "hardware_fingerprint_id", "strategy")}, indent=2))
 

@@ -1,0 +1,80 @@
+[
+  {
+    "label": "hostile",
+    "reps": 3,
+    "median_tok_s": 0.4,
+    "min_tok_s": 0.39,
+    "max_tok_s": 0.42,
+    "stdev_tok_s": 0.015275252316519449,
+    "median_hit_pct": 12.4,
+    "samples": [
+      {
+        "tok_s": 0.39,
+        "hit_pct": 12.4,
+        "wall_s": 123.3
+      },
+      {
+        "tok_s": 0.42,
+        "hit_pct": 12.4,
+        "wall_s": 115.5
+      },
+      {
+        "tok_s": 0.4,
+        "hit_pct": 12.4,
+        "wall_s": 120.6
+      }
+    ]
+  },
+  {
+    "label": "typical",
+    "reps": 3,
+    "median_tok_s": 0.41,
+    "min_tok_s": 0.41,
+    "max_tok_s": 0.42,
+    "stdev_tok_s": 0.005773502691896263,
+    "median_hit_pct": 16.9,
+    "samples": [
+      {
+        "tok_s": 0.42,
+        "hit_pct": 16.9,
+        "wall_s": 115.8
+      },
+      {
+        "tok_s": 0.41,
+        "hit_pct": 16.9,
+        "wall_s": 117.1
+      },
+      {
+        "tok_s": 0.41,
+        "hit_pct": 16.9,
+        "wall_s": 116.8
+      }
+    ]
+  },
+  {
+    "label": "favorable",
+    "reps": 3,
+    "median_tok_s": 0.41,
+    "min_tok_s": 0.41,
+    "max_tok_s": 0.42,
+    "stdev_tok_s": 0.005773502691896263,
+    "median_hit_pct": 19.9,
+    "samples": [
+      {
+        "tok_s": 0.41,
+        "hit_pct": 20.0,
+        "wall_s": 116.7
+      },
+      {
+        "tok_s": 0.42,
+        "hit_pct": 19.9,
+        "wall_s": 114.0
+      },
+      {
+        "tok_s": 0.41,
+        "hit_pct": 19.9,
+        "wall_s": 116.8
+      }
+    ]
+  }
+]
