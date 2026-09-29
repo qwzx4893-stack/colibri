@@ -33,13 +33,16 @@ when it fits in RAM; only faster compute (kernels, GPU) can move it toward 30 to
 regime the Automatic 30 tok/s policy now measures and reports (`agent.measure_steady_state_tok_s`:
 3 sessions, warm-up discarded, median; result 3.81 tok/s, min 3.67, max 4.10 -> `needs_high_fidelity`).
 
-## 3. Confirmed bug: FUSED3=1 is not bit-exact
+## 3. FUSED3=1 root cause: it is IDOT=1 (lossy int8 activation quantisation), not an exact kernel
 
-`fused_simd.h` and olmoe.c document `FUSED3=1` as bit-identical to the stock `matmul_q` path. Measured:
-baseline is bit-reproducible run to run (two launches, identical text), but `FUSED3=1` diverges at
-character 257 of a 96-token greedy generation. The speed gain was only ~4% (3.67 -> 3.81 tok/s). It is
-off by default, so no verified result in this repository used it; treat the documentation claim as false
-until the kernel is root-caused.
+The old documentation claimed `FUSED3=1` was bit-identical to the stock `matmul_q` path. Measured: the
+baseline is bit-reproducible (two launches, identical text) but `FUSED3=1` diverges at character 257 of a
+96-token greedy generation, with only a ~4% speed gain. Root cause (`idot_vs_fused3` A/B): the fused kernel
+quantises the activation vector to int8 (integer dot products), which is exactly what `IDOT=1` does; the two
+produce identical text with each other and differ from the default float path. That is a *lossy* option by
+design (issue #1044), not a bug in the kernel arithmetic, and the claim in the docs was wrong. Fix: the moe()
+gate now only takes the fused path when `IDOT=1` is set explicitly, `g_fused3` and `fused_simd.h` document it as
+"High-Fidelity candidate, never Exact Mode". Nothing in Exact Mode depends on it.
 
 ## 4. Giant emulator, statistically valid (100B/A~9B, cap=10, 3 reps, EXPERT_DROP=1)
 

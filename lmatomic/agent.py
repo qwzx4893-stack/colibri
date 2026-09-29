@@ -232,6 +232,11 @@ def auto_tune(model_dir, launcher=None, log=print, max_tokens=24, prompt=None):
 DAILY_USE_TARGET_TOK_S = 30.0
 
 
+def _gpu_runtime_present():
+    """True when the OLMoE CUDA runtime library sits next to the engine (LMA_GPU is honoured by the engine itself)."""
+    return any((CDIR / n).exists() for n in ("lma_olmoe_cuda.dll", "liblma_olmoe_cuda.so"))
+
+
 def measure_steady_state_tok_s(model_dir, launcher=None, log=print, engine_env=None,
                                reps=3, warmup_tokens=24, measure_tokens=48,
                                prompt=None):
@@ -408,6 +413,14 @@ def build_agent(model_dir, out_dir, hw_profile=None, calibrate=True, log=print, 
         steady = measure_steady_state_tok_s(model_dir, log=log, engine_env=engine_env)
         perf_policy = decide_exact_vs_high_fidelity(steady)
         perf_policy["steady_state"] = steady
+        # The GPU circuit breaker needs the CPU speed as its "slower than baseline" line. Only worth a measurement when
+        # a GPU runtime is actually present (otherwise the steady-state run above already is the CPU number).
+        if _gpu_runtime_present():
+            log("[agent] measuring the CPU-only baseline for the GPU circuit breaker (1 session)")
+            cpu = measure_steady_state_tok_s(model_dir, log=log, engine_env=dict(engine_env or {}, LMA_GPU="0"),
+                                             reps=1, measure_tokens=24)
+            if cpu:
+                perf_policy["cpu_baseline_tok_s"] = cpu["median_tok_s"]
         log(f"  policy: {perf_policy['mode']} — {perf_policy['reason']}")
     if strategy is not None and perf_policy is not None:
         strategy["performance_policy"] = perf_policy

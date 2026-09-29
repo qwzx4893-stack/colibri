@@ -1624,10 +1624,13 @@ typedef struct {
     int   (*pf_experts)(int);
     int   (*pf_finish)(int, int, float *, float **);
     int   (*bench_bw)(double *, double *);                 /* optional */
+    void  (*set_hf)(int, float);                           /* optional: High-Fidelity dynamic expert sparsity */
 } OcApi;
 static OcApi g_oc;
 static int g_gpu_verify = 0;
 static double g_gpu_baseline_tok_s = 0;   /* LMA_CPU_BASELINE_TOK_S: measured CPU decode speed (0 = unknown) */
+static int g_spec_k = 0;              /* LMA_SPEC: max draft tokens per verification (0 = off) */
+static int g_spec_ngram = 2;          /* LMA_SPEC_NGRAM: minimum suffix match length */
 static int g_gpu_prefill = 1;      /* LMA_GPU_PREFILL=0 keeps prompts on the CPU */
 #define GPU_PF_MAX 128             /* must match PF_MAX in olmoe_cuda.cu */
 
@@ -1661,7 +1664,8 @@ static int oc_load_dll(void) {
       if (all) { memcpy(&g_oc.pf_begin, &p[0], sizeof p[0]); memcpy(&g_oc.pf_attn, &p[1], sizeof p[1]);
                  memcpy(&g_oc.pf_route, &p[2], sizeof p[2]); memcpy(&g_oc.pf_experts, &p[3], sizeof p[3]);
                  memcpy(&g_oc.pf_finish, &p[4], sizeof p[4]); }
-      FARPROC bb = GetProcAddress(h, "oc_bench_bw"); if (bb) memcpy(&g_oc.bench_bw, &bb, sizeof bb); }
+      FARPROC bb = GetProcAddress(h, "oc_bench_bw"); if (bb) memcpy(&g_oc.bench_bw, &bb, sizeof bb);
+      FARPROC hf = GetProcAddress(h, "oc_set_hf"); if (hf) memcpy(&g_oc.set_hf, &hf, sizeof hf); }
 #else
     { void *a = dlsym(h, "oc_prof_enable"), *b = dlsym(h, "oc_prof_get");
       if (a && b) { memcpy(&g_oc.prof_enable, &a, sizeof a); memcpy(&g_oc.prof_get, &b, sizeof b); } }
@@ -1670,7 +1674,8 @@ static int oc_load_dll(void) {
       if (all) { memcpy(&g_oc.pf_begin, &p[0], sizeof p[0]); memcpy(&g_oc.pf_attn, &p[1], sizeof p[1]);
                  memcpy(&g_oc.pf_route, &p[2], sizeof p[2]); memcpy(&g_oc.pf_experts, &p[3], sizeof p[3]);
                  memcpy(&g_oc.pf_finish, &p[4], sizeof p[4]); }
-      void *bb = dlsym(h, "oc_bench_bw"); if (bb) memcpy(&g_oc.bench_bw, &bb, sizeof bb); }
+      void *bb = dlsym(h, "oc_bench_bw"); if (bb) memcpy(&g_oc.bench_bw, &bb, sizeof bb);
+      void *hf = dlsym(h, "oc_set_hf"); if (hf) memcpy(&g_oc.set_hf, &hf, sizeof hf); }
 #endif
     return 1;
 }
@@ -1739,8 +1744,14 @@ static void gpu_try_init(Model *m) {
     m->gpu_on = 1;
     g_gpu_verify = getenv("LMA_GPU_VERIFY") ? atoi(getenv("LMA_GPU_VERIFY")) : 0;
     g_gpu_prefill = getenv("LMA_GPU_PREFILL") ? atoi(getenv("LMA_GPU_PREFILL")) : 1;
+    g_spec_k = getenv("LMA_SPEC") ? atoi(getenv("LMA_SPEC")) : 0;
+    if (getenv("LMA_SPEC_NGRAM")) g_spec_ngram = atoi(getenv("LMA_SPEC_NGRAM"));
+    if (g_spec_ngram < 1) g_spec_ngram = 1;
     g_gpu_baseline_tok_s = getenv("LMA_CPU_BASELINE_TOK_S") ? atof(getenv("LMA_CPU_BASELINE_TOK_S")) : 0.0;
     if (g_oc.bench_bw) g_oc.bench_bw(&m->gpu_peak_d2d_gbs, &m->gpu_peak_h2d_gbs);
+    /* High-Fidelity dynamic expert sparsity: LOSSY, never enabled by default (Exact Mode) */
+    { int hk = getenv("LMA_HF_KEEP") ? atoi(getenv("LMA_HF_KEEP")) : 0; float hs = getenv("LMA_HF_SKIP") ? (float)atof(getenv("LMA_HF_SKIP")) : 0.f;
+      if ((hk > 0 || hs > 0.f) && g_oc.set_hf) { g_oc.set_hf(hk, hs); fprintf(stderr, "[GPU] High-Fidelity sparsity ON: keep<=%d skip_rel=%.3f (lossy)\n", hk, hs); } }
     /* weight bytes one decode token reads: q/k/v/o FP16 + router FP32 per layer, K routed int8 experts per layer, lm_head FP16 */
     m->gpu_bytes_tok = (double)c->n_layers * (4.0 * c->hidden * c->hidden * 2 + (double)c->n_experts * c->hidden * 4 +
                        (double)c->topk * (3.0 * c->inter * c->hidden + (2.0 * c->inter + c->hidden) * 4)) +
@@ -1786,6 +1797,7 @@ static int gpu_decode(Model *m, int tok, int pos, float *logit_out, int mirror_k
         if (g_oc.route_fetch(ids, w, &miss) <= 0) return 0;
         m->gpu_fetch_syncs++;
         for (int k = 0; k < K; k++) {
+            if (ids[k] < 0) { slots[k] = -2; continue; }      /* dropped by High-Fidelity sparsity */
             int idx = l * E + ids[k], sl = m->gpu_slot_of[idx];
             if (sl < 0) {
                 sl = gpu_pick_slot(m, kept, nk);
@@ -1832,8 +1844,9 @@ static int gpu_health(Model *m, const float *lg, double dt, uint64_t miss_before
 
 /* S prompt/verification tokens on the GPU in chunks of GPU_PF_MAX (batched "rows" kernels: each weight row is read
  * once per 8 tokens). Writes the logits of the LAST token to logit_out (may be NULL) and, if mirror_kv, the K/V rows
- * to the CPU cache so a later CPU fallback / prefix reuse sees them. Returns 1 on success, 0 on failure. */
-static int gpu_prefill(Model *m, const int *ids, int S, int pos_base, float *logit_out, int mirror_kv) {
+ * to the CPU cache so a later CPU fallback / prefix reuse sees them. nlog (<= 8, <= S) = how many trailing rows' logits to
+ * return, [nlog][vocab] (speculative verification needs several). Returns 1 on success, 0 on failure. */
+static int gpu_prefill(Model *m, const int *ids, int S, int pos_base, float *logit_out, int nlog, int mirror_kv) {
     Cfg *c = &m->c; int D = c->hidden, E = c->n_experts, L = c->n_layers, H = c->n_heads, hd = c->head_dim;
     double t0 = now_s();
     if (!g_oc.pf_begin || S < 1 || pos_base + S > m->gpu_max_t || !m->K) return 0;
@@ -1875,7 +1888,8 @@ static int gpu_prefill(Model *m, const int *ids, int S, int pos_base, float *log
         }
         if (!ok) break;
         float *kv = NULL;
-        if (g_oc.pf_finish(last ? cs - 1 : 0, last ? 1 : 0, logit_out, &kv) <= 0 || !kv) { ok = 0; break; }
+        if (last && nlog > cs) { ok = 0; break; }
+        if (g_oc.pf_finish(last ? cs - nlog : 0, last ? nlog : 0, logit_out, &kv) <= 0 || !kv) { ok = 0; break; }
         if (mirror_kv) {
             for (int l = 0; l < L; l++) {
                 const float *kl = kv + (int64_t)l * 2 * GPU_PF_MAX * D, *vl = kl + (int64_t)cs * D;
@@ -1897,7 +1911,7 @@ static float *step(Model *m, const int *ids, int S, int pos_base) {
     Cfg *c = &m->c; int D = c->hidden;
     if (m->gpu_on && S > 1 && !g_gpu_verify && g_gpu_prefill && g_oc.pf_begin && !(g_echo_k > 0 && g_echo_id)) {
         float *lg = falloc(c->vocab);
-        if (gpu_prefill(m, ids, S, pos_base, lg, 1)) {
+        if (gpu_prefill(m, ids, S, pos_base, lg, 1, 1)) {
             m->token_count += S; m->freq_token_count += S;
             m->kv_len = pos_base + S;
             kv_prefix_record(&m->kvp, ids, pos_base, S);
@@ -1985,7 +1999,7 @@ static float *step(Model *m, const int *ids, int S, int pos_base) {
     free(x); free(last);
     if (m->gpu_on && g_gpu_verify && S > 1 && g_gpu_prefill && g_oc.pf_begin) {
         float *lg = falloc(c->vocab);
-        if (gpu_prefill(m, ids, S, pos_base, lg, 0)) {
+        if (gpu_prefill(m, ids, S, pos_base, lg, 1, 0)) {
             float mx = 0.f; int ac = 0, ag = 0;
             for (int i = 0; i < c->vocab; i++) {
                 float d = fabsf(lg[i] - logit[i]); if (d > mx) mx = d;
@@ -2305,11 +2319,19 @@ static int tf_nll(Model *m, const int *full, int nfull, int np, double *nll_out)
         m->V[i] = falloc((int64_t)c->n_heads * m->max_t * c->head_dim);
     }
     double nll = 0; int scored = 0;
+    /* QDUMP=<path>: Quality Governor probe. int32 vocab, int32 n, then n x (int32 target, float32 log-softmax[vocab]). */
+    FILE *qd = getenv("QDUMP") && *getenv("QDUMP") ? fopen(getenv("QDUMP"), "wb") : NULL;
+    if (qd) { int32_t hdr[2] = { c->vocab, 0 }; fwrite(hdr, sizeof hdr, 1, qd); }
     float *logit = step(m, full, np, 0);              /* prefill on the prompt */
     for (int i = np; i < nfull; i++) {
         /* log softmax(logit)[full[i]] without materializing the softmax */
         float mx = logit[0]; for (int v = 1; v < c->vocab; v++) if (logit[v] > mx) mx = logit[v];
         double Z = 0; for (int v = 0; v < c->vocab; v++) Z += exp((double)logit[v] - mx);
+        if (qd) {
+            int32_t tg = full[i]; float lz = (float)(mx + log(Z));
+            fwrite(&tg, sizeof tg, 1, qd);
+            for (int v = 0; v < c->vocab; v++) { float lp = logit[v] - lz; fwrite(&lp, sizeof lp, 1, qd); }
+        }
         nll += -((double)logit[full[i]] - mx - log(Z));
         scored++;
         free(logit); logit = NULL;
@@ -2317,6 +2339,7 @@ static int tf_nll(Model *m, const int *full, int nfull, int np, double *nll_out)
         logit = step(m, &full[i], 1, i);              /* teacher forcing */
     }
     if (logit) free(logit);
+    if (qd) { int32_t n = scored; fseek(qd, 4, SEEK_SET); fwrite(&n, sizeof n, 1, qd); fclose(qd); }
     *nll_out = nll / scored;
     return scored;
 }
@@ -2520,6 +2543,91 @@ static void serve_hits(Model *m) {
  * and the B arm of the A/B that shows reuse changes nothing but the time. */
 static int kv_prefix_off(void){ const char *e = getenv("LMA_KV_PREFIX"); return e && *e == '0'; }
 
+/* ---- Speculative decoding (greedy only): prompt-lookup n-gram drafts + batched GPU verification ----
+ * The draft is free (a suffix n-gram match in the prompt+generated history); the k+1 tokens [current, d1..dk] are
+ * verified in ONE batched forward (weights read once per 8 tokens). Acceptance is exact: d_j is kept only when it
+ * equals argmax of the previous row, and the batched kernels accumulate in the same order as the decode kernels, so the
+ * emitted tokens are those plain greedy decoding would produce. Everything is measured end to end; a spec window that
+ * is slower per token than plain GPU decode switches speculation off for the session (circuit breaker). */
+static uint64_t g_spec_calls, g_spec_drafted, g_spec_accepted, g_spec_nodraft, g_spec_plain;
+static double g_spec_s, g_spec_plain_s;   /* wall seconds: verify calls / plain decode steps taken while spec was armed */
+static int g_spec_off = 0;
+static double g_spec_win_s; int g_spec_win_calls, g_spec_win_tok;
+
+static int spec_draft(const int *hist, int hist_len, int kmax, int *out) {
+    for (int n = 4; n >= g_spec_ngram; n--) {
+        if (hist_len <= n) continue;
+        for (int j = hist_len - n - 1; j >= 0; j--) {
+            int eq = 1;
+            for (int t = 0; t < n; t++) if (hist[j + t] != hist[hist_len - n + t]) { eq = 0; break; }
+            if (!eq) continue;
+            int k = 0;
+            while (k < kmax && j + n + k < hist_len - 0 && j + n + k < hist_len) { out[k] = hist[j + n + k]; k++; }
+            if (k > 0) return k;
+        }
+    }
+    return 0;
+}
+
+/* One token step with speculation. `hist[0..hist_len)` holds prompt + generated tokens, the last being `nt` (position
+ * hist_len-1, not yet run). Returns the logits after `nt` (like step()); accepted draft rows are left in the rows buffer (count in nq) for the
+ * caller to consume one per following token. NULL = caller must run step(). */
+static float *spec_step(Model *m, const int *hist, int hist_len, int ctx_cap, float *rows, int *nq) {
+    Cfg *c = &m->c; int V = c->vocab;
+    *nq = 0;
+    if (g_spec_off || !m->gpu_on || !g_oc.pf_begin || g_spec_k < 1) return NULL;
+    int pos = hist_len - 1;
+    int kmax = g_spec_k;
+    if (kmax > 7) kmax = 7;
+    if (pos + 1 + kmax > m->gpu_max_t - 1) kmax = m->gpu_max_t - 1 - pos - 1;
+    if (pos + 1 + kmax > ctx_cap - 1) kmax = ctx_cap - 1 - pos - 1;
+    if (kmax < 1) return NULL;
+    int T[8], k = spec_draft(hist, hist_len, kmax, T + 1);
+    if (k < 1) { g_spec_nodraft++; return NULL; }
+    T[0] = hist[hist_len - 1];
+    double t0 = now_s();
+    if (!gpu_prefill(m, T, k + 1, pos, rows, k + 1, 1)) {
+        m->gpu_on = 0; fprintf(stderr, "[GPU] speculative verification failed at position %d: falling back to the CPU\n", pos);
+        return NULL;
+    }
+    for (int r = 0; r <= k; r++)
+        for (int i = 0; i < V; i++)
+            if (!isfinite(rows[(size_t)r * V + i])) {
+                m->gpu_on = 0; snprintf(m->gpu_trip_reason, sizeof m->gpu_trip_reason, "non-finite logits in speculative verification");
+                fprintf(stderr, "[GPU] %s: falling back to the CPU\n", m->gpu_trip_reason);
+                return NULL;
+            }
+    int a = 0;
+    while (a < k) {                                  /* accept d_{a+1} iff it is the argmax of row a */
+        const float *rw = rows + (size_t)a * V; int am = 0;
+        for (int i = 1; i < V; i++) if (rw[i] > rw[am]) am = i;
+        if (am != T[a + 1]) break;
+        a++;
+    }
+    m->gpu_kv_len = pos + a + 1;
+    m->token_count += a + 1; m->freq_token_count += a + 1;
+    m->kv_len = pos + a + 1;
+    kv_prefix_record(&m->kvp, T, pos, a + 1);
+    g_prof_forwards += 1;
+    double dt = now_s() - t0;
+    g_spec_calls++; g_spec_drafted += (uint64_t)k; g_spec_accepted += (uint64_t)a; g_spec_s += dt;
+    g_spec_win_s += dt; g_spec_win_calls++; g_spec_win_tok += a + 1;
+    if (g_spec_win_calls >= 16) {                    /* breaker: per-token cost must beat plain GPU decode */
+        double per_tok = g_spec_win_s / g_spec_win_tok;
+        double plain = g_spec_plain ? g_spec_plain_s / (double)g_spec_plain : 0.0;
+        if (plain > 0 && per_tok > plain) {
+            g_spec_off = 1;
+            fprintf(stderr, "[SPEC] circuit breaker: %.2f ms/token with speculation > %.2f ms/token plain decode; speculation off\n",
+                    per_tok * 1e3, plain * 1e3);
+        }
+        g_spec_win_s = 0; g_spec_win_calls = 0; g_spec_win_tok = 0;
+    }
+    *nq = a;
+    float *lg = falloc(V);
+    memcpy(lg, rows, (size_t)V * sizeof(float));
+    return lg;
+}
+
 /* ---- Bottleneck diagnostics (counter-based: measured counters vs measured ceilings, nothing modelled) ---- */
 static double weight_bytes_tok(const Cfg *c) {   /* weight bytes one decode token reads (FP16 dense + router, K int8 experts, lm_head) */
     return (double)c->n_layers * (4.0 * c->hidden * c->hidden * 2 + (double)c->n_experts * c->hidden * 4 +
@@ -2649,6 +2757,15 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
     double t_pf = now_s() - t0;
     int hist_len = np, gen = 0, limited = 1, cancelled = 0;
     char buf[512];
+    /* speculative decoding: greedy, no logprob channel, no pin snapshot */
+    int use_spec = g_spec_k > 0 && !g_spec_off && m->gpu_on && g_oc.pf_begin && q->temp <= 0 && q->logprobs <= 0 && !q->pin;
+    int *shist = NULL, sq_n = 0, sq_i = 0; float *srows = NULL;
+    if (use_spec) {
+        shist = malloc((size_t)(np + q->max_tok + 16) * sizeof(int));
+        srows = malloc((size_t)8 * c->vocab * sizeof(float));
+        if (!shist || !srows) { free(shist); free(srows); shist = NULL; srows = NULL; use_spec = 0; }
+        else memcpy(shist, ids, (size_t)np * sizeof(int));
+    }
     if (q->pin && logit) {
         lma_pin_pool_init(&g_pins, c->vocab);
         if (lma_pin_store(&g_pins, ids, np, logit)) {
@@ -2666,6 +2783,7 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
         if (q->logprobs > 0) lma_serve_write_data_lp(stdout, q->id, buf, (size_t)nb, lptail);
         else lma_serve_write_data(stdout, q->id, buf, (size_t)nb);
         gen++; hist_len++;
+        if (shist) shist[hist_len - 1] = nt;
         while (lma_stdin_readable()) {
             int r = serve_read_cmd(stdin, stdout, q->id);
             if (r < 0) { free(ids); return -1; }
@@ -2675,9 +2793,24 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
          * its KV slot: nothing in serve mode reads past this request's own
          * reply, so a discarded logit here costs nothing. */
         if (cancelled || s == q->max_tok - 1 || hist_len >= ctx_cap) break;
+        if (use_spec && sq_i < sq_n) {               /* row already computed by the last batched verification */
+            logit = falloc(c->vocab);
+            memcpy(logit, srows + (size_t)(sq_i + 1) * c->vocab, (size_t)c->vocab * sizeof(float));
+            sq_i++;
+            continue;
+        }
+        if (use_spec) {
+            sq_n = 0; sq_i = 0;
+            logit = spec_step(m, shist, hist_len, ctx_cap, srows, &sq_n);
+            if (logit) continue;
+            double ts = now_s();
+            logit = step(m, &nt, 1, hist_len - 1);
+            if (!g_spec_off && m->gpu_on) { g_spec_plain++; g_spec_plain_s += now_s() - ts; }
+            continue;
+        }
         logit = step(m, &nt, 1, hist_len - 1);
     }
-    free(logit);
+    free(logit); free(shist); free(srows);
     double dt = now_s() - t0;
     double tot = (double)(m->hits - h0 + m->miss - m0);
     LmaServeDone done = {
@@ -2714,6 +2847,13 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
                                 "expert_gateup=%.3f expert_down=%.3f head=%.3f\n", tk, ms[0]/tk, ms[1]/tk, ms[2]/tk, ms[3]/tk, ms[4]/tk, ms[5]/tk);
         }
     }
+    if (g_spec_k > 0 && getenv("LMA_BYTES_LOG"))
+        fprintf(stderr, "[LMA_SPEC] k=%d ngram=%d off=%d verify_calls=%llu drafted=%llu accepted=%llu accept_rate=%.3f "
+                        "tokens_per_verify=%.3f nodraft_steps=%llu plain_steps=%llu verify_s=%.3f plain_s=%.3f\n",
+                g_spec_k, g_spec_ngram, g_spec_off, (unsigned long long)g_spec_calls, (unsigned long long)g_spec_drafted,
+                (unsigned long long)g_spec_accepted, g_spec_drafted ? (double)g_spec_accepted / g_spec_drafted : 0.0,
+                g_spec_calls ? 1.0 + (double)g_spec_accepted / g_spec_calls : 0.0, (unsigned long long)g_spec_nodraft,
+                (unsigned long long)g_spec_plain, g_spec_s, g_spec_plain_s);
     emit_diag(m, gen, dt - t_pf, m->gpu_tokens - gtok0, m->gpu_s - gs0, m->gpu_miss - gmiss0,
               __atomic_load_n(&m->disk_bytes, __ATOMIC_RELAXED) - bytes0);
     if (getenv("LMA_BYTES_LOG") && gen > 0) {
@@ -2849,6 +2989,25 @@ int main(int argc, char **argv) {
     if (bits < 2 || bits > 8) {
         fprintf(stderr, "quant_bits must be 2..8 (got %d)\n", bits);
         return 1;
+    }
+
+    /* QENCODE=<file>: tokenizer probe for the Quality Governor. The file holds text segments separated by 0x01
+     * bytes; prints one line of space-separated token ids per segment (the engine's own tokenizer, so the ids are
+     * exactly what serve mode would feed) and exits. */
+    if (getenv("QENCODE") && *getenv("QENCODE")) {
+        Tok T; char tp[2048]; snprintf(tp, sizeof tp, "%s/tokenizer.json", snap); tok_load(&T, tp);
+        FILE *qf = fopen(getenv("QENCODE"), "rb"); if (!qf) { perror("QENCODE"); return 1; }
+        fseek(qf, 0, SEEK_END); long qn = ftell(qf); fseek(qf, 0, SEEK_SET);
+        char *qb = malloc((size_t)qn + 1); if (fread(qb, 1, (size_t)qn, qf) != (size_t)qn) { fclose(qf); return 1; } qb[qn] = 0; fclose(qf);
+        int *qi = malloc(65536 * sizeof(int)); long a = 0;
+        for (long i = 0; i <= qn; i++) {
+            if (i == qn || qb[i] == 1) {
+                int n = tok_encode(&T, qb + a, (int)(i - a), qi, 65536);
+                for (int k = 0; k < n; k++) printf(k ? " %d" : "%d", qi[k]);
+                printf("\n"); a = i + 1;
+            }
+        }
+        return 0;
     }
 
     /* SERVE=1: openai_server.py drives the engine over stdin/stdout (READY

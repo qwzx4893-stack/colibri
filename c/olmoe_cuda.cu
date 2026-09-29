@@ -65,6 +65,7 @@ struct G {
     int *miss;                                           /* device flag: a routed expert was not resident */
     float *kv_stage;                                     /* [L][2][D] rows appended this token */
     int pos = 0;
+    int hf_keep = 0; float hf_skip = 0.f;                /* High-Fidelity dynamic sparsity (0 = exact) */
     cudaStream_t st = nullptr;
     /* pinned host */
     int *h_sel_ids; float *h_sel_w; int *h_miss; float *h_logits; float *h_kv_stage; void *h_stage;
@@ -232,7 +233,7 @@ __global__ void k_attn(const float *q, const float *Kc, const float *Vc, float *
 /* softmax over E logits + top-K (first max wins, strict '>', lowest id on ties: moe_router.h),
  * then map experts to VRAM slots. One block; K sequential argmax passes by thread 0 (E is small). */
 __global__ void k_route(const float *logits, const int *slot_of_layer, float *sel_w, int *sel_ids, int *sel_slots,
-                        int *miss, int E, int K, int norm_topk) {
+                        int *miss, int E, int K, int norm_topk, int hf_keep, float hf_skip) {
     __shared__ float p[1024];
     for (int e = threadIdx.x; e < E; e += blockDim.x) p[e] = logits[e];
     __syncthreads();
@@ -250,11 +251,17 @@ __global__ void k_route(const float *logits, const int *slot_of_layer, float *se
             if (best < 0) { best = 0; while (true) { int t = 0; for (int j = 0; j < k; j++) if (taken[j] == best) t = 1; if (!t) break; best++; } bv = 0.f; }
             taken[k] = best; val[k] = bv;
         }
-        if (norm_topk) { float sm = 0; for (int k = 0; k < K; k++) sm += val[k]; for (int k = 0; k < K; k++) val[k] /= sm; }
+        /* High-Fidelity dynamic sparsity (off by default): keep only the top hf_keep experts and drop those whose
+         * routing probability is below hf_skip * the best one; the rest are renormalised like the CPU top-k. */
+        int kk = K;
+        if (hf_keep > 0 && hf_keep < kk) kk = hf_keep;
+        if (hf_skip > 0.f) for (int k = 1; k < kk; k++) if (val[k] < hf_skip * val[0]) { kk = k; break; }
+        for (int k = kk; k < K; k++) { val[k] = 0.f; taken[k] = -1; }
+        if (norm_topk) { float sm = 0; for (int k = 0; k < kk; k++) sm += val[k]; for (int k = 0; k < kk; k++) val[k] /= sm; }
         for (int k = 0; k < K; k++) {
-            int sl = slot_of_layer[taken[k]];
+            int sl = taken[k] < 0 ? -2 : slot_of_layer[taken[k]];
             sel_ids[k] = taken[k]; sel_w[k] = val[k]; sel_slots[k] = sl;
-            if (sl < 0) any_miss = 1;
+            if (sl == -1) any_miss = 1;
         }
         *miss = any_miss;
     }
@@ -454,7 +461,8 @@ OC_API int oc_layer_route(int l) {
     prof_begin(P_ROUTE);
     k_rmsnorm2<<<dim3(1, 1), 256, 0, g.st>>>(g.xn, g.x, L->post_ln, g.xn, g.x, L->post_ln, D, g.eps);
     k_gemv_f32<<<(g.E + GEMV_WARPS - 1) / GEMV_WARPS, 32 * GEMV_WARPS, (size_t)D * 4, g.st>>>(L->gate, g.xn, g.logits_e, D, g.E);
-    k_route<<<1, 64, 0, g.st>>>(g.logits_e, g.slot_of + (size_t)l * g.E, g.sel_w, g.sel_ids, g.sel_slots, g.miss, g.E, g.K, g.norm_topk);
+    k_route<<<1, 64, 0, g.st>>>(g.logits_e, g.slot_of + (size_t)l * g.E, g.sel_w, g.sel_ids, g.sel_slots, g.miss, g.E, g.K, g.norm_topk,
+                                g.hf_keep, g.hf_skip);
     prof_end();
     CK(cudaGetLastError());
     return 1;
@@ -658,7 +666,7 @@ __global__ void k_attn_rows(const float *q, const float *Kc, const float *Vc, fl
 }
 
 /* softmax + top-K per token; counts tokens per expert */
-__global__ void k_route_rows(const float *logits, float *sel_w, int *sel_ids, int *cnt, int *used, int E, int K, int norm_topk) {
+__global__ void k_route_rows(const float *logits, float *sel_w, int *sel_ids, int *cnt, int *used, int E, int K, int norm_topk, int hf_keep, float hf_skip) {
     __shared__ float p[1024];
     int s = blockIdx.x;
     for (int e = threadIdx.x; e < E; e += blockDim.x) p[e] = logits[(size_t)s * E + e];
@@ -677,8 +685,15 @@ __global__ void k_route_rows(const float *logits, float *sel_w, int *sel_ids, in
             if (best < 0) { best = 0; while (true) { int t = 0; for (int j = 0; j < k; j++) if (taken[j] == best) t = 1; if (!t) break; best++; } bv = 0.f; }
             taken[k] = best; val[k] = bv;
         }
-        if (norm_topk) { float t = 0; for (int k = 0; k < K; k++) t += val[k]; for (int k = 0; k < K; k++) val[k] /= t; }
-        for (int k = 0; k < K; k++) { sel_ids[s * K + k] = taken[k]; sel_w[s * K + k] = val[k]; atomicAdd(&cnt[taken[k]], 1); used[taken[k]] = 1; }
+        int kk = K;                                   /* High-Fidelity dynamic sparsity, same rule as k_route */
+        if (hf_keep > 0 && hf_keep < kk) kk = hf_keep;
+        if (hf_skip > 0.f) for (int k = 1; k < kk; k++) if (val[k] < hf_skip * val[0]) { kk = k; break; }
+        for (int k = kk; k < K; k++) { val[k] = 0.f; taken[k] = -1; }
+        if (norm_topk) { float t = 0; for (int k = 0; k < kk; k++) t += val[k]; for (int k = 0; k < kk; k++) val[k] /= t; }
+        for (int k = 0; k < K; k++) {
+            sel_ids[s * K + k] = taken[k]; sel_w[s * K + k] = val[k];
+            if (taken[k] >= 0) { atomicAdd(&cnt[taken[k]], 1); used[taken[k]] = 1; }
+        }
     }
 }
 __global__ void k_scan(const int *cnt, int *start, int *cursor, int E) {
@@ -687,7 +702,8 @@ __global__ void k_scan(const int *cnt, int *start, int *cursor, int E) {
 __global__ void k_scatter(const int *ids, const int *start, int *cursor, int *list, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
-    int e = ids[i]; list[start[e] + atomicAdd(&cursor[e], 1)] = i;   /* i = s*K + k */
+    int e = ids[i]; if (e < 0) return;
+    list[start[e] + atomicAdd(&cursor[e], 1)] = i;   /* i = s*K + k */
 }
 
 /* grid (I/8, chunks, E): chunk c of expert e covers list positions start[e] + c*R .. */
@@ -719,10 +735,10 @@ __global__ void k_expert_gateup_rows(const int8_t *slot_w, const float *slot_s, 
         for (int r = 0; r < PF_R; r++) {
             if (r < nr) {
                 const float *xj = xs + (size_t)r * D + (j << 4);
-                float a = 0.f, b = 0.f;
+                /* accumulate straight into the running sum, exactly as dot_i8_row does: keeps this kernel bit-identical
+                 * to the decode kernel so speculative verification never changes a token */
                 #pragma unroll
-                for (int t = 0; t < 16; t++) { a += (float)gb[t] * xj[t]; b += (float)ub[t] * xj[t]; }
-                ag[r] += a; au[r] += b;
+                for (int t = 0; t < 16; t++) { ag[r] += (float)gb[t] * xj[t]; au[r] += (float)ub[t] * xj[t]; }
             }
         }
     }
@@ -758,10 +774,8 @@ __global__ void k_expert_down_rows(const int8_t *slot_w, const float *slot_s, co
         for (int r = 0; r < PF_R; r++) {
             if (r < nr) {
                 const float *xj = xs + (size_t)r * I + (j << 4);
-                float a = 0.f;
                 #pragma unroll
-                for (int t = 0; t < 16; t++) a += (float)b[t] * xj[t];
-                ad[r] += a;
+                for (int t = 0; t < 16; t++) ad[r] += (float)b[t] * xj[t];
             }
         }
     }
@@ -774,11 +788,11 @@ __global__ void k_expert_down_rows(const int8_t *slot_w, const float *slot_s, co
 }
 
 /* x[s] += sum_k w[s,k] * tbuf[s,k]  (k in order, as the CPU loop) */
-__global__ void k_combine(float *x, const float *tbuf, const float *sel_w, int D, int K) {
+__global__ void k_combine(float *x, const float *tbuf, const float *sel_w, const int *sel_ids, int D, int K) {
     int s = blockIdx.x;
     for (int d = threadIdx.x; d < D; d += blockDim.x) {
         float acc = 0.f;
-        for (int k = 0; k < K; k++) acc += sel_w[s * K + k] * tbuf[((size_t)s * K + k) * D + d];
+        for (int k = 0; k < K; k++) if (sel_ids[s * K + k] >= 0) acc += sel_w[s * K + k] * tbuf[((size_t)s * K + k) * D + d];
         x[(size_t)s * D + d] += acc;
     }
 }
@@ -839,7 +853,7 @@ OC_API int oc_pf_route(int l, int *used_out) {
     k_rmsnorm_rows<<<S, 256, 0, g.st>>>(pf.xn, pf.x, L->post_ln, D, g.eps);
     CK(cudaMemsetAsync(pf.cnt, 0, E * 4, g.st)); CK(cudaMemsetAsync(pf.used, 0, E * 4, g.st));
     k_gemv_f32_rows<<<dim3((E + GEMV_WARPS - 1) / GEMV_WARPS, S), 32 * GEMV_WARPS, (size_t)D * 4, g.st>>>(L->gate, pf.xn, pf.logits_e, D, E, S);
-    k_route_rows<<<S, 64, 0, g.st>>>(pf.logits_e, pf.w_sel, pf.ids, pf.cnt, pf.used, E, K, g.norm_topk);
+    k_route_rows<<<S, 64, 0, g.st>>>(pf.logits_e, pf.w_sel, pf.ids, pf.cnt, pf.used, E, K, g.norm_topk, g.hf_keep, g.hf_skip);
     k_scan<<<1, 32, 0, g.st>>>(pf.cnt, pf.start, pf.cursor, E);
     k_scatter<<<(S * K + 127) / 128, 128, 0, g.st>>>(pf.ids, pf.start, pf.cursor, pf.list, S * K);
     CK(cudaGetLastError());
@@ -859,7 +873,7 @@ OC_API int oc_pf_experts(int l) {
         g.slot_w, g.slot_s, slot_of, pf.cnt, pf.start, pf.list, pf.xn, pf.act, D, I, K, g.w_bytes, g.s_elems);
     k_expert_down_rows<<<dim3((D + GEMV_WARPS - 1) / GEMV_WARPS, chunks, E), 32 * GEMV_WARPS, (size_t)PF_R * I * 4, g.st>>>(
         g.slot_w, g.slot_s, slot_of, pf.cnt, pf.start, pf.list, pf.act, pf.tbuf, D, I, g.w_bytes, g.s_elems);
-    k_combine<<<S, 256, 0, g.st>>>(pf.x, pf.tbuf, pf.w_sel, D, K);
+    k_combine<<<S, 256, 0, g.st>>>(pf.x, pf.tbuf, pf.w_sel, pf.ids, D, K);
     CK(cudaGetLastError());
     return 1;
 }
@@ -900,6 +914,9 @@ OC_API int oc_bench_bw(double *d2d_gbs, double *h2d_gbs) {
     cudaEventDestroy(e0); cudaEventDestroy(e1); cudaFree(a); cudaFree(b); cudaFreeHost(h);
     return 1;
 }
+
+/* High-Fidelity dynamic expert sparsity: keep_k <= 0 or >= top-k and skip_rel <= 0 mean "exact" */
+OC_API void oc_set_hf(int keep_k, float skip_rel) { g.hf_keep = keep_k; g.hf_skip = skip_rel; }
 
 OC_API void oc_shutdown(void) { if (g.ready) { cudaDeviceSynchronize(); cudaDeviceReset(); g.ready = 0; } }
 
