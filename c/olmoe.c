@@ -24,6 +24,35 @@
  *                    tools/route_coupling_report.py, tools/residency_sim.py.
  *                    Measurement only: it cannot change which experts run.
  *   (expert queue is sorted by eid for SSD read locality)
+ *
+ * LM ATOMIC RUNTIME (real, wired, decode-path additions — Exact Mode: none of
+ * this changes which experts are routed or their gate weights; it only changes
+ * WHEN and WHERE their weights are fetched from disk, which is why the ref.json
+ * token-exact tests and greedy-decode determinism are unaffected):
+ *   PREDICT_BETA=F   : weight (0.0-1.0) given to the learned co-activation
+ *                    predictor vs. the original gate-logit softmax when
+ *                    choosing PILOT>=2 lookahead candidates (default 0.4,
+ *                    0.0 = old gate-only behaviour). See coact2/coact3 below.
+ *   PILOT_WORKERS=N  : number of concurrent prefetch worker threads draining
+ *                    the shared pilot queue (default 2; was hardcoded to 1).
+ *                    Lets several speculative NVMe reads be in flight at once,
+ *                    matching the measured multi-thread NVMe queue-depth
+ *                    advantage (lma_hwprof: qd8 beats qd1 by ~1.4-4.6x on
+ *                    this class of drive) instead of serializing them.
+ *   SCHED_COST=0/1   : 1 (default) = evict by a cost-aware score (frequency +
+ *                    recency + reuse likelihood from the co-activation table),
+ *                    0 = the original pure-recency LRU. Applies to both the
+ *                    demand-miss path (expert_get) and the pilot path
+ *                    (pilot_realload), replacing two independent LRU scans
+ *                    with one scorer.
+ *   HOT_REEVAL_TOK=N : re-evaluate the hot-pinned working set every N decode
+ *                    tokens using a decayed (not lifetime-total) frequency
+ *                    window, so it can un-pin/re-pin if the session's topic
+ *                    drifts (default 0 = old one-shot-after-WARMUP behaviour,
+ *                    kept as the default so HOT=N alone reproduces prior runs
+ *                    exactly; set e.g. 200 to enable adaptation).
+ *   LMA_BYTES_LOG=1  : report external bytes moved (NVMe reads) per generated
+ *                    token to stderr at the end of a CLI generate/PPL run.
  */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -131,6 +160,50 @@ typedef struct {
     uint8_t *is_queued;     /* [n_layers * n_experts], 1 if expert is currently in the prefetch queue */
     float pilot_conf_limit; /* CONF_LIMIT env: cumulative gate probability threshold (e.g. 0.92) */
     uint64_t *last_access;  /* [n_layers * n_experts], clock time when expert was last accessed */
+
+    /* LM ATOMIC: external bytes actually moved from disk (weights + scales),
+     * the central "External Bytes Moved / Generated Token" metric. Same
+     * atomic-counter reasoning as disk_ns: reads run unlocked and parallel. */
+    uint64_t disk_bytes;
+
+    /* LM ATOMIC Predictive Expert Engine: online cross-layer co-activation
+     * counts, trained ONLY from real (post-router) selections, S==1 decode
+     * only (prefill has no lookahead to speed up). coact2[l*E*E + a*E + b] =
+     * how many times real layer l picked expert a and real layer l+2 picked
+     * expert b (coact3: layer l -> l+3). Used to blend with pilot_prefetch's
+     * gate-logit score for deeper (PILOT>=2) lookahead, where the existing
+     * gate-on-stale-x approximation is weakest. Depth-1 lookahead is left on
+     * the original gate-only path: at that call site the source layer for a
+     * 2-hop transition (i-1) is already the freshest coact evidence available
+     * (see pilot_prefetch), so the same coact2 table doubles as the depth-1
+     * signal via gap=2 from i-1, with no separate coact1 table needed. */
+    uint32_t *coact2, *coact3;      /* [n_layers * n_experts * n_experts] each */
+    float predict_beta;             /* PREDICT_BETA env, default 0.4 */
+    /* Rolling window of the last 3 layers' REAL (post-router) selections,
+     * S==1 only, so a later layer's prediction can condition on an earlier
+     * layer's actual (not speculative) pick. Slot reused round-robin. */
+    int win_layer[3], win_valid[3], win_k[3];
+    int win_idx[3][16];
+
+    /* LM ATOMIC Multi-Tier (NVMe/RAM) Deadline Scheduler: SCHED_COST env,
+     * default on. Reuses lfru_score's frequency+recency shape but is now the
+     * PRIMARY eviction scorer for both expert_get's demand-miss path and
+     * pilot_realload's speculative path, not just pilot's guard. */
+    int sched_cost;
+
+    /* LM ATOMIC Session-Adaptive Working Set: HOT_REEVAL_TOK env. When >0,
+     * pin_hot_experts_adaptive() re-derives the hot set every N tokens from a
+     * decayed window instead of running once and freezing forever. */
+    int hot_reeval_tok;
+    uint32_t **freq_window;         /* per-layer decayed usage window, same shape as freq */
+
+    /* LM ATOMIC predictor precision/recall telemetry: pf_issued = speculative
+     * loads actually performed (not dropped by the LFRU guard or a duplicate
+     * check); pf_used = how many of those were consumed by a real expert_get
+     * hit before eviction — i.e. the prediction paid for itself. Mirrors the
+     * Digital Twin's prefetch_useful_frac so the two are comparable. */
+    uint64_t pf_issued, pf_used;
+    uint8_t *pf_flag;               /* [n_layers * n_experts], 1 = resident copy came from a pilot load */
 } Model;
 
 static pthread_mutex_t g_pilot_mx = PTHREAD_MUTEX_INITIALIZER;
@@ -146,6 +219,7 @@ static int g_fused3 = 0;            /* FUSED3=1: AVX2 activation quant + gate/up
                                      * (fused_simd.h: quant_x_q8_avx2, matmul_q_idot_v3,
                                      * matmul_q_idot_pair_v3). Exact integer arithmetic only —
                                      * bit-identical to the stock matmul_q path; OFF by default. */
+static int g_pilot_workers = 2;     /* PILOT_WORKERS env: concurrent prefetch worker threads */
 
 static uint64_t lfru_score(uint32_t heat, uint64_t last, uint64_t clock) {
     uint64_t age = (clock > last) ? (clock - last) : 0;
@@ -153,10 +227,28 @@ static uint64_t lfru_score(uint32_t heat, uint64_t last, uint64_t clock) {
     return ((uint64_t)heat << 8) | recent;
 }
 
+/* LM ATOMIC Multi-Tier Deadline Scheduler (NVMe/RAM tiers — this engine has no
+ * VRAM tier, see olmoe.c's header comment): the eviction score a slot must
+ * beat to survive. Higher = keep longer. With SCHED_COST=0 this reduces to
+ * `used_clock` alone, i.e. byte-for-byte the original pure-recency LRU
+ * comparison — this function is a superset, not a replacement, of the old
+ * behaviour. Eviction order never changes which bytes get loaded for a given
+ * expert id, only which resident slot is reused first, so this cannot change
+ * a single generated token (Exact Mode is unaffected). */
+static uint64_t evict_keep_score(Model *m, int layer, int eid, uint64_t used_clock) {
+    if (!m->sched_cost || !m->freq || !m->freq[layer] || !m->last_access)
+        return used_clock;
+    uint32_t heat = m->freq[layer][eid];
+    uint64_t last = m->last_access[layer * m->c.n_experts + eid];
+    return (lfru_score(heat, last, m->clock) << 16) | (used_clock & 0xFFFFu);
+}
+
 static void pilot_prefetch(Model *m, int lnext, const float *x, int S);
 static void *pilot_worker(void *arg);
 static void ensure_pilot_worker_started(Model *m);
 static void slot_ensure_allocated(Model *m, Slot *s);
+static void record_real_selection(Model *m, int layer, const int *idx, int K);
+static void enqueue_prefetch(Model *m, int layer, int eid);
 
 #ifdef LMA_CACHE_INDEX_TEST
 static uint64_t g_slot_index_probes;
@@ -223,12 +315,21 @@ static int slot_in_flight(Model *m, int layer, int eid) {
 static void ensure_pilot_worker_started(Model *m) {
     if (!pilot_m) {
         pilot_m = m;
-        pthread_t t;
-        if (pthread_create(&t, NULL, pilot_worker, NULL) != 0) {
-            fprintf(stderr, "Error: Failed to create pilot prefetch worker thread\n");
-            exit(1);
+        /* LM ATOMIC Asynchronous Expert Pipeline: several workers draining the
+         * same queue so several speculative NVMe reads overlap, instead of
+         * serializing every prefetch through one thread. Dequeue is a short
+         * mutex-protected claim (pilot_dequeue); only the actual pread runs
+         * concurrently across workers — see pilot_worker(). */
+        int n = g_pilot_workers > 0 ? g_pilot_workers : 1;
+        if (n > 16) n = 16;
+        for (int i = 0; i < n; i++) {
+            pthread_t t;
+            if (pthread_create(&t, NULL, pilot_worker, NULL) != 0) {
+                fprintf(stderr, "Error: Failed to create pilot prefetch worker thread\n");
+                exit(1);
+            }
+            pthread_detach(t);
         }
-        pthread_detach(t);
     }
 }
 
@@ -494,6 +595,35 @@ static float *load_t(Model *m, const char *name) {
     return p;
 }
 
+/* LM ATOMIC: close the loop from lmatomic/agent.py's offline analysis into
+ * this engine's own runtime knobs. Reads <snap>/agent_profile.json (written
+ * by `lmatomic agent`) for strategy.pin_hot_fraction — a crude substring
+ * scan, not a JSON parser, because this is the ONE field consumed today and
+ * a missing/malformed/absent file must never be fatal (it is optional
+ * measured guidance, not a required input): any parse failure returns -1.0
+ * and the caller falls back to HOT=0 (disabled) exactly as before this
+ * existed. Never overrides an explicit HOT= the user set. */
+static float lma_agent_pin_hot_fraction(const char *snap) {
+    char path[600];
+    snprintf(path, sizeof(path), "%s/agent_profile.json", snap);
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1.0f;
+    char buf[8192];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    const char *key = "\"pin_hot_fraction\"";
+    char *p = strstr(buf, key);
+    if (!p) return -1.0f;
+    p += strlen(key);
+    while (*p && (*p == ':' || *p == ' ' || *p == '\t')) p++;
+    char *end = NULL;
+    float v = strtof(p, &end);
+    if (end == p) return -1.0f;
+    if (v < 0.0f || v > 1.0f) return -1.0f;
+    return v;
+}
+
 static void model_init_range(Model *m, const char *snap, int cap, int bits,
                              int layer_begin, int layer_end,
                              int load_boundaries, int init_telemetry) {
@@ -603,7 +733,22 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
         m->freq = calloc((size_t)c->n_layers, sizeof(*m->freq));
     }
     m->hot_pinned = 0; m->freq_token_count = 0;
-    m->hot_n         = getenv("HOT")    ? atoi(getenv("HOT"))    : 0;
+    if (getenv("HOT")) {
+        m->hot_n = atoi(getenv("HOT"));
+    } else {
+        /* LM ATOMIC: no explicit HOT= — let the Model Agent's measured
+         * strategy pick it, if one was built for this model (lmatomic agent
+         * --model <snap> --out <snap>). Falls back to 0 (disabled, the
+         * original default) exactly as before when no profile exists. */
+        float frac = lma_agent_pin_hot_fraction(snap);
+        if (frac > 0.0f) {
+            m->hot_n = (int)(frac * c->n_experts + 0.5f);
+            fprintf(stderr, "[AGENT] no HOT= set; using pin_hot_fraction=%.2f from agent_profile.json -> HOT=%d\n",
+                    frac, m->hot_n);
+        } else {
+            m->hot_n = 0;
+        }
+    }
     m->warmup_tokens = getenv("WARMUP") ? atoi(getenv("WARMUP")) : 5;
     m->token_count = 0;
     /* PREDICTION A: routing momentum — EMA of gate logits across tokens.
@@ -618,6 +763,39 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
     float cl = getenv("CONF_LIMIT") ? (float)atof(getenv("CONF_LIMIT")) : 0.92f;
     if (cl < 0.1f) cl = 0.1f; if (cl > 1.0f) cl = 1.0f;
     m->pilot_conf_limit = cl;
+
+    /* LM ATOMIC Predictive Expert Engine: co-activation tables, allocated
+     * whenever PREDICT_BETA != 0 (default on, small memory: 2 * n_layers *
+     * n_experts^2 * 4 bytes — 512 KB for OLMoE's 16 layers * 64 experts). */
+    float pb = getenv("PREDICT_BETA") ? (float)atof(getenv("PREDICT_BETA")) : 0.4f;
+    if (pb < 0.f) pb = 0.f; if (pb > 1.f) pb = 1.f;
+    m->predict_beta = pb;
+    if (pb > 0.f) {
+        size_t tn = (size_t)c->n_layers * c->n_experts * c->n_experts;
+        m->coact2 = calloc(tn, sizeof(uint32_t));
+        m->coact3 = calloc(tn, sizeof(uint32_t));
+    }
+    for (int i = 0; i < 3; i++) m->win_valid[i] = 0;
+
+    /* LM ATOMIC Multi-Tier Deadline Scheduler: on by default, SCHED_COST=0
+     * reproduces the original pure-recency LRU exactly (evict_keep_score). */
+    m->sched_cost = getenv("SCHED_COST") ? atoi(getenv("SCHED_COST")) : 1;
+
+    /* LM ATOMIC Asynchronous Expert Pipeline: worker pool size. */
+    g_pilot_workers = getenv("PILOT_WORKERS") ? atoi(getenv("PILOT_WORKERS")) : 2;
+    if (g_pilot_workers < 1) g_pilot_workers = 1;
+
+    /* LM ATOMIC Session-Adaptive Working Set: 0 (default) reproduces the
+     * original one-shot-after-WARMUP hot pinning exactly. */
+    m->hot_reeval_tok = getenv("HOT_REEVAL_TOK") ? atoi(getenv("HOT_REEVAL_TOK")) : 0;
+    if (m->hot_reeval_tok > 0) {
+        m->freq_window = calloc((size_t)c->n_layers, sizeof(*m->freq_window));
+        for (int i = 0; i < c->n_layers; i++) m->freq_window[i] = calloc((size_t)c->n_experts, sizeof(uint32_t));
+    }
+    m->pf_flag = calloc((size_t)c->n_layers * c->n_experts, sizeof(uint8_t));
+    m->pf_issued = 0; m->pf_used = 0;
+    m->disk_bytes = 0;
+
     m->dense_load_s = now_s() - t0;
 
     /* Persistent hot pinning belongs to the standalone runtime. A Segment
@@ -723,6 +901,10 @@ static void load_expert_merged(Model *m, int layer, int eid, Slot *s) {
     st_read_raw(&m->S, nm, s->g, g_expert_drop);
     st_read_f32(&m->S, qsnm, s->gs, 0);  /* scales are F32; use typed reader for dtype safety */
     __atomic_fetch_add(&m->disk_ns, (uint64_t)((now_s() - started) * 1e9), __ATOMIC_RELAXED);
+    /* LM ATOMIC: External Bytes Moved / Generated Token, the central metric —
+     * every byte this engine actually reads from disk for an expert, weights
+     * plus scales, counted at the one place both are read. */
+    __atomic_fetch_add(&m->disk_bytes, (uint64_t)(want_w + want_s * (int64_t)sizeof(float)), __ATOMIC_RELAXED);
 }
 
 /* ---------- cache expert: ritorna i pesi quantizzati (q+scale) da cache o disco ---------- */
@@ -753,6 +935,10 @@ static void expert_get(Model *m, int layer, int eid, Slot **out) {
     if (hit) {
         m->hits++; hit->used = ++m->clock; *out = hit;
         if (m->last_access) m->last_access[layer * m->c.n_experts + eid] = m->clock;
+        if (m->pf_flag && m->pf_flag[layer * m->c.n_experts + eid]) {
+            m->pf_flag[layer * m->c.n_experts + eid] = 0;   /* credit once, like the Twin's pf_used */
+            m->pf_used++;
+        }
         pthread_mutex_unlock(&g_pilot_mx);
         return;
     }
@@ -763,11 +949,14 @@ static void expert_get(Model *m, int layer, int eid, Slot **out) {
         s = &lc->slots[lc->n++];
         slot_ensure_allocated(m, s);
     } else {
-        /* LRU eviction — skip pinned and in-flight (eid==-1) slots */
-        int lru = -1;
+        /* Multi-tier scheduler eviction (SCHED_COST, default on): skip pinned
+         * and in-flight (eid<0) slots, then pick the lowest evict_keep_score
+         * rather than the oldest by raw recency alone — see evict_keep_score. */
+        int lru = -1; uint64_t lru_sc = 0;
         for (int i = 0; i < lc->n; i++) {
             if (lc->slots[i].pinned || lc->slots[i].eid < 0) continue;
-            if (lru < 0 || lc->slots[i].used < lc->slots[lru].used) lru = i;
+            uint64_t sc = evict_keep_score(m, layer, lc->slots[i].eid, lc->slots[i].used);
+            if (lru < 0 || sc < lru_sc) { lru = i; lru_sc = sc; }
         }
         if (lru < 0) {
             /* All slots are pinned or in-flight; find oldest non-in-flight slot
@@ -878,15 +1067,77 @@ static void pin_hot_experts(Model *m) {
             pinned_total++;
         }
     }
+    /* stderr, not stdout: unlike the startup-time [HOT] messages above,
+     * pin_hot_experts() runs from step() mid-request in serve mode, where
+     * stdout is the strict SUBMIT/DATA/DONE wire protocol — a free-text line
+     * there is a protocol-corrupting bug (confirmed: reproduces identically
+     * on the pre-existing binary, not introduced by the runtime work here). */
     if (is_dynamic) {
-        printf("[HOT] Dynamic Pinned %d experts total (thresh=%.1f%%) after %d warmup tokens\n",
+        fprintf(stderr, "[HOT] Dynamic Pinned %d experts total (thresh=%.1f%%) after %d warmup tokens\n",
                pinned_total, thresh * 100.0, m->freq_token_count);
     } else {
-        printf("[HOT] Pinned %d experts (top-%d/layer) after %d warmup tokens\n",
+        fprintf(stderr, "[HOT] Pinned %d experts (top-%d/layer) after %d warmup tokens\n",
                pinned_total, m->hot_n, m->freq_token_count);
     }
 }
 
+/* ---------- LM ATOMIC Session-Adaptive Working Set ---------- */
+/* Re-derives the hot-pinned set every HOT_REEVAL_TOK tokens from a decayed
+ * window (m->freq_window) instead of pin_hot_experts()'s one-shot lifetime
+ * m->freq, and can UNPIN an expert that falls out of the window, not just add
+ * new ones. Halves the window after each pass, so activity from many tokens
+ * ago fades and a session that changes topic is not stuck with its first
+ * warmup window's hot set forever. HOT_REEVAL_TOK=0 (default) never calls
+ * this, so existing HOT=N runs are byte-for-byte unaffected. */
+static void pin_hot_experts_adaptive(Model *m) {
+    Cfg *c = &m->c;
+    if (m->hot_n <= 0 || !m->freq_window) return;
+    int is_dynamic = (m->hot_n >= 100);
+    double thresh = is_dynamic ? (double)m->hot_n / 1000.0 : 0.0;
+    int nE = c->n_experts > 4096 ? 4096 : c->n_experts;
+    int pinned_total = 0, unpinned_total = 0;
+    uint8_t want[4096];
+    for (int l = 0; l < c->n_layers; l++) {
+        uint32_t *freq_l = m->freq_window[l];
+        if (!freq_l) continue;
+        memset(want, 0, (size_t)nE);
+        uint64_t layer_total = 0;
+        for (int e = 0; e < nE; e++) layer_total += freq_l[e];
+        if (layer_total > 0) {
+            int max_pin = m->cache[l].cap - 8; if (max_pin < 4) max_pin = 4;
+            int hn = is_dynamic ? max_pin : (m->hot_n < nE ? m->hot_n : nE);
+            if (hn > 256) hn = 256;
+            int hot_eids[256]; int actual_hn = 0;
+            for (int k = 0; k < hn; k++) {
+                int best = -1; uint32_t bv = 0;
+                for (int e = 0; e < nE; e++) {
+                    int already = 0;
+                    for (int j = 0; j < k; j++) if (hot_eids[j] == e) { already = 1; break; }
+                    if (!already && freq_l[e] > bv) { bv = freq_l[e]; best = e; }
+                }
+                if (best < 0 || bv == 0) break;
+                if (is_dynamic && bv < thresh * layer_total) break;
+                hot_eids[k] = best; actual_hn++;
+            }
+            for (int k = 0; k < actual_hn; k++) want[hot_eids[k]] = 1;
+        }
+        for (int e = 0; e < nE; e++) {
+            int gidx = l * c->n_experts + e;
+            if (want[e] == m->is_pinned[gidx]) continue;
+            m->is_pinned[gidx] = want[e];
+            pthread_mutex_lock(&g_pilot_mx);
+            Slot *resident = slot_indexed(m, l, e);
+            if (resident) resident->pinned = want[e];
+            pthread_mutex_unlock(&g_pilot_mx);
+            if (want[e]) pinned_total++; else unpinned_total++;
+        }
+        /* decay: halve so old activity fades and the hot set can drift */
+        for (int e = 0; e < nE; e++) freq_l[e] -= freq_l[e] / 2;
+    }
+    if (pinned_total || unpinned_total)
+        fprintf(stderr, "[HOT-ADAPT] +%d pinned, -%d unpinned (token %d)\n",
+                pinned_total, unpinned_total, m->token_count);
+}
 
 /* ---------- RoPE su un vettore di una testa (head_dim) a posizione assoluta pos ---------- */
 static void rope_head(float *x, int pos, const Cfg *c) {
@@ -949,6 +1200,81 @@ static void attention(Model *m, Layer *l, int layer, float *x, int S, int pos_ba
     free(q); free(k); free(vv); free(ctx);
 }
 
+/* LM ATOMIC Predictive Expert Engine: record a real (post-router) selection
+ * into the rolling 3-layer window, and — where the window already holds the
+ * real selection from 2 or 3 layers back — fold the transition into coact2 /
+ * coact3. Decode-only (see moe()'s S==1 call site); measurement/learning
+ * only, never fed back into routing itself. */
+static void record_real_selection(Model *m, int layer, const int *idx, int K) {
+    Cfg *c = &m->c; int E = c->n_experts;
+    if (K > 16) K = 16;
+    /* LM ATOMIC Session-Adaptive Working Set: decayed usage window, bumped
+     * unconditionally (independent of the co-activation tables below) so
+     * HOT_REEVAL_TOK works even with PREDICT_BETA=0. */
+    if (m->freq_window && m->freq_window[layer]) {
+        for (int b = 0; b < K; b++) {
+            int eb = idx[b];
+            if (eb >= 0 && eb < E) m->freq_window[layer][eb]++;
+        }
+    }
+    if (!m->coact2 || !m->coact3) return;
+    for (int slot = 0; slot < 3; slot++) {
+        if (!m->win_valid[slot]) continue;
+        int gap = layer - m->win_layer[slot];
+        uint32_t *tbl = (gap == 2) ? m->coact2 : (gap == 3) ? m->coact3 : NULL;
+        if (!tbl) continue;
+        int src_layer = m->win_layer[slot];
+        for (int a = 0; a < m->win_k[slot]; a++) {
+            int ea = m->win_idx[slot][a];
+            if (ea < 0 || ea >= E) continue;
+            uint32_t *row = tbl + (int64_t)src_layer * E * E + (int64_t)ea * E;
+            for (int b = 0; b < K; b++) {
+                int eb = idx[b];
+                if (eb < 0 || eb >= E) continue;
+                row[eb]++;
+            }
+        }
+    }
+    /* Push this layer's real selection into the window: fill an empty slot
+     * first, else evict the one holding the smallest (oldest) layer id —
+     * layers are always processed in increasing order within one pass. */
+    int oldest = -1;
+    for (int i = 0; i < 3; i++) if (!m->win_valid[i]) { oldest = i; break; }
+    if (oldest < 0) {
+        oldest = 0;
+        for (int i = 1; i < 3; i++) if (m->win_layer[i] < m->win_layer[oldest]) oldest = i;
+    }
+    m->win_layer[oldest] = layer; m->win_valid[oldest] = 1; m->win_k[oldest] = K;
+    for (int b = 0; b < K; b++) m->win_idx[oldest][b] = idx[b];
+}
+
+/* LM ATOMIC: enqueue (layer, eid) for the pilot worker pool if not already
+ * resident, in flight, or queued — the same queue and the same cooperation
+ * contract with expert_get() (slot_in_flight + condvar wait) that
+ * pilot_prefetch() and pin_hot_experts() already use, factored out so the
+ * Prefill Planner below can reuse it without duplicating the ring-buffer
+ * push logic a third time. */
+static void enqueue_prefetch(Model *m, int layer, int eid) {
+    Cfg *c = &m->c;
+    pthread_mutex_lock(&g_pilot_mx);
+    int resident_or_inflight = slot_indexed(m, layer, eid) != NULL || slot_in_flight(m, layer, eid);
+    int gidx = layer * c->n_experts + eid;
+    int already_queued = m->is_queued[gidx];
+    if (!resident_or_inflight && !already_queued) m->is_queued[gidx] = 1;
+    pthread_mutex_unlock(&g_pilot_mx);
+    if (resident_or_inflight || already_queued) return;
+    unsigned w = __atomic_load_n(&pilot_w, __ATOMIC_RELAXED);
+    unsigned r = __atomic_load_n(&pilot_r, __ATOMIC_ACQUIRE);
+    if (w - r < 4096) {
+        pilot_q[w & 4095].l = layer; pilot_q[w & 4095].e = eid;
+        __atomic_store_n(&pilot_w, w + 1, __ATOMIC_RELEASE);
+    } else {
+        pthread_mutex_lock(&g_pilot_mx);
+        m->is_queued[gidx] = 0;
+        pthread_mutex_unlock(&g_pilot_mx);
+    }
+}
+
 /* MoE sui token x[S,hidden] -> out[S,hidden] */
 static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
     Cfg *c = &m->c; int D = c->hidden, E = c->n_experts, K = c->topk, I = c->inter;
@@ -956,6 +1282,15 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
     matmul(logits, x, l->gate, S, D, E);
     memset(out, 0, (int64_t)S*D*sizeof(float));
     float *g = falloc(I), *u = falloc(I), *hh = falloc(D);
+
+    /* LM ATOMIC Prefill Planner: routing for every row of this call is
+     * computed here, in one pass, before any expert is fetched — unchanged
+     * from before except that idx/val now live in a per-call buffer instead
+     * of a per-row stack array, so the prefetch-ahead pass below can see
+     * every row's picks at once. */
+    int *all_idx = malloc((size_t)S * K * sizeof(int));
+    float *all_val = malloc((size_t)S * K * sizeof(float));
+    uint8_t *needed = (S > 1) ? calloc((size_t)E, 1) : NULL;
     for (int s = 0; s < S; s++) {
         float *pr = logits + (int64_t)s*E;
         if (m->momentum_logits && m->pilot_smooth > 0.f) {
@@ -973,7 +1308,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
 
         softmax_row(pr, E);
         /* top-K indici (selezione parziale) */
-        int idx[64]; float val[64];
+        int *idx = all_idx + (int64_t)s*K; float *val = all_val + (int64_t)s*K;
         /* shared ranking (moe_router.h): all-NaN probabilities must not reach
          * expert_get() as -1 and then last_access[layer*E - 1] (heap write) */
         lma_router_topk(pr, NULL, NULL, E, K, idx, NULL, layer, 1);
@@ -997,6 +1332,31 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
          * never the computation: idx[] and val[] are the ids and the
          * post-normalisation gates the layer is about to apply. */
         if (!m->hot_pinned) rt_route(layer, s, idx, val, K);
+        /* LM ATOMIC Predictive Expert Engine: train the co-activation table
+         * from the REAL selection, decode-only (S==1 — prefill has S rows in
+         * parallel and no single "current" row to condition later layers on). */
+        if (S == 1) record_real_selection(m, layer, idx, K);
+        if (needed) for (int kk = 0; kk < K; kk++) if (idx[kk] >= 0 && idx[kk] < E) needed[idx[kk]] = 1;
+    }
+
+    /* Issue every expert this whole batch will need, in one pass, to the
+     * async pipeline BEFORE the per-row compute loop below touches any of
+     * them — instead of the old row-by-row pattern where each row's
+     * synchronous expert_get() blocked on a cold miss one expert at a time,
+     * with zero overlap even across the up-to-K experts of a single row.
+     * The union is bounded by E regardless of S (a layer only ever has E
+     * distinct experts), so this never grows the prefetch queue beyond one
+     * layer's worth, however long the prompt. Decode (S==1) skips this —
+     * there is nothing to plan ahead of a single row, and the existing
+     * PILOT lookahead already covers it. */
+    if (needed) {
+        ensure_pilot_worker_started(m);
+        for (int e = 0; e < E; e++) if (needed[e]) enqueue_prefetch(m, layer, e);
+        free(needed);
+    }
+
+    for (int s = 0; s < S; s++) {
+        int *idx = all_idx + (int64_t)s*K; float *val = all_val + (int64_t)s*K;
         const float *xs = x + (int64_t)s*D;
         for (int kk = 0; kk < K; kk++) {
             Slot *e; expert_get(m, layer, idx[kk], &e);
@@ -1024,6 +1384,7 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
             for (int d = 0; d < D; d++) os[d] += w * hh[d];
         }
     }
+    free(all_idx); free(all_val);
     free(logits); free(g); free(u); free(hh);
     /* Advance the trace call counter: once per moe() invocation, after all of
      * its rows are traced. rt_trace_end() is a no-op when no stream is open.
@@ -1119,6 +1480,12 @@ static float *step(Model *m, const int *ids, int S, int pos_base) {
     m->token_count += S; m->freq_token_count += S;
     if (!m->hot_pinned && m->hot_n > 0 && m->freq_token_count >= m->warmup_tokens)
         pin_hot_experts(m);
+    /* LM ATOMIC Session-Adaptive Working Set: after the first (lifetime-freq)
+     * pinning, keep re-deriving the hot set from the decayed window so it can
+     * track a session whose topic drifts, instead of freezing at warmup. */
+    if (m->hot_pinned && m->hot_reeval_tok > 0 && S == 1 &&
+        m->token_count % m->hot_reeval_tok == 0)
+        pin_hot_experts_adaptive(m);
     m->kv_len = pos_base + S;
     /* Recorded HERE, where the tokens entered the cache: fed[0..len-1] are
      * the ids those positions were built from, and that invariant is the
@@ -1170,11 +1537,13 @@ static void pilot_realload(Model *m, int layer, int eid) {
         s = &lc->slots[lc->n++];
         slot_ensure_allocated(m, s);
     } else {
-        /* LRU eviction — skip pinned and in-flight (eid==-1) slots */
-        int lru = -1;
+        /* Multi-tier scheduler eviction (SCHED_COST, default on) — same
+         * scorer as expert_get()'s demand-miss path (evict_keep_score). */
+        int lru = -1; uint64_t lru_sc = 0;
         for (int i = 0; i < lc->n; i++) {
             if (lc->slots[i].pinned || lc->slots[i].eid < 0) continue;
-            if (lru < 0 || lc->slots[i].used < lc->slots[lru].used) lru = i;
+            uint64_t sc = evict_keep_score(m, layer, lc->slots[i].eid, lc->slots[i].used);
+            if (lru < 0 || sc < lru_sc) { lru = i; lru_sc = sc; }
         }
         if (lru < 0) {
             m->is_queued[layer * c->n_experts + eid] = 0;
@@ -1201,30 +1570,45 @@ static void pilot_realload(Model *m, int layer, int eid) {
     pthread_mutex_unlock(&g_pilot_mx);
 
     load_expert_merged(m, layer, eid, s);
+    __atomic_fetch_add(&m->pf_issued, 1, __ATOMIC_RELAXED);
 
     pthread_mutex_lock(&g_pilot_mx);
     cache_publish(m, layer, s, eid);
     s->pinned = m->is_pinned[layer * c->n_experts + eid];
     s->used = ++m->clock;
     if (m->last_access) m->last_access[layer * c->n_experts + eid] = m->clock;
+    if (m->pf_flag) m->pf_flag[layer * c->n_experts + eid] = 1;
     m->is_queued[layer * c->n_experts + eid] = 0;
     pthread_cond_broadcast(&g_pilot_cv);
     pthread_mutex_unlock(&g_pilot_mx);
 }
 
+/* Multi-consumer-safe dequeue: the claim (read pilot_q[r], advance pilot_r) is
+ * a short mutex section shared by every worker; only pilot_realload's actual
+ * pread runs unlocked and concurrently across them. A lock-free ring would
+ * need a completion bitmap to let out-of-order finishers advance a watermark
+ * safely — not worth the risk here since the claim itself is microseconds
+ * next to a multi-hundred-microsecond NVMe read. */
+static int pilot_dequeue(int *layer, int *eid) {
+    pthread_mutex_lock(&g_pilot_mx);
+    /* pilot_r is exclusively mutex-owned from here on (multiple consumers);
+     * pilot_w is still written by the single producer via atomic RELEASE
+     * stores outside the lock, so read it the same way it always was. */
+    unsigned r = pilot_r, w = __atomic_load_n(&pilot_w, __ATOMIC_ACQUIRE);
+    if (r == w) { pthread_mutex_unlock(&g_pilot_mx); return 0; }
+    *layer = pilot_q[r & 4095].l;
+    *eid = pilot_q[r & 4095].e;
+    pilot_r = r + 1;
+    pthread_mutex_unlock(&g_pilot_mx);
+    return 1;
+}
+
 static void *pilot_worker(void *arg) {
     (void)arg;
     while (1) {
-        unsigned r = __atomic_load_n(&pilot_r, __ATOMIC_ACQUIRE);
-        unsigned w = __atomic_load_n(&pilot_w, __ATOMIC_ACQUIRE);
-        if (r == w) {
-            sleep_ms(1);
-            continue;
-        }
-        int layer = pilot_q[r & 4095].l;
-        int eid = pilot_q[r & 4095].e;
+        int layer, eid;
+        if (!pilot_dequeue(&layer, &eid)) { sleep_ms(1); continue; }
         pilot_realload(pilot_m, layer, eid);
-        __atomic_store_n(&pilot_r, r + 1, __ATOMIC_RELEASE);
     }
     return NULL;
 }
@@ -1281,6 +1665,47 @@ static void pilot_prefetch(Model *m, int lnext, const float *x, int S) {
             sum_exps += exps[e];
         }
 
+        /* LM ATOMIC Predictive Expert Engine: blend the gate-logit softmax
+         * score above with the learned co-activation score conditioned on
+         * whichever REAL (not speculative) selection is closest behind this
+         * call — gap=2 covers both the depth-1 call (source lnext-2==i-1)
+         * and the depth-2 call (source lnext-2==i); gap=3 covers the depth-3
+         * call (source lnext-3==i). Falls back to the original gate-only
+         * score, byte-for-byte, when no matching real selection is in the
+         * window yet (early layers/tokens) or PREDICT_BETA=0. */
+        float *combined = falloc(E);
+        float combined_total = sum_exps;
+        int have_coact = 0;
+        float beta = m->predict_beta;
+        if (beta > 0.f && (m->coact2 || m->coact3)) {
+            for (int gap = 2; gap <= 3 && !have_coact; gap++) {
+                uint32_t *tbl = (gap == 2) ? m->coact2 : m->coact3;
+                if (!tbl) continue;
+                for (int slot = 0; slot < 3; slot++) {
+                    if (!m->win_valid[slot] || lnext - m->win_layer[slot] != gap) continue;
+                    int src = m->win_layer[slot];
+                    float *cscore = falloc(E);
+                    double tot = 0.0;
+                    for (int a = 0; a < m->win_k[slot]; a++) {
+                        int ea = m->win_idx[slot][a];
+                        if (ea < 0 || ea >= E) continue;
+                        uint32_t *row = tbl + (int64_t)src * E * E + (int64_t)ea * E;
+                        for (int e = 0; e < E; e++) { cscore[e] += (float)row[e]; tot += row[e]; }
+                    }
+                    if (tot > 0.0) {
+                        for (int e = 0; e < E; e++)
+                            combined[e] = (1.f - beta) * (exps[e] / sum_exps) + beta * (float)(cscore[e] / tot);
+                        combined_total = 1.f;
+                        have_coact = 1;
+                    }
+                    free(cscore);
+                    break;
+                }
+            }
+        }
+        if (!have_coact) for (int e = 0; e < E; e++) combined[e] = exps[e];
+        free(exps);
+
         float cum_sum = 0.f;
         int min_cand = c->topk;
         int max_cand = c->topk * g_wide;
@@ -1290,16 +1715,16 @@ static void pilot_prefetch(Model *m, int lnext, const float *x, int S) {
 
         for (int kk = 0; kk < max_cand; kk++) {
             float bv;
-            int best = lma_router_best(exps, NULL, NULL, E, idx, kk, &bv);
+            int best = lma_router_best(combined, NULL, NULL, E, idx, kk, &bv);
             if (best < 0) break;
             idx[kk] = best;
             cum_sum += bv;
             cand++;
-            if (cum_sum >= m->pilot_conf_limit * sum_exps && cand >= min_cand) {
+            if (cum_sum >= m->pilot_conf_limit * combined_total && cand >= min_cand) {
                 break;
             }
         }
-        free(exps);
+        free(combined);
 
         if (blended != pr) free(blended);
 
@@ -1671,6 +2096,8 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
     double t0 = now_s();
     uint64_t h0 = m->hits, m0 = m->miss;
     uint64_t disk0 = __atomic_load_n(&m->disk_ns, __ATOMIC_RELAXED);
+    uint64_t bytes0 = __atomic_load_n(&m->disk_bytes, __ATOMIC_RELAXED);
+    uint64_t pfi0 = m->pf_issued, pfu0 = m->pf_used;
     double attn0 = g_prof_attn_s, moe0 = g_prof_moe_s, head0 = g_prof_head_s;
     long long fwd0 = g_prof_forwards;
     /* `reuse` is the ABSOLUTE position of the first fresh token: attention
@@ -1728,6 +2155,15 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
      * zero: this engine has no separate wait phase. */
     double disk_s = (double)(__atomic_load_n(&m->disk_ns, __ATOMIC_RELAXED) - disk0) / 1e9;
     double matmul_s = (g_prof_moe_s - moe0) - disk_s; if (matmul_s < 0.0) matmul_s = 0.0;
+    if (getenv("LMA_BYTES_LOG") && gen > 0) {
+        uint64_t db = __atomic_load_n(&m->disk_bytes, __ATOMIC_RELAXED) - bytes0;
+        uint64_t pfi = m->pf_issued - pfi0, pfu = m->pf_used - pfu0;
+        fprintf(stderr, "[LMA_STAT] req=%s tokens=%d disk_bytes=%llu gb_per_token=%.6f "
+                        "pf_issued=%llu pf_used=%llu pf_precision=%.4f tok_s=%.4f\n",
+                q->id, gen, (unsigned long long)db, (double)db / gen / 1e9,
+                (unsigned long long)pfi, (unsigned long long)pfu,
+                pfi ? (double)pfu / pfi : 0.0, gen / dt);
+    }
     /* microsecond resolution: see qwen36.c, same reason (a sub-millisecond tiny turn read as unmeasured) */
     printf("PROF %.6f %d %d %.6f 0.0 %.6f %.6f %.6f %lld\n", dt, np, gen, disk_s, matmul_s,
            g_prof_attn_s - attn0, g_prof_head_s - head0, g_prof_forwards - fwd0);
@@ -2006,6 +2442,16 @@ int main(int argc, char **argv) {
      * precision (#852 -- two decimals of tok/s is one significant digit at the
      * rates this engine runs at). */
     printf("TUNE decode: %d tokens in %.3fs\n", n_new, dt);
+    if (getenv("LMA_BYTES_LOG")) {
+        uint64_t db = __atomic_load_n(&m.disk_bytes, __ATOMIC_RELAXED);
+        double gbtok = n_new > 0 ? (double)db / n_new / 1e9 : 0.0;
+        fprintf(stderr, "[LMA_STAT] disk_bytes=%llu gb_per_token=%.6f pf_issued=%llu pf_used=%llu "
+                        "pf_precision=%.4f miss=%llu hit=%llu\n",
+                (unsigned long long)db, gbtok,
+                (unsigned long long)m.pf_issued, (unsigned long long)m.pf_used,
+                m.pf_issued ? (double)m.pf_used / m.pf_issued : 0.0,
+                (unsigned long long)m.miss, (unsigned long long)m.hits);
+    }
     free(buf); free(arena);
     return 0;
 }
