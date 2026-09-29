@@ -43,6 +43,9 @@ c/backend_cuda.o
 c/backend_cuda_test
 c/backend_loader.o
 c/lma_cuda.dll
+c/lma_olmoe_cuda.dll
+c/lma_olmoe_cuda.lib
+c/lma_olmoe_cuda.exp
 c/lma_cuda.lib
 c/lma_cuda.exp
 c/lma_hip.dll

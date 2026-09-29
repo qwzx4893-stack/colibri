@@ -64,6 +64,9 @@
 #include <math.h>
 #include <time.h>
 #include <pthread.h>
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
 #if defined(__APPLE__) || defined(__linux__) || defined(__FreeBSD__)
 #include <sys/resource.h>
 #include <unistd.h>
@@ -210,6 +213,20 @@ typedef struct {
     uint64_t pf_issued, pf_used;
     uint8_t *pf_flag;               /* [n_layers * n_experts], 1 = resident copy came from a pilot load */
 
+    /* LM ATOMIC GPU decode path (olmoe_cuda.cu, loaded from lma_olmoe_cuda.dll). */
+    int gpu_on;                      /* 1 = S==1 decode runs on the GPU */
+    int gpu_max_t;                   /* device KV capacity in positions; beyond it decode falls back to the CPU */
+    int gpu_kv_len;                  /* device KV holds positions [0, gpu_kv_len) */
+    int gpu_n_slots, gpu_all_resident;
+    int *gpu_slot_of;                /* [L*E] host mirror of the device (layer,expert)->slot table, -1 = absent */
+    int *gpu_slot_owner;             /* [n_slots] layer*E+expert, -1 = free */
+    uint64_t *gpu_slot_use, gpu_clock;
+    float *gpu_kv_stage;             /* [L][2][D] */
+    uint64_t gpu_tokens, gpu_miss, gpu_fetch_syncs;
+    double gpu_s;                    /* wall seconds spent in gpu_decode */
+    float gpu_max_dlogit; uint64_t gpu_verify_n, gpu_verify_agree;   /* LMA_GPU_VERIFY statistics */
+    uint64_t gpu_pf_rows, gpu_pf_calls; double gpu_pf_s;             /* GPU prefill: rows, calls, wall seconds */
+    float gpu_pf_max_dlogit; uint64_t gpu_pf_verify_n, gpu_pf_verify_agree;
     /* LM ATOMIC Physical Giant Emulator ONLY (see g_giant_stick above). */
     int *giant_prev_idx;             /* [n_layers * topk] */
     uint8_t *giant_prev_valid;       /* [n_layers] */
@@ -225,10 +242,10 @@ static int g_pilot = 0;
 static int g_wide  = 1;  /* IMPROVEMENT 4: top-K * g_wide candidates prefetched */
 static int g_pilot_evict_guard = 1; /* PILOT_EVICT_GUARD=0 to disable LFRU prefetch eviction guard */
 static int g_expert_drop = 0;       /* EXPERT_DROP=1 restores fadvise(DONTNEED) after expert reads */
-static int g_fused3 = 0;            /* FUSED3=1: AVX2 activation quant + gate/up pair matmul
-                                     * (fused_simd.h: quant_x_q8_avx2, matmul_q_idot_v3,
-                                     * matmul_q_idot_pair_v3). Exact integer arithmetic only —
-                                     * bit-identical to the stock matmul_q path; OFF by default. */
+static int g_fused3 = 0;            /* FUSED3=1 (with IDOT=1): faster AVX2 form of the IDOT path
+                                     * (fused_simd.h). Bit-identical to IDOT=1 but LOSSY vs the
+                                     * default path (int8-quantized activations): High-Fidelity
+                                     * option only, never Exact Mode. OFF by default. */
 static int g_pilot_workers = 2;     /* PILOT_WORKERS env: concurrent prefetch worker threads */
 /* LM ATOMIC Physical Giant Emulator ONLY: LMA_GIANT_STICK=0.0-1.0 (default 0,
  * meaning zero effect on any real model). Blends real router picks with the
@@ -1470,12 +1487,16 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
         for (int kk = 0; kk < K; kk++) {
             Slot *e; expert_get(m, layer, idx[kk], &e);
 #if defined(__AVX2__)
-            /* FUSED3: same contract as matmul_q's IDOT fast branch (IDOT env,
-             * dims %16==0, <=4096) — outside it the stock calls below run
-             * unchanged. Exact integer arithmetic only: bit-identical output
-             * (verified by memcmp in tests/bench_fused3.c). OFF by default. */
+            /* FUSED3 is a faster implementation of matmul_q's IDOT branch, and is
+             * bit-identical to IDOT=1 — NOT to the default path. IDOT quantizes the
+             * ACTIVATIONS to int8 (Q8_0 per 16-block), so it is a lossy High-Fidelity
+             * option (issue #1044), not an Exact-Mode one: measured on real OLMoE,
+             * default vs IDOT=1 vs FUSED3=1 -> default differs from both, IDOT=1 ==
+             * FUSED3=1. FUSED3 used to switch IDOT on silently (idot_moe defaulted
+             * to 1 here) while documenting itself as exact; it now requires IDOT=1
+             * explicitly, like matmul_q. Dims %16==0, <=4096 as for IDOT. */
             static int idot_moe = -1;
-            if (idot_moe < 0) { const char *ie = getenv("IDOT"); idot_moe = !(ie && *ie == '0'); }
+            if (idot_moe < 0) { const char *ie = getenv("IDOT"); idot_moe = (ie && *ie == '1'); }
             if (g_fused3 && idot_moe && D % 16 == 0 && D <= 4096 && I % 16 == 0 && I <= 4096) {
                 matmul_q_idot_pair_v3(g, u, xs, e->g, e->gs, e->u, e->us, D, I);   /* gate+up share one quant of xs */
                 for (int i = 0; i < I; i++) { float gv = g[i]; g[i] = (gv / (1.f + expf(-gv))) * u[i]; }
@@ -1568,8 +1589,308 @@ static void olmoe_echo(const char *id, int pos, int token, const float *lo, int 
     fputc('\n', stdout); fflush(stdout);
 }
 
+
+/* ============================ GPU decode path ============================
+ * See olmoe_cuda.cu. The DLL is optional: without it (or without a GPU, or with
+ * LMA_GPU=0) nothing here runs and decode stays on the CPU. Any GPU error in
+ * gpu_decode() trips the breaker (gpu_on = 0) and that same token is redone on the
+ * CPU, whose KV mirror is kept current after every GPU token, so a session never
+ * dies because the GPU path failed. */
+typedef struct {
+    int   (*init)(int, int, int, int, int, int, int, int, int, int, float, float, int);
+    int   (*set_layer)(int, const void *, const void *, const void *, const void *, const float *, const float *, const float *, const float *, const float *);
+    int   (*set_head)(const void *, const float *);
+    void  (*mem_info)(size_t *, size_t *);
+    int   (*alloc_slots)(int);
+    int   (*upload_expert)(int, int, int, const int8_t *, const float *);
+    int   (*unmap_expert)(int, int);
+    void *(*stage_ptr)(void);
+    int   (*kv_upload)(int, const float *, const float *, int, int, int);
+    int   (*begin_token)(const float *, int);
+    int   (*layer_attn)(int);
+    int   (*layer_route)(int);
+    int   (*route_fetch)(int *, float *, int *);
+    int   (*layer_experts)(const int *);
+    int   (*finish)(float *, float *);
+    void  (*shutdown)(void);
+    void  (*prof_enable)(int);                 /* optional */
+    int   (*prof_get)(double *, long *);       /* optional */
+    int   (*pf_begin)(const float *, int, int);            /* optional: batched prefill / verification */
+    int   (*pf_attn)(int);
+    int   (*pf_route)(int, int *);
+    int   (*pf_experts)(int);
+    int   (*pf_finish)(int, int, float *, float **);
+} OcApi;
+static OcApi g_oc;
+static int g_gpu_verify = 0;
+static int g_gpu_prefill = 1;      /* LMA_GPU_PREFILL=0 keeps prompts on the CPU */
+#define GPU_PF_MAX 128             /* must match PF_MAX in olmoe_cuda.cu */
+
+static int oc_load_dll(void) {
+#ifdef _WIN32
+    char path[1024];
+    const char *ov = getenv("LMA_OLMOE_CUDA_DLL");
+    if (ov && *ov) snprintf(path, sizeof path, "%s", ov);
+    else { DWORD n = GetModuleFileNameA(NULL, path, sizeof path);
+           while (n > 0 && path[n-1] != '\\' && path[n-1] != '/') n--;
+           path[n] = 0; strncat(path, "lma_olmoe_cuda.dll", sizeof path - strlen(path) - 1); }
+    HMODULE h = LoadLibraryExA(path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!h) return 0;
+    #define OCR(f) do { FARPROC p_ = GetProcAddress(h, "oc_" #f); if (!p_) return 0; memcpy(&g_oc.f, &p_, sizeof p_); } while (0)
+#else
+    const char *ov = getenv("LMA_OLMOE_CUDA_DLL");
+    void *h = dlopen(ov && *ov ? ov : "./liblma_olmoe_cuda.so", RTLD_NOW);
+    if (!h) return 0;
+    #define OCR(f) do { void *p_ = dlsym(h, "oc_" #f); if (!p_) return 0; memcpy(&g_oc.f, &p_, sizeof p_); } while (0)
+#endif
+    OCR(init); OCR(set_layer); OCR(set_head); OCR(mem_info); OCR(alloc_slots); OCR(upload_expert);
+    OCR(unmap_expert); OCR(stage_ptr); OCR(kv_upload); OCR(begin_token); OCR(layer_attn); OCR(layer_route);
+    OCR(route_fetch); OCR(layer_experts); OCR(finish); OCR(shutdown);
+    #undef OCR
+    /* optional symbols: an older DLL without them still works */
+#ifdef _WIN32
+    { FARPROC a = GetProcAddress(h, "oc_prof_enable"), b = GetProcAddress(h, "oc_prof_get");
+      if (a && b) { memcpy(&g_oc.prof_enable, &a, sizeof a); memcpy(&g_oc.prof_get, &b, sizeof b); } }
+    { FARPROC p[5]; const char *nm[5] = {"oc_pf_begin", "oc_pf_attn", "oc_pf_route", "oc_pf_experts", "oc_pf_finish"};
+      int all = 1; for (int i = 0; i < 5; i++) { p[i] = GetProcAddress(h, nm[i]); if (!p[i]) all = 0; }
+      if (all) { memcpy(&g_oc.pf_begin, &p[0], sizeof p[0]); memcpy(&g_oc.pf_attn, &p[1], sizeof p[1]);
+                 memcpy(&g_oc.pf_route, &p[2], sizeof p[2]); memcpy(&g_oc.pf_experts, &p[3], sizeof p[3]);
+                 memcpy(&g_oc.pf_finish, &p[4], sizeof p[4]); } }
+#else
+    { void *a = dlsym(h, "oc_prof_enable"), *b = dlsym(h, "oc_prof_get");
+      if (a && b) { memcpy(&g_oc.prof_enable, &a, sizeof a); memcpy(&g_oc.prof_get, &b, sizeof b); } }
+    { void *p[5]; const char *nm[5] = {"oc_pf_begin", "oc_pf_attn", "oc_pf_route", "oc_pf_experts", "oc_pf_finish"};
+      int all = 1; for (int i = 0; i < 5; i++) { p[i] = dlsym(h, nm[i]); if (!p[i]) all = 0; }
+      if (all) { memcpy(&g_oc.pf_begin, &p[0], sizeof p[0]); memcpy(&g_oc.pf_attn, &p[1], sizeof p[1]);
+                 memcpy(&g_oc.pf_route, &p[2], sizeof p[2]); memcpy(&g_oc.pf_experts, &p[3], sizeof p[3]);
+                 memcpy(&g_oc.pf_finish, &p[4], sizeof p[4]); } }
+#endif
+    return 1;
+}
+
+/* read one expert's merged int8 blob + scales into the DLL's pinned staging buffer and copy it to `slot` */
+static int gpu_load_expert(Model *m, int layer, int eid, int slot) {
+    Cfg *c = &m->c;
+    int64_t ng = (int64_t)c->inter * c->hidden, want_w = 3 * ng;
+    char nm[256], qsnm[256];
+    snprintf(nm, sizeof nm, "model.layers.%d.mlp.experts.%d.merged_weight", layer, eid);
+    snprintf(qsnm, sizeof qsnm, "model.layers.%d.mlp.experts.%d.qs", layer, eid);
+    st_tensor *tw = st_find(&m->S, nm), *ts = st_find(&m->S, qsnm);
+    if (!tw || tw->nbytes != want_w || !ts || ts->numel != (int64_t)(2 * c->inter + c->hidden)) return 0;
+    int8_t *stage = (int8_t *)g_oc.stage_ptr();
+    st_read_raw(&m->S, nm, stage, 0);
+    st_read_f32(&m->S, qsnm, (float *)(stage + want_w), 0);
+    __atomic_fetch_add(&m->disk_bytes, (uint64_t)(want_w + ts->numel * 4), __ATOMIC_RELAXED);
+    return g_oc.upload_expert(layer, eid, slot, stage, (const float *)(stage + want_w)) > 0;
+}
+
+static void gpu_try_init(Model *m) {
+    const char *en = getenv("LMA_GPU");
+    if (en && atoi(en) == 0) return;
+    Cfg *c = &m->c;
+    if (!m->L || !m->lm_head_h || !m->L[0].q_h || c->head_dim != 128 || c->n_experts > 1024) return;  /* needs FP16-resident dense */
+    if (!oc_load_dll()) { if (en) fprintf(stderr, "[GPU] lma_olmoe_cuda.dll not found; staying on CPU\n"); return; }
+    int max_t = getenv("LMA_GPU_CTX") ? atoi(getenv("LMA_GPU_CTX")) : 1024;
+    if (max_t < 64) max_t = 64;
+    if (max_t > 4096) max_t = 4096;
+    double t0 = now_s();
+    if (g_oc.init(0, c->n_layers, c->hidden, c->n_heads, c->head_dim, c->inter, c->n_experts, c->topk,
+                  c->vocab, max_t, c->eps, c->theta, c->norm_topk) <= 0) {
+        fprintf(stderr, "[GPU] init failed; staying on CPU\n"); return; }
+    for (int l = 0; l < c->n_layers; l++) {
+        Layer *L = &m->L[l];
+        if (g_oc.set_layer(l, L->q_h, L->k_h, L->v_h, L->o_h, L->in_ln, L->post_ln, L->qn, L->kn, L->gate) <= 0) {
+            fprintf(stderr, "[GPU] weight upload failed (layer %d); staying on CPU\n", l); g_oc.shutdown(); return; }
+    }
+    if (g_oc.set_head(m->lm_head_h, m->final_norm) <= 0) { g_oc.shutdown(); return; }
+    size_t fb = 0, tb = 0; g_oc.mem_info(&fb, &tb);
+    size_t reserve = (size_t)(getenv("LMA_GPU_RESERVE_MB") ? atoi(getenv("LMA_GPU_RESERVE_MB")) : 160) << 20;
+    size_t per = (size_t)3 * c->inter * c->hidden + ((size_t)2 * c->inter + c->hidden) * 4;
+    int want = c->n_layers * c->n_experts;
+    long fit = fb > reserve ? (long)((fb - reserve) / per) : 0;
+    int cap_env = getenv("LMA_GPU_SLOTS") ? atoi(getenv("LMA_GPU_SLOTS")) : want;
+    int n = (int)(fit < want ? fit : want);
+    if (n > cap_env) n = cap_env;
+    if (n < 1) n = 1;
+    n = g_oc.alloc_slots(n);
+    if (n < c->topk) { fprintf(stderr, "[GPU] no VRAM for expert slots; staying on CPU\n"); g_oc.shutdown(); return; }
+    m->gpu_n_slots = n;
+    m->gpu_slot_of = malloc((size_t)want * sizeof(int));
+    m->gpu_slot_owner = malloc((size_t)n * sizeof(int));
+    m->gpu_slot_use = calloc((size_t)n, sizeof(uint64_t));
+    for (int i = 0; i < want; i++) m->gpu_slot_of[i] = -1;
+    for (int i = 0; i < n; i++) m->gpu_slot_owner[i] = -1;
+    int loaded = 0;   /* layer-major preload; LRU refines it at run time when it does not all fit */
+    for (int l = 0; l < c->n_layers && loaded < n; l++)
+        for (int e = 0; e < c->n_experts && loaded < n; e++) {
+            if (!gpu_load_expert(m, l, e, loaded)) { fprintf(stderr, "[GPU] expert load failed\n"); g_oc.shutdown(); return; }
+            m->gpu_slot_of[l * c->n_experts + e] = loaded; m->gpu_slot_owner[loaded] = l * c->n_experts + e; loaded++;
+        }
+    m->gpu_all_resident = (loaded == want);
+    m->gpu_max_t = max_t; m->gpu_kv_len = 0;
+    m->gpu_kv_stage = malloc((size_t)c->n_layers * 2 * c->hidden * sizeof(float));
+    m->gpu_on = 1;
+    g_gpu_verify = getenv("LMA_GPU_VERIFY") ? atoi(getenv("LMA_GPU_VERIFY")) : 0;
+    g_gpu_prefill = getenv("LMA_GPU_PREFILL") ? atoi(getenv("LMA_GPU_PREFILL")) : 1;
+    if (g_oc.prof_enable && getenv("LMA_GPU_PROF") && atoi(getenv("LMA_GPU_PROF"))) g_oc.prof_enable(1);
+    fprintf(stderr, "[GPU] ready in %.1fs: %d/%d experts resident in VRAM (%.2f GB), ctx %d, %s%s\n",
+            now_s() - t0, loaded, want, (double)loaded * per / 1e9, max_t,
+            m->gpu_all_resident ? "all resident (no host sync per layer)" : "partial residency (LRU + on-demand upload)",
+            g_gpu_verify ? ", VERIFY vs CPU" : "");
+}
+
+/* pick a slot: a free one, else the least recently used that is not in `keep` */
+static int gpu_pick_slot(Model *m, const int *keep, int nkeep) {
+    int best = -1; uint64_t bu = ~0ULL;
+    for (int i = 0; i < m->gpu_n_slots; i++) {
+        if (m->gpu_slot_owner[i] < 0) return i;
+        int kept = 0;
+        for (int j = 0; j < nkeep; j++) if (keep[j] == i) { kept = 1; break; }
+        if (kept) continue;
+        if (m->gpu_slot_use[i] < bu) { bu = m->gpu_slot_use[i]; best = i; }
+    }
+    return best;
+}
+
+/* one decode token on the GPU. Returns 1 on success, 0 on failure (caller falls back to the CPU). */
+static int gpu_decode(Model *m, int tok, int pos, float *logit_out, int mirror_kv) {
+    Cfg *c = &m->c; int D = c->hidden, E = c->n_experts, K = c->topk, L = c->n_layers, H = c->n_heads, hd = c->head_dim;
+    double t0 = now_s();
+    if (pos >= m->gpu_max_t || !m->K || K > 16) return 0;
+    if (m->gpu_kv_len < pos) {                       /* rows the CPU produced (prefill / fallback) */
+        for (int l = 0; l < L; l++)
+            if (g_oc.kv_upload(l, m->K[l], m->V[l], m->max_t, m->gpu_kv_len, pos) <= 0) return 0;
+        m->gpu_kv_len = pos;
+    }
+    if (g_oc.begin_token(m->embed + (int64_t)tok * D, pos) <= 0) return 0;
+    for (int l = 0; l < L; l++) {
+        if (g_oc.layer_attn(l) <= 0 || g_oc.layer_route(l) <= 0) return 0;
+        if (m->gpu_all_resident) {
+            if (g_oc.layer_experts(NULL) <= 0) return 0;
+            continue;
+        }
+        int ids[16], miss = 0, slots[16], kept[16], nk = 0; float w[16];
+        if (g_oc.route_fetch(ids, w, &miss) <= 0) return 0;
+        m->gpu_fetch_syncs++;
+        for (int k = 0; k < K; k++) {
+            int idx = l * E + ids[k], sl = m->gpu_slot_of[idx];
+            if (sl < 0) {
+                sl = gpu_pick_slot(m, kept, nk);
+                if (sl < 0) return 0;
+                int old = m->gpu_slot_owner[sl];
+                if (old >= 0) { g_oc.unmap_expert(old / E, old % E); m->gpu_slot_of[old] = -1; }
+                if (!gpu_load_expert(m, l, ids[k], sl)) return 0;
+                m->gpu_slot_of[idx] = sl; m->gpu_slot_owner[sl] = idx; m->gpu_miss++;
+            }
+            m->gpu_slot_use[sl] = ++m->gpu_clock; slots[k] = sl; kept[nk++] = sl;
+        }
+        if (g_oc.layer_experts(slots) <= 0) return 0;
+    }
+    if (g_oc.finish(logit_out, m->gpu_kv_stage) <= 0) return 0;
+    if (mirror_kv) {
+        for (int l = 0; l < L; l++)
+            for (int h = 0; h < H; h++) {
+                memcpy(m->K[l] + ((int64_t)h * m->max_t + pos) * hd, m->gpu_kv_stage + (int64_t)l * 2 * D + h * hd, hd * sizeof(float));
+                memcpy(m->V[l] + ((int64_t)h * m->max_t + pos) * hd, m->gpu_kv_stage + (int64_t)l * 2 * D + D + h * hd, hd * sizeof(float));
+            }
+    }
+    m->gpu_kv_len = pos + 1;
+    m->gpu_tokens++; m->gpu_s += now_s() - t0;
+    return 1;
+}
+
+/* S prompt/verification tokens on the GPU in chunks of GPU_PF_MAX (batched "rows" kernels: each weight row is read
+ * once per 8 tokens). Writes the logits of the LAST token to logit_out (may be NULL) and, if mirror_kv, the K/V rows
+ * to the CPU cache so a later CPU fallback / prefix reuse sees them. Returns 1 on success, 0 on failure. */
+static int gpu_prefill(Model *m, const int *ids, int S, int pos_base, float *logit_out, int mirror_kv) {
+    Cfg *c = &m->c; int D = c->hidden, E = c->n_experts, L = c->n_layers, H = c->n_heads, hd = c->head_dim;
+    double t0 = now_s();
+    if (!g_oc.pf_begin || S < 1 || pos_base + S > m->gpu_max_t || !m->K) return 0;
+    if (m->gpu_kv_len < pos_base) {                  /* rows the CPU produced earlier (prefix reuse / fallback) */
+        for (int l = 0; l < L; l++)
+            if (g_oc.kv_upload(l, m->K[l], m->V[l], m->max_t, m->gpu_kv_len, pos_base) <= 0) return 0;
+        m->gpu_kv_len = pos_base;
+    }
+    float *xr = falloc((int64_t)GPU_PF_MAX * D);
+    int *kept = malloc((size_t)E * sizeof(int)), *used = malloc((size_t)E * sizeof(int));
+    int ok = 1;
+    for (int c0 = 0; c0 < S && ok; c0 += GPU_PF_MAX) {
+        int cs = S - c0 < GPU_PF_MAX ? S - c0 : GPU_PF_MAX, pos = pos_base + c0, last = (c0 + cs == S);
+        for (int s = 0; s < cs; s++) memcpy(xr + (int64_t)s * D, m->embed + (int64_t)ids[c0 + s] * D, D * sizeof(float));
+        if (g_oc.pf_begin(xr, cs, pos) <= 0) { ok = 0; break; }
+        for (int l = 0; l < L && ok; l++) {
+            if (g_oc.pf_attn(l) <= 0) { ok = 0; break; }
+            if (m->gpu_all_resident) {
+                if (g_oc.pf_route(l, NULL) <= 0 || g_oc.pf_experts(l) <= 0) ok = 0;
+                continue;
+            }
+            if (g_oc.pf_route(l, used) <= 0) { ok = 0; break; }
+            m->gpu_fetch_syncs++;
+            int nk = 0;
+            for (int e = 0; e < E && ok; e++) {
+                if (!used[e]) continue;
+                int idx = l * E + e, sl = m->gpu_slot_of[idx];
+                if (sl < 0) {
+                    sl = gpu_pick_slot(m, kept, nk);
+                    if (sl < 0) { ok = 0; break; }
+                    int old = m->gpu_slot_owner[sl];
+                    if (old >= 0) { g_oc.unmap_expert(old / E, old % E); m->gpu_slot_of[old] = -1; }
+                    if (!gpu_load_expert(m, l, e, sl)) { ok = 0; break; }
+                    m->gpu_slot_of[idx] = sl; m->gpu_slot_owner[sl] = idx; m->gpu_miss++;
+                }
+                m->gpu_slot_use[sl] = ++m->gpu_clock; kept[nk++] = sl;
+            }
+            if (ok && g_oc.pf_experts(l) <= 0) ok = 0;
+        }
+        if (!ok) break;
+        float *kv = NULL;
+        if (g_oc.pf_finish(last ? cs - 1 : 0, last ? 1 : 0, logit_out, &kv) <= 0 || !kv) { ok = 0; break; }
+        if (mirror_kv) {
+            for (int l = 0; l < L; l++) {
+                const float *kl = kv + (int64_t)l * 2 * GPU_PF_MAX * D, *vl = kl + (int64_t)cs * D;
+                for (int s = 0; s < cs; s++)
+                    for (int h = 0; h < H; h++) {
+                        memcpy(m->K[l] + ((int64_t)h * m->max_t + pos + s) * hd, kl + (int64_t)s * D + h * hd, hd * sizeof(float));
+                        memcpy(m->V[l] + ((int64_t)h * m->max_t + pos + s) * hd, vl + (int64_t)s * D + h * hd, hd * sizeof(float));
+                    }
+            }
+        }
+        m->gpu_kv_len = pos + cs;
+    }
+    free(xr); free(kept); free(used);
+    if (ok) { m->gpu_pf_rows += (uint64_t)S; m->gpu_pf_calls++; m->gpu_pf_s += now_s() - t0; }
+    return ok;
+}
+
 static float *step(Model *m, const int *ids, int S, int pos_base) {
     Cfg *c = &m->c; int D = c->hidden;
+    if (m->gpu_on && S > 1 && !g_gpu_verify && g_gpu_prefill && g_oc.pf_begin && !(g_echo_k > 0 && g_echo_id)) {
+        float *lg = falloc(c->vocab);
+        if (gpu_prefill(m, ids, S, pos_base, lg, 1)) {
+            m->token_count += S; m->freq_token_count += S;
+            m->kv_len = pos_base + S;
+            kv_prefix_record(&m->kvp, ids, pos_base, S);
+            g_prof_forwards += 1;
+            return lg;
+        }
+        free(lg);
+        m->gpu_on = 0;   /* circuit breaker */
+        fprintf(stderr, "[GPU] prefill failed at position %d: falling back to the CPU for the rest of the session\n", pos_base);
+    }
+    if (m->gpu_on && S == 1 && !g_gpu_verify) {
+        float *lg = falloc(c->vocab);
+        if (gpu_decode(m, ids[0], pos_base, lg, 1)) {
+            m->token_count += 1; m->freq_token_count += 1;
+            m->kv_len = pos_base + 1;
+            kv_prefix_record(&m->kvp, ids, pos_base, 1);
+            g_prof_forwards += 1;
+            return lg;
+        }
+        free(lg);
+        m->gpu_on = 0;   /* circuit breaker: this session continues on the CPU */
+        fprintf(stderr, "[GPU] decode failed at position %d: falling back to the CPU for the rest of the session\n", pos_base);
+    }
+    if (m->gpu_on && pos_base < m->gpu_kv_len) m->gpu_kv_len = pos_base;   /* CPU rewrites these rows */
     if (g_pilot && m->token_count > 0) {
         /* Flush stale prefetch requests: clear is_queued so pilot_realload
          * will skip any entries still sitting in pilot_q for the previous
@@ -1623,6 +1944,35 @@ static float *step(Model *m, const int *ids, int S, int pos_base) {
     g_prof_head_s += now_s() - t_head;
     g_prof_forwards += 1;   /* forward passes, not positions: a prefill of S rows is one */
     free(x); free(last);
+    if (m->gpu_on && g_gpu_verify && S > 1 && g_gpu_prefill && g_oc.pf_begin) {
+        float *lg = falloc(c->vocab);
+        if (gpu_prefill(m, ids, S, pos_base, lg, 0)) {
+            float mx = 0.f; int ac = 0, ag = 0;
+            for (int i = 0; i < c->vocab; i++) {
+                float d = fabsf(lg[i] - logit[i]); if (d > mx) mx = d;
+                if (lg[i] > lg[ag]) ag = i;
+                if (logit[i] > logit[ac]) ac = i;
+            }
+            if (mx > m->gpu_pf_max_dlogit) m->gpu_pf_max_dlogit = mx;
+            m->gpu_pf_verify_n++; if (ag == ac) m->gpu_pf_verify_agree++;
+        } else { m->gpu_on = 0; fprintf(stderr, "[GPU] verify prefill failed; GPU disabled\n"); }
+        free(lg);
+    }
+    if (m->gpu_on && g_gpu_verify && S == 1) {
+        /* CPU is the reference (its logits are returned); the GPU runs the same token on its own KV */
+        float *lg = falloc(c->vocab);
+        if (gpu_decode(m, ids[0], pos_base, lg, 0)) {
+            float mx = 0.f; int ac = 0, ag = 0;
+            for (int i = 0; i < c->vocab; i++) {
+                float d = fabsf(lg[i] - logit[i]); if (d > mx) mx = d;
+                if (lg[i] > lg[ag]) ag = i;
+                if (logit[i] > logit[ac]) ac = i;
+            }
+            if (mx > m->gpu_max_dlogit) m->gpu_max_dlogit = mx;
+            m->gpu_verify_n++; if (ag == ac) m->gpu_verify_agree++;
+        } else { m->gpu_on = 0; fprintf(stderr, "[GPU] verify decode failed; GPU disabled\n"); }
+        free(lg);
+    }
     return logit;
 }
 
@@ -2264,6 +2614,22 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
      * zero: this engine has no separate wait phase. */
     double disk_s = (double)(__atomic_load_n(&m->disk_ns, __ATOMIC_RELAXED) - disk0) / 1e9;
     double matmul_s = (g_prof_moe_s - moe0) - disk_s; if (matmul_s < 0.0) matmul_s = 0.0;
+    if (getenv("LMA_BYTES_LOG") && m->gpu_n_slots) {
+        fprintf(stderr, "[LMA_GPU] on=%d tokens=%llu expert_misses=%llu fetch_syncs=%llu gpu_s=%.3f "
+                        "verify_n=%llu verify_argmax_agree=%llu verify_max_dlogit=%.5f\n",
+                m->gpu_on, (unsigned long long)m->gpu_tokens, (unsigned long long)m->gpu_miss,
+                (unsigned long long)m->gpu_fetch_syncs, m->gpu_s, (unsigned long long)m->gpu_verify_n,
+                (unsigned long long)m->gpu_verify_agree, m->gpu_max_dlogit);
+        fprintf(stderr, "[LMA_GPU_PF] calls=%llu rows=%llu gpu_s=%.3f verify_n=%llu verify_argmax_agree=%llu verify_max_dlogit=%.5f\n",
+                (unsigned long long)m->gpu_pf_calls, (unsigned long long)m->gpu_pf_rows, m->gpu_pf_s,
+                (unsigned long long)m->gpu_pf_verify_n, (unsigned long long)m->gpu_pf_verify_agree, m->gpu_pf_max_dlogit);
+        if (g_oc.prof_get) {
+            double ms[8]; long tk = 0;
+            if (g_oc.prof_get(ms, &tk) > 0 && tk > 0)
+                fprintf(stderr, "[LMA_GPU_PROF] per token over %ld tokens (ms): dense_gemv=%.3f attn=%.3f route=%.3f "
+                                "expert_gateup=%.3f expert_down=%.3f head=%.3f\n", tk, ms[0]/tk, ms[1]/tk, ms[2]/tk, ms[3]/tk, ms[4]/tk, ms[5]/tk);
+        }
+    }
     if (getenv("LMA_BYTES_LOG") && gen > 0) {
         uint64_t db = __atomic_load_n(&m->disk_bytes, __ATOMIC_RELAXED) - bytes0;
         uint64_t pfi = m->pf_issued - pfi0, pfu = m->pf_used - pfu0;
@@ -2415,7 +2781,7 @@ int main(int argc, char **argv) {
      * it -- ASan: stack-use-after-return, READ of size 8, in a worker thread,
      * with the run's tokens already correct (#1262). Static storage outlives
      * every thread, so the pointer the worker holds stays valid. */
-        static Model m; model_init(&m, snap, cap, bits);
+        static Model m; model_init(&m, snap, cap, bits); gpu_try_init(&m);
         m.max_t = ctx_cap;
         m.K = calloc(m.c.n_layers, sizeof(float*)); m.V = calloc(m.c.n_layers, sizeof(float*));
         for (int i = 0; i < m.c.n_layers; i++) {
@@ -2460,7 +2826,7 @@ int main(int argc, char **argv) {
      * it -- ASan: stack-use-after-return, READ of size 8, in a worker thread,
      * with the run's tokens already correct (#1262). Static storage outlives
      * every thread, so the pointer the worker holds stays valid. */
-        static Model m; model_init(&m, snap, cap, bits);
+        static Model m; model_init(&m, snap, cap, bits); gpu_try_init(&m);
         printf("resident weights loaded in %.1fs | RSS after load: %.2f GB\n", m.dense_load_s, rss_gb());
         Tok T;
         char tokpath[2048]; snprintf(tokpath, sizeof(tokpath), "%s/tokenizer.json", snap);
@@ -2492,7 +2858,7 @@ int main(int argc, char **argv) {
      * it -- ASan: stack-use-after-return, READ of size 8, in a worker thread,
      * with the run's tokens already correct (#1262). Static storage outlives
      * every thread, so the pointer the worker holds stays valid. */
-    static Model m; model_init(&m, snap, cap, bits);
+    static Model m; model_init(&m, snap, cap, bits); gpu_try_init(&m);
     printf("resident weights loaded in %.1fs | RSS after load: %.2f GB\n", m.dense_load_s, rss_gb());
 
     if (getenv("PPL") && atoi(getenv("PPL")) == 1) {   /* loss-meter mode: teacher-forced NLL */

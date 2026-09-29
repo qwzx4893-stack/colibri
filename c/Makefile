@@ -830,6 +830,13 @@ cuda-dll: backend_cuda.cu backend_cuda.h fp8_format.h
 		-L"$(CUDA_HOME)/lib/x64" -lcudart \
 		backend_cuda.cu -o lma_cuda.dll
 
+# OLMoE GPU decode library (olmoe_cuda.cu): self-contained kernels + a plain C API, loaded at
+# run time by olmoe.exe from the same directory. Needs the same x64 MSVC/nvcc environment as
+# cuda-dll (use cudaenv.bat). Optional: without it olmoe.exe stays on the CPU.
+olmoe-cuda: olmoe_cuda.cu
+	@command -v "$(NVCC)" >/dev/null 2>&1 || { echo "nvcc not found: set CUDA_HOME or NVCC" >&2; exit 1; }
+	"$(NVCC)" -O3 -std=c++17 $(CUDA_GENCODE) -shared olmoe_cuda.cu -o lma_olmoe_cuda.dll
+
 # Windows HIP DLL: the AMD sibling of cuda-dll above. hipcc compiles the SAME
 # backend_cuda.cu (through backend_gpu_compat.h) into lma_hip.dll, exporting
 # the same lma_cuda_* surface — which is why LMA_CUDA_BUILDING_DLL, and not a
