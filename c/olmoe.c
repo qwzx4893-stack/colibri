@@ -219,8 +219,11 @@ typedef struct {
     int gpu_kv_len;                  /* device KV holds positions [0, gpu_kv_len) */
     int gpu_n_slots, gpu_all_resident;
     int *gpu_slot_of;                /* [L*E] host mirror of the device (layer,expert)->slot table, -1 = absent */
-    int *gpu_slot_owner;             /* [n_slots] layer*E+expert, -1 = free */
-    uint64_t *gpu_slot_use, gpu_clock;
+    shards S4; int s4_open;          /* optional int4 overlay (LMA_EXPERT_OVERLAY): compiled w4/s4 expert tensors */
+    unsigned char gpu_fmt[128];       /* per-layer expert storage: 0 = int8 (Exact), 1 = int4 group-32 (High-Fidelity, lossy) */
+    int gpu_np[2];                   /* slots per pool (0 = int8 pool, 1 = int4 pool) */
+    int *gpu_owner[2];               /* [pool][slot] layer*E+expert, -1 = free */
+    uint64_t *gpu_use[2], gpu_clock;
     float *gpu_kv_stage;             /* [L][2][D] */
     uint64_t gpu_tokens, gpu_miss, gpu_fetch_syncs;
     double gpu_s;                    /* wall seconds spent in gpu_decode */
@@ -1625,6 +1628,9 @@ typedef struct {
     int   (*pf_finish)(int, int, float *, float **);
     int   (*bench_bw)(double *, double *);                 /* optional */
     void  (*set_hf)(int, float);                           /* optional: High-Fidelity dynamic expert sparsity */
+    int   (*alloc_slots4)(int);                            /* optional: int4 expert pool (High-Fidelity storage) */
+    int   (*upload_expert4)(int, int, int, const uint8_t *, const uint16_t *);
+    void  (*set_layer_fmt)(int, int);
 } OcApi;
 static OcApi g_oc;
 static int g_gpu_verify = 0;
@@ -1665,7 +1671,9 @@ static int oc_load_dll(void) {
                  memcpy(&g_oc.pf_route, &p[2], sizeof p[2]); memcpy(&g_oc.pf_experts, &p[3], sizeof p[3]);
                  memcpy(&g_oc.pf_finish, &p[4], sizeof p[4]); }
       FARPROC bb = GetProcAddress(h, "oc_bench_bw"); if (bb) memcpy(&g_oc.bench_bw, &bb, sizeof bb);
-      FARPROC hf = GetProcAddress(h, "oc_set_hf"); if (hf) memcpy(&g_oc.set_hf, &hf, sizeof hf); }
+      FARPROC hf = GetProcAddress(h, "oc_set_hf"); if (hf) memcpy(&g_oc.set_hf, &hf, sizeof hf);
+      FARPROC a4 = GetProcAddress(h, "oc_alloc_slots4"), u4 = GetProcAddress(h, "oc_upload_expert4"), lf = GetProcAddress(h, "oc_set_layer_fmt");
+      if (a4 && u4 && lf) { memcpy(&g_oc.alloc_slots4, &a4, sizeof a4); memcpy(&g_oc.upload_expert4, &u4, sizeof u4); memcpy(&g_oc.set_layer_fmt, &lf, sizeof lf); } }
 #else
     { void *a = dlsym(h, "oc_prof_enable"), *b = dlsym(h, "oc_prof_get");
       if (a && b) { memcpy(&g_oc.prof_enable, &a, sizeof a); memcpy(&g_oc.prof_get, &b, sizeof b); } }
@@ -1675,37 +1683,142 @@ static int oc_load_dll(void) {
                  memcpy(&g_oc.pf_route, &p[2], sizeof p[2]); memcpy(&g_oc.pf_experts, &p[3], sizeof p[3]);
                  memcpy(&g_oc.pf_finish, &p[4], sizeof p[4]); }
       void *bb = dlsym(h, "oc_bench_bw"); if (bb) memcpy(&g_oc.bench_bw, &bb, sizeof bb);
-      void *hf = dlsym(h, "oc_set_hf"); if (hf) memcpy(&g_oc.set_hf, &hf, sizeof hf); }
+      void *hf = dlsym(h, "oc_set_hf"); if (hf) memcpy(&g_oc.set_hf, &hf, sizeof hf);
+      void *a4 = dlsym(h, "oc_alloc_slots4"), *u4 = dlsym(h, "oc_upload_expert4"), *lf = dlsym(h, "oc_set_layer_fmt");
+      if (a4 && u4 && lf) { memcpy(&g_oc.alloc_slots4, &a4, sizeof a4); memcpy(&g_oc.upload_expert4, &u4, sizeof u4); memcpy(&g_oc.set_layer_fmt, &lf, sizeof lf); } }
 #endif
     return 1;
 }
 
-/* read one expert's merged int8 blob + scales into the DLL's pinned staging buffer and copy it to `slot` */
+/* software float -> IEEE half (round to nearest even); used only for the int4 group scales */
+static uint16_t f32_to_f16_bits(float f) {
+    uint32_t x; memcpy(&x, &f, 4);
+    uint32_t sign = (x >> 16) & 0x8000u; int32_t e = (int32_t)((x >> 23) & 0xFF) - 127 + 15; uint32_t mant = x & 0x7FFFFFu;
+    if (((x >> 23) & 0xFF) == 0xFF) return (uint16_t)(sign | 0x7C00u | (mant ? 0x200u : 0));
+    if (e >= 31) return (uint16_t)(sign | 0x7C00u);
+    if (e <= 0) {
+        if (e < -10) return (uint16_t)sign;
+        mant |= 0x800000u; int sh = 14 - e; uint32_t h = mant >> sh, rem = mant & ((1u << sh) - 1), half = 1u << (sh - 1);
+        if (rem > half || (rem == half && (h & 1))) h++;
+        return (uint16_t)(sign | h);
+    }
+    uint32_t h = ((uint32_t)e << 10) | (mant >> 13), rem = mant & 0x1FFFu;
+    if (rem > 0x1000u || (rem == 0x1000u && (h & 1))) h++;
+    return (uint16_t)(sign | h);
+}
+static float f16_bits_to_f32(uint16_t h) {
+    uint32_t sign = (uint32_t)(h & 0x8000u) << 16; int e = (h >> 10) & 31; uint32_t mant = h & 0x3FFu, x;
+    if (e == 0) { if (!mant) x = sign; else { e = 1; while (!(mant & 0x400u)) { mant <<= 1; e--; } mant &= 0x3FFu; x = sign | ((uint32_t)(e + 112) << 23) | (mant << 13); } }
+    else if (e == 31) x = sign | 0x7F800000u | (mant << 13);
+    else x = sign | ((uint32_t)(e + 112) << 23) | (mant << 13);
+    float f; memcpy(&f, &x, 4); return f;
+}
+
+static int g_i4_clip = 1;   /* LMA_HF_INT4_CLIP=0 disables the MSE clip search (plain amax/7 scale) */
+
+/* High-Fidelity storage: re-quantise one expert from its int8 rows (+ per-row scale) to symmetric int4, one FP16 scale
+ * per 32 weights. Layout is the one olmoe_cuda.cu documents (nibbles gate|up|down, scales gate|up|down). */
+static void quant_expert_i4(const int8_t *w, const float *rs, int I, int D, uint8_t *w4, uint16_t *s4) {
+    const int8_t *mat[3] = { w, w + (int64_t)I * D, w + (int64_t)2 * I * D };
+    int rows[3] = { I, I, D }, len[3] = { D, D, I }, sbase[3] = { 0, I, 2 * I };
+    int64_t nib_off[3] = { 0, (int64_t)I * D / 2, (int64_t)I * D }, sc_off[3] = { 0, (int64_t)I * (D / 32), (int64_t)2 * I * (D / 32) };
+    for (int t = 0; t < 3; t++) {
+        #pragma omp parallel for
+        for (int r = 0; r < rows[t]; r++) {
+            const int8_t *q = mat[t] + (int64_t)r * len[t]; float scale = rs[sbase[t] + r];
+            uint8_t *dst = w4 + nib_off[t] + (int64_t)r * (len[t] / 2); uint16_t *sd = s4 + sc_off[t] + (int64_t)r * (len[t] / 32);
+            for (int g = 0; g < len[t] / 32; g++) {
+                float amax = 0.f;
+                for (int i = 0; i < 32; i++) { float a = fabsf((float)q[g * 32 + i] * scale); if (a > amax) amax = a; }
+                /* scale search: the amax/7 scale wastes range on outliers; pick the clip (1.0 .. 0.65 of amax) with the
+                 * smallest squared reconstruction error of this group (MSE-optimal clipping, as in AWQ/GPTQ-style RTN+) */
+                uint16_t hb = 0; float sf = 1.f, best_err = 1e30f;
+                for (int ci = 0; ci < (g_i4_clip ? 8 : 1); ci++) {
+                    float sc = amax > 0.f ? amax * (1.f - 0.05f * ci) / 7.f : 1.f;
+                    uint16_t hh = f32_to_f16_bits(sc); float sq = f16_bits_to_f32(hh); if (sq <= 0.f) { hh = f32_to_f16_bits(1.f); sq = 1.f; }
+                    float err = 0.f;
+                    for (int i = 0; i < 32; i++) {
+                        float wv = (float)q[g * 32 + i] * scale; int qq = (int)lrintf(wv / sq); if (qq < -7) qq = -7; if (qq > 7) qq = 7;
+                        float d = wv - (float)qq * sq; err += d * d;
+                    }
+                    if (err < best_err) { best_err = err; hb = hh; sf = sq; }
+                }
+                sd[g] = hb;
+                for (int i = 0; i < 16; i++) {
+                    int a = (int)lrintf((float)q[g * 32 + 2 * i] * scale / sf), b = (int)lrintf((float)q[g * 32 + 2 * i + 1] * scale / sf);
+                    if (a < -7) a = -7; if (a > 7) a = 7; if (b < -7) b = -7; if (b > 7) b = 7;
+                    dst[g * 16 + i] = (uint8_t)((a + 8) | ((b + 8) << 4));
+                }
+            }
+        }
+    }
+}
+
+/* read one expert's merged int8 blob + scales into the DLL's pinned staging buffer and copy it to `slot` of the
+ * layer's pool (int8 as stored, or re-quantised to int4 when the layer's storage format is int4) */
 static int gpu_load_expert(Model *m, int layer, int eid, int slot) {
     Cfg *c = &m->c;
     int64_t ng = (int64_t)c->inter * c->hidden, want_w = 3 * ng;
+    int8_t *stage = (int8_t *)g_oc.stage_ptr();
+    if (m->gpu_fmt[layer] == 1 && m->s4_open) {   /* compiled overlay: int4 blob + FP16 scales straight from disk, no re-quantisation */
+        char n4[256], s4nm[256]; int64_t w4b = 3 * ng / 2, s4n = 3 * ng / 32;
+        snprintf(n4, sizeof n4, "model.layers.%d.mlp.experts.%d.w4", layer, eid);
+        snprintf(s4nm, sizeof s4nm, "model.layers.%d.mlp.experts.%d.s4", layer, eid);
+        st_tensor *t4 = st_find(&m->S4, n4), *u4 = st_find(&m->S4, s4nm);
+        if (t4 && u4 && t4->nbytes == w4b && u4->nbytes == 2 * s4n) {
+            st_read_raw(&m->S4, n4, stage, g_expert_drop); st_read_raw(&m->S4, s4nm, stage + w4b, g_expert_drop);
+            __atomic_fetch_add(&m->disk_bytes, (uint64_t)(w4b + 2 * s4n), __ATOMIC_RELAXED);
+            return g_oc.upload_expert4(layer, eid, slot, (const uint8_t *)stage, (const uint16_t *)(stage + w4b)) > 0;
+        }
+    }
     char nm[256], qsnm[256];
     snprintf(nm, sizeof nm, "model.layers.%d.mlp.experts.%d.merged_weight", layer, eid);
     snprintf(qsnm, sizeof qsnm, "model.layers.%d.mlp.experts.%d.qs", layer, eid);
     st_tensor *tw = st_find(&m->S, nm), *ts = st_find(&m->S, qsnm);
     if (!tw || tw->nbytes != want_w || !ts || ts->numel != (int64_t)(2 * c->inter + c->hidden)) return 0;
-    int8_t *stage = (int8_t *)g_oc.stage_ptr();
-    st_read_raw(&m->S, nm, stage, 0);
-    st_read_f32(&m->S, qsnm, (float *)(stage + want_w), 0);
+    st_read_raw(&m->S, nm, stage, g_expert_drop);
+    st_read_f32(&m->S, qsnm, (float *)(stage + want_w), g_expert_drop);
     __atomic_fetch_add(&m->disk_bytes, (uint64_t)(want_w + ts->numel * 4), __ATOMIC_RELAXED);
+    if (m->gpu_fmt[layer] == 1) {
+        static uint8_t *w4 = NULL; static uint16_t *s4 = NULL;
+        if (!w4) { w4 = malloc((size_t)(3 * ng / 2)); s4 = malloc((size_t)(3 * ng / 32) * 2); if (!w4 || !s4) return 0; }
+        quant_expert_i4(stage, (const float *)(stage + want_w), c->inter, c->hidden, w4, s4);
+        return g_oc.upload_expert4(layer, eid, slot, w4, s4) > 0;
+    }
     return g_oc.upload_expert(layer, eid, slot, stage, (const float *)(stage + want_w)) > 0;
+}
+
+/* LMA_HF_INT4: "all" or a list like "0,3,8-11" of layers whose experts are stored as int4 (lossy, off by default) */
+static void gpu_parse_int4_layers(Model *m) {
+    const char *e = getenv("LMA_HF_INT4");
+    memset(m->gpu_fmt, 0, sizeof m->gpu_fmt);
+    if (!e || !*e || !strcmp(e, "none")) return;
+    if (!strcmp(e, "all")) { for (int l = 0; l < m->c.n_layers && l < 128; l++) m->gpu_fmt[l] = 1; return; }
+    const char *p = e;
+    while (*p) {
+        char *end; long a = strtol(p, &end, 10); if (end == p) break; long b = a;
+        if (*end == '-') { p = end + 1; b = strtol(p, &end, 10); }
+        for (long l = a; l <= b && l < m->c.n_layers && l < 128; l++) if (l >= 0) m->gpu_fmt[l] = 1;
+        p = end; while (*p == ',' || *p == ' ') p++;
+    }
 }
 
 static void gpu_try_init(Model *m) {
     const char *en = getenv("LMA_GPU");
     if (en && atoi(en) == 0) return;
     Cfg *c = &m->c;
-    if (!m->L || !m->lm_head_h || !m->L[0].q_h || c->head_dim != 128 || c->n_experts > 1024) return;  /* needs FP16-resident dense */
+    if (!m->L || !m->lm_head_h || !m->L[0].q_h || c->head_dim != 128 || c->n_experts > 1024 || c->n_layers > 128) return;  /* needs FP16-resident dense */
     if (!oc_load_dll()) { if (en) fprintf(stderr, "[GPU] lma_olmoe_cuda.dll not found; staying on CPU\n"); return; }
     int max_t = getenv("LMA_GPU_CTX") ? atoi(getenv("LMA_GPU_CTX")) : 1024;
     if (max_t < 64) max_t = 64;
     if (max_t > 4096) max_t = 4096;
     double t0 = now_s();
+    gpu_parse_int4_layers(m);
+    if (getenv("LMA_HF_INT4_CLIP")) g_i4_clip = atoi(getenv("LMA_HF_INT4_CLIP"));
+    { const char *ov = getenv("LMA_EXPERT_OVERLAY");   /* compiled int4 experts (see qcompile); missing tensors fall back to on-the-fly */
+      if (ov && *ov) { st_init(&m->S4, ov); m->s4_open = 1; fprintf(stderr, "[GPU] int4 expert overlay: %s\n", ov); } }
+    int n4l = 0; for (int l = 0; l < c->n_layers; l++) n4l += m->gpu_fmt[l];
+    if (n4l && !(g_oc.alloc_slots4 && g_oc.upload_expert4 && g_oc.set_layer_fmt)) { fprintf(stderr, "[GPU] DLL lacks int4 support; staying on CPU\n"); return; }
     if (g_oc.init(0, c->n_layers, c->hidden, c->n_heads, c->head_dim, c->inter, c->n_experts, c->topk,
                   c->vocab, max_t, c->eps, c->theta, c->norm_topk) <= 0) {
         fprintf(stderr, "[GPU] init failed; staying on CPU\n"); return; }
@@ -1713,31 +1826,39 @@ static void gpu_try_init(Model *m) {
         Layer *L = &m->L[l];
         if (g_oc.set_layer(l, L->q_h, L->k_h, L->v_h, L->o_h, L->in_ln, L->post_ln, L->qn, L->kn, L->gate) <= 0) {
             fprintf(stderr, "[GPU] weight upload failed (layer %d); staying on CPU\n", l); g_oc.shutdown(); return; }
+        if (g_oc.set_layer_fmt) g_oc.set_layer_fmt(l, m->gpu_fmt[l]);
     }
     if (g_oc.set_head(m->lm_head_h, m->final_norm) <= 0) { g_oc.shutdown(); return; }
     size_t fb = 0, tb = 0; g_oc.mem_info(&fb, &tb);
     size_t reserve = (size_t)(getenv("LMA_GPU_RESERVE_MB") ? atoi(getenv("LMA_GPU_RESERVE_MB")) : 160) << 20;
-    size_t per = (size_t)3 * c->inter * c->hidden + ((size_t)2 * c->inter + c->hidden) * 4;
-    int want = c->n_layers * c->n_experts;
-    long fit = fb > reserve ? (long)((fb - reserve) / per) : 0;
+    size_t per8 = (size_t)3 * c->inter * c->hidden + ((size_t)2 * c->inter + c->hidden) * 4;
+    size_t per4 = (size_t)3 * c->inter * c->hidden / 2 + (size_t)3 * c->inter * c->hidden / 32 * 2;
+    int want = c->n_layers * c->n_experts, need[2] = { (c->n_layers - n4l) * c->n_experts, n4l * c->n_experts };
+    size_t budget = fb > reserve ? fb - reserve : 0;
     int cap_env = getenv("LMA_GPU_SLOTS") ? atoi(getenv("LMA_GPU_SLOTS")) : want;
-    int n = (int)(fit < want ? fit : want);
-    if (n > cap_env) n = cap_env;
-    if (n < 1) n = 1;
-    n = g_oc.alloc_slots(n);
-    if (n < c->topk) { fprintf(stderr, "[GPU] no VRAM for expert slots; staying on CPU\n"); g_oc.shutdown(); return; }
-    m->gpu_n_slots = n;
+    if (cap_env < want) {   /* LMA_GPU_SLOTS caps the total number of resident experts (used to force partial residency) */
+        int t = need[0] + need[1];
+        need[0] = (int)((double)need[0] * cap_env / t); need[1] = cap_env - need[0] < need[1] ? cap_env - need[0] : need[1];
+    }
+    int np[2] = { 0, 0 };
+    if (need[1] > 0) { long fit = (long)(budget / per4); np[1] = g_oc.alloc_slots4(need[1] < fit ? need[1] : (int)fit); budget -= (size_t)np[1] * per4; }
+    if (need[0] > 0) { long fit = (long)(budget / per8); int n = need[0] < fit ? need[0] : (int)fit; if (n < 1) n = 1; np[0] = g_oc.alloc_slots(n); }
+    if (np[0] + np[1] < c->topk || (need[0] && np[0] < c->topk) || (need[1] && np[1] < c->topk)) {
+        fprintf(stderr, "[GPU] no VRAM for expert slots; staying on CPU\n"); g_oc.shutdown(); return; }
+    m->gpu_np[0] = np[0]; m->gpu_np[1] = np[1]; m->gpu_n_slots = np[0] + np[1];
     m->gpu_slot_of = malloc((size_t)want * sizeof(int));
-    m->gpu_slot_owner = malloc((size_t)n * sizeof(int));
-    m->gpu_slot_use = calloc((size_t)n, sizeof(uint64_t));
+    for (int f = 0; f < 2; f++) { m->gpu_owner[f] = malloc((size_t)(np[f] + 1) * sizeof(int)); m->gpu_use[f] = calloc((size_t)np[f] + 1, sizeof(uint64_t));
+                                  for (int i = 0; i < np[f]; i++) m->gpu_owner[f][i] = -1; }
     for (int i = 0; i < want; i++) m->gpu_slot_of[i] = -1;
-    for (int i = 0; i < n; i++) m->gpu_slot_owner[i] = -1;
-    int loaded = 0;   /* layer-major preload; LRU refines it at run time when it does not all fit */
-    for (int l = 0; l < c->n_layers && loaded < n; l++)
-        for (int e = 0; e < c->n_experts && loaded < n; e++) {
-            if (!gpu_load_expert(m, l, e, loaded)) { fprintf(stderr, "[GPU] expert load failed\n"); g_oc.shutdown(); return; }
-            m->gpu_slot_of[l * c->n_experts + e] = loaded; m->gpu_slot_owner[loaded] = l * c->n_experts + e; loaded++;
+    int loaded = 0, nl[2] = { 0, 0 };   /* layer-major preload; LRU refines it at run time when it does not all fit */
+    for (int l = 0; l < c->n_layers; l++) {
+        int f = m->gpu_fmt[l];
+        for (int e = 0; e < c->n_experts && nl[f] < np[f]; e++) {
+            int sl = nl[f];
+            if (!gpu_load_expert(m, l, e, sl)) { fprintf(stderr, "[GPU] expert load failed\n"); g_oc.shutdown(); return; }
+            m->gpu_slot_of[l * c->n_experts + e] = sl; m->gpu_owner[f][sl] = l * c->n_experts + e; nl[f]++; loaded++;
         }
+    }
     m->gpu_all_resident = (loaded == want);
     m->gpu_max_t = max_t; m->gpu_kv_len = 0;
     m->gpu_kv_stage = malloc((size_t)c->n_layers * 2 * c->hidden * sizeof(float));
@@ -1752,28 +1873,88 @@ static void gpu_try_init(Model *m) {
     /* High-Fidelity dynamic expert sparsity: LOSSY, never enabled by default (Exact Mode) */
     { int hk = getenv("LMA_HF_KEEP") ? atoi(getenv("LMA_HF_KEEP")) : 0; float hs = getenv("LMA_HF_SKIP") ? (float)atof(getenv("LMA_HF_SKIP")) : 0.f;
       if ((hk > 0 || hs > 0.f) && g_oc.set_hf) { g_oc.set_hf(hk, hs); fprintf(stderr, "[GPU] High-Fidelity sparsity ON: keep<=%d skip_rel=%.3f (lossy)\n", hk, hs); } }
-    /* weight bytes one decode token reads: q/k/v/o FP16 + router FP32 per layer, K routed int8 experts per layer, lm_head FP16 */
-    m->gpu_bytes_tok = (double)c->n_layers * (4.0 * c->hidden * c->hidden * 2 + (double)c->n_experts * c->hidden * 4 +
-                       (double)c->topk * (3.0 * c->inter * c->hidden + (2.0 * c->inter + c->hidden) * 4)) +
-                       (double)c->vocab * c->hidden * 2;
+    /* weight bytes one decode token reads: q/k/v/o FP16 + router FP32 per layer, K routed experts per layer (int8 or int4), lm_head FP16 */
+    m->gpu_bytes_tok = (double)c->n_layers * (4.0 * c->hidden * c->hidden * 2 + (double)c->n_experts * c->hidden * 4) +
+                       (double)c->topk * ((double)(c->n_layers - n4l) * per8 + (double)n4l * per4) + (double)c->vocab * c->hidden * 2;
     if (g_oc.prof_enable && getenv("LMA_GPU_PROF") && atoi(getenv("LMA_GPU_PROF"))) g_oc.prof_enable(1);
-    fprintf(stderr, "[GPU] ready in %.1fs: %d/%d experts resident in VRAM (%.2f GB), ctx %d, %s%s\n",
-            now_s() - t0, loaded, want, (double)loaded * per / 1e9, max_t,
+    fprintf(stderr, "[GPU] ready in %.1fs: %d/%d experts resident in VRAM (%.2f GB%s), ctx %d, %s%s\n",
+            now_s() - t0, loaded, want, ((double)nl[0] * per8 + (double)nl[1] * per4) / 1e9, n4l ? ", int4 layers lossy" : "", max_t,
             m->gpu_all_resident ? "all resident (no host sync per layer)" : "partial residency (LRU + on-demand upload)",
             g_gpu_verify ? ", VERIFY vs CPU" : "");
+    if (n4l) fprintf(stderr, "[GPU] High-Fidelity int4 experts ON for %d/%d layers (group-32 FP16 scales, lossy)\n", n4l, c->n_layers);
 }
 
-/* pick a slot: a free one, else the least recently used that is not in `keep` */
-static int gpu_pick_slot(Model *m, const int *keep, int nkeep) {
+/* pick a slot of pool `pool`: a free one, else the least recently used that is not in `keep` */
+static int gpu_pick_slot(Model *m, int pool, const int *keep, int nkeep) {
     int best = -1; uint64_t bu = ~0ULL;
-    for (int i = 0; i < m->gpu_n_slots; i++) {
-        if (m->gpu_slot_owner[i] < 0) return i;
+    for (int i = 0; i < m->gpu_np[pool]; i++) {
+        if (m->gpu_owner[pool][i] < 0) return i;
         int kept = 0;
         for (int j = 0; j < nkeep; j++) if (keep[j] == i) { kept = 1; break; }
         if (kept) continue;
-        if (m->gpu_slot_use[i] < bu) { bu = m->gpu_slot_use[i]; best = i; }
+        if (m->gpu_use[pool][i] < bu) { bu = m->gpu_use[pool][i]; best = i; }
     }
     return best;
+}
+
+/* ---- Atomic Compiler backend: expert overlay shards ----
+ * QCOMPILE=<lo>-<hi> QC_OUT=<file> (with SNAP): re-quantise the int8 experts of layers lo..hi to the int4 group-32 format
+ * and write them as ONE safetensors overlay shard (tensors `model.layers.L.mlp.experts.E.w4` U8 and `.s4` F16). The
+ * runtime (LMA_EXPERT_OVERLAY) then reads 0.5625 B/weight from disk instead of re-quantising int8 at load time. The
+ * quantiser is quant_expert_i4 -- the very function the on-the-fly fallback uses -- so both routes give identical weights.
+ * The Python driver (lmatomic/compiler.py) orchestrates shards, checksums and resume; this function never writes
+ * anywhere but QC_OUT and never touches the source model. */
+static int qcompile(const char *snap, const char *spec, const char *outp) {
+    Cfg c; load_cfg(&c, snap);
+    shards S; st_init(&S, snap);
+    int lo = 0, hi = c.n_layers - 1;
+    if (sscanf(spec, "%d-%d", &lo, &hi) < 1) return 2;
+    if (strchr(spec, '-') == NULL) hi = lo;
+    if (lo < 0 || hi >= c.n_layers || lo > hi) { fprintf(stderr, "QCOMPILE: bad layer range %s\n", spec); return 2; }
+    if (getenv("LMA_HF_INT4_CLIP")) g_i4_clip = atoi(getenv("LMA_HF_INT4_CLIP"));
+    int64_t ng = (int64_t)c.inter * c.hidden, want_w = 3 * ng, w4b = 3 * ng / 2, s4n = 3 * ng / 32;
+    if (c.hidden % 32 || c.inter % 32) { fprintf(stderr, "QCOMPILE: hidden/inter must be multiples of 32\n"); return 2; }
+    int nl = hi - lo + 1, ne = c.n_experts;
+    size_t hcap = (size_t)nl * ne * 480 + 512, hp = 0;
+    char *hdr = malloc(hcap);
+    hp += (size_t)snprintf(hdr + hp, hcap - hp, "{\"__metadata__\":{\"lma_overlay\":\"int4-g32-fp16\"}");
+    int64_t off = 0;
+    for (int l = lo; l <= hi; l++)
+        for (int e = 0; e < ne; e++) {
+            hp += (size_t)snprintf(hdr + hp, hcap - hp, ",\"model.layers.%d.mlp.experts.%d.w4\":{\"dtype\":\"U8\",\"shape\":[%lld],\"data_offsets\":[%lld,%lld]}",
+                                   l, e, (long long)w4b, (long long)off, (long long)(off + w4b));
+            off += w4b;
+            hp += (size_t)snprintf(hdr + hp, hcap - hp, ",\"model.layers.%d.mlp.experts.%d.s4\":{\"dtype\":\"F16\",\"shape\":[%lld],\"data_offsets\":[%lld,%lld]}",
+                                   l, e, (long long)s4n, (long long)off, (long long)(off + 2 * s4n));
+            off += 2 * s4n;
+        }
+    hp += (size_t)snprintf(hdr + hp, hcap - hp, "}");
+    while (hp % 8) hdr[hp++] = ' ';
+    FILE *f = fopen(outp, "wb");
+    if (!f) { perror(outp); return 1; }
+    uint64_t hl = (uint64_t)hp;
+    fwrite(&hl, 8, 1, f); fwrite(hdr, 1, hp, f);
+    int8_t *w = malloc((size_t)want_w), *w_chk = NULL; (void)w_chk;
+    float *qs = malloc((size_t)(2 * c.inter + c.hidden) * sizeof(float));
+    uint8_t *w4 = malloc((size_t)w4b); uint16_t *s4 = malloc((size_t)s4n * 2);
+    for (int l = lo; l <= hi; l++) {
+        for (int e = 0; e < ne; e++) {
+            char nm[256], qn[256];
+            snprintf(nm, sizeof nm, "model.layers.%d.mlp.experts.%d.merged_weight", l, e);
+            snprintf(qn, sizeof qn, "model.layers.%d.mlp.experts.%d.qs", l, e);
+            st_tensor *tw = st_find(&S, nm), *ts = st_find(&S, qn);
+            if (!tw || tw->nbytes != want_w || !ts || ts->numel != (int64_t)(2 * c.inter + c.hidden)) {
+                fprintf(stderr, "QCOMPILE: layer %d expert %d missing or mis-sized\n", l, e); fclose(f); return 1; }
+            st_read_raw(&S, nm, w, 0); st_read_f32(&S, qn, qs, 0);
+            quant_expert_i4(w, qs, c.inter, c.hidden, w4, s4);
+            if (fwrite(w4, 1, (size_t)w4b, f) != (size_t)w4b || fwrite(s4, 2, (size_t)s4n, f) != (size_t)s4n) { perror("write"); fclose(f); return 1; }
+        }
+        fprintf(stderr, "[QCOMPILE] layer %d done\n", l);
+    }
+    if (fclose(f) != 0) { perror("close"); return 1; }
+    free(w); free(qs); free(w4); free(s4); free(hdr);
+    printf("QCOMPILE ok %s bytes=%lld\n", outp, (long long)(8 + hp + off));
+    return 0;
 }
 
 /* one decode token on the GPU. Returns 1 on success, 0 on failure (caller falls back to the CPU). */
@@ -1798,16 +1979,16 @@ static int gpu_decode(Model *m, int tok, int pos, float *logit_out, int mirror_k
         m->gpu_fetch_syncs++;
         for (int k = 0; k < K; k++) {
             if (ids[k] < 0) { slots[k] = -2; continue; }      /* dropped by High-Fidelity sparsity */
-            int idx = l * E + ids[k], sl = m->gpu_slot_of[idx];
+            int idx = l * E + ids[k], sl = m->gpu_slot_of[idx], pool = m->gpu_fmt[l];
             if (sl < 0) {
-                sl = gpu_pick_slot(m, kept, nk);
+                sl = gpu_pick_slot(m, pool, kept, nk);
                 if (sl < 0) return 0;
-                int old = m->gpu_slot_owner[sl];
+                int old = m->gpu_owner[pool][sl];
                 if (old >= 0) { g_oc.unmap_expert(old / E, old % E); m->gpu_slot_of[old] = -1; }
                 if (!gpu_load_expert(m, l, ids[k], sl)) return 0;
-                m->gpu_slot_of[idx] = sl; m->gpu_slot_owner[sl] = idx; m->gpu_miss++;
+                m->gpu_slot_of[idx] = sl; m->gpu_owner[pool][sl] = idx; m->gpu_miss++;
             }
-            m->gpu_slot_use[sl] = ++m->gpu_clock; slots[k] = sl; kept[nk++] = sl;
+            m->gpu_use[pool][sl] = ++m->gpu_clock; slots[k] = sl; kept[nk++] = sl;
         }
         if (g_oc.layer_experts(slots) <= 0) return 0;
     }
@@ -1873,16 +2054,16 @@ static int gpu_prefill(Model *m, const int *ids, int S, int pos_base, float *log
             int nk = 0;
             for (int e = 0; e < E && ok; e++) {
                 if (!used[e]) continue;
-                int idx = l * E + e, sl = m->gpu_slot_of[idx];
+                int idx = l * E + e, sl = m->gpu_slot_of[idx], pool = m->gpu_fmt[l];
                 if (sl < 0) {
-                    sl = gpu_pick_slot(m, kept, nk);
+                    sl = gpu_pick_slot(m, pool, kept, nk);
                     if (sl < 0) { ok = 0; break; }
-                    int old = m->gpu_slot_owner[sl];
+                    int old = m->gpu_owner[pool][sl];
                     if (old >= 0) { g_oc.unmap_expert(old / E, old % E); m->gpu_slot_of[old] = -1; }
                     if (!gpu_load_expert(m, l, e, sl)) { ok = 0; break; }
-                    m->gpu_slot_of[idx] = sl; m->gpu_slot_owner[sl] = idx; m->gpu_miss++;
+                    m->gpu_slot_of[idx] = sl; m->gpu_owner[pool][sl] = idx; m->gpu_miss++;
                 }
-                m->gpu_slot_use[sl] = ++m->gpu_clock; kept[nk++] = sl;
+                m->gpu_use[pool][sl] = ++m->gpu_clock; kept[nk++] = sl;
             }
             if (ok && g_oc.pf_experts(l) <= 0) ok = 0;
         }
@@ -3010,6 +3191,9 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (getenv("QCOMPILE") && *getenv("QCOMPILE") && getenv("QC_OUT"))
+        return qcompile(snap, getenv("QCOMPILE"), getenv("QC_OUT"));
+
     /* SERVE=1: openai_server.py drives the engine over stdin/stdout (READY
      * handshake, SUBMIT/CANCEL, DATA/DONE/PROF frames, HWINFO/TIERS/EMAP for
      * the dashboard) — same protocol as glm52.c/inkling.c/kimi_k3.c. v1:
@@ -3115,6 +3299,15 @@ int main(int argc, char **argv) {
         printf("Expert cache hit rate: %.1f%%  (hit=%llu miss=%llu)\n", tot?100.0*m.hits/tot:0.0,
                (unsigned long long)m.hits, (unsigned long long)m.miss);
         printf("Speed: %.2f tok/s (%.1fs for %d tokens) | PEAK RSS: %.2f GB\n", scored/dt, dt, scored, rss_gb());
+        if (m.gpu_n_slots) {   /* GPU tiering counters for the giant emulator: what crossed disk/PCIe per token */
+            double pe = 3.0 * m.c.inter * m.c.hidden + (2.0 * m.c.inter + m.c.hidden) * 4;
+            uint64_t db = __atomic_load_n(&m.disk_bytes, __ATOMIC_RELAXED);
+            printf("[GPU_STATS] on=%d slots=%d/%d tokens=%llu expert_misses=%llu miss_per_token=%.2f fetch_syncs=%llu "
+                   "disk_gb_per_token=%.4f gpu_s=%.3f gpu_pf_s=%.3f expert_mb_int8=%.2f\n",
+                   m.gpu_on, m.gpu_n_slots, m.c.n_layers * m.c.n_experts, (unsigned long long)m.gpu_tokens,
+                   (unsigned long long)m.gpu_miss, m.gpu_tokens ? (double)m.gpu_miss / m.gpu_tokens : 0.0,
+                   (unsigned long long)m.gpu_fetch_syncs, scored ? (double)db / scored / 1e9 : 0.0, m.gpu_s, m.gpu_pf_s, pe / 1e6);
+        }
         free(buf); free(arena);
         return 0;      /* PPL is a measurement run: no rt_save on purpose, so a loss
                         * sweep cannot fold its own tokens into the persisted ranking */

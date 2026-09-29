@@ -41,6 +41,8 @@
 
 #define MAXK 16          /* max routed experts per token */
 #define GEMV_WARPS 8     /* rows per block */
+#define PF_MAX 128       /* batched path: max tokens per chunk */
+#define PF_R 8           /* batched path: token vectors sharing one weight-row read */
 
 struct LayerDev {
     __half *q, *k, *v, *o;           /* [D][D] FP16 */
@@ -56,6 +58,10 @@ struct G {
     LayerDev *layers = nullptr;
     __half *lm_head = nullptr; float *final_norm = nullptr;
     int8_t *slot_w = nullptr; float *slot_s = nullptr;   /* [n_slots][3*I*D] / [n_slots][2*I+D] */
+    uint8_t *slot_w4 = nullptr; __half *slot_s4 = nullptr; /* int4 pool: [n4][3*I*D/2] / [n4][3*I*D/32] */
+    int n_slots4 = 0; size_t w4_bytes = 0, s4_elems = 0;
+    unsigned char layer_fmt[128] = {0};                   /* 0 = int8 pool, 1 = int4 pool, per layer */
+    int cur_l = 0;
     int *slot_of = nullptr;                              /* [L*E] */
     size_t w_bytes = 0, s_elems = 0;
     /* scratch */
@@ -331,6 +337,148 @@ __global__ void k_expert_down(const int8_t *slot_w, const float *slot_s, const i
     if (lane == 0) x[row] += out;
 }
 
+/* ============================ int4 experts (High-Fidelity storage profile) ============================
+ * Lossy by construction: each expert row is re-quantised on the host from its int8 weights to symmetric 4-bit with one
+ * FP16 scale per 32 weights (so one 16-byte load = exactly one scale group). 0.5625 bytes/weight against 1.0 (+row scale)
+ * for int8: 1.78x fewer expert bytes to read from VRAM/PCIe/RAM/disk and 1.78x more experts per GB of VRAM.
+ * Per-expert layout: nibbles gate[I][D/2] | up[I][D/2] | down[D][I/2] (element 2j in the low nibble, biased by 8);
+ * scales (half) gate[I][D/32] | up[I][D/32] | down[D][I/32]. A layer uses either this format or the int8 one
+ * (per-layer mixed precision, oc_set_layer_fmt); both pools share the (layer, expert) -> slot table. */
+__device__ __forceinline__ float dot_i4_row(const uint8_t *__restrict__ w, const __half *__restrict__ sc, const float *xs, int n, int lane) {
+    const uint4 *wp = reinterpret_cast<const uint4 *>(w);
+    float acc = 0.f;
+    for (int j = lane; j < (n >> 5); j += 32) {
+        uint4 v = __ldg(wp + j);
+        const uint8_t *b = reinterpret_cast<const uint8_t *>(&v);
+        const float *xj = xs + (j << 5);
+        float a = 0.f;
+        #pragma unroll
+        for (int i = 0; i < 16; i++) a += (float)((int)(b[i] & 15) - 8) * xj[2 * i] + (float)((int)(b[i] >> 4) - 8) * xj[2 * i + 1];
+        acc += a * __half2float(sc[j]);
+    }
+    return warp_sum(acc);
+}
+
+__global__ void k_expert_gateup4(const uint8_t *slot_w, const __half *slot_s, const int *sel_slots, const float *x,
+                                 float *act, int D, int I, size_t w_bytes, size_t s_elems) {
+    extern __shared__ float xs[];
+    int k = blockIdx.y; int sl = sel_slots[k];
+    for (int i = threadIdx.x; i < D; i += blockDim.x) xs[i] = x[i];
+    __syncthreads();
+    if (sl < 0) return;
+    int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    int row = blockIdx.x * GEMV_WARPS + warp;
+    if (row >= I) return;
+    const uint8_t *w = slot_w + (size_t)sl * w_bytes; const __half *s = slot_s + (size_t)sl * s_elems;
+    float g = dot_i4_row(w + (size_t)row * (D >> 1), s + (size_t)row * (D >> 5), xs, D, lane);
+    float u = dot_i4_row(w + (size_t)I * (D >> 1) + (size_t)row * (D >> 1), s + (size_t)I * (D >> 5) + (size_t)row * (D >> 5), xs, D, lane);
+    if (lane == 0) act[k * I + row] = (g / (1.f + expf(-g))) * u;
+}
+
+__global__ void k_expert_down4(const uint8_t *slot_w, const __half *slot_s, const int *sel_slots, const float *sel_w,
+                               const float *act, float *x, int D, int I, int K, size_t w_bytes, size_t s_elems) {
+    int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    int row = blockIdx.x * GEMV_WARPS + warp;
+    if (row >= D) return;
+    float out = 0.f;
+    for (int k = 0; k < K; k++) {
+        int sl = sel_slots[k];
+        if (sl < 0) continue;
+        const uint8_t *w = slot_w + (size_t)sl * w_bytes + (size_t)I * D + (size_t)row * (I >> 1);   /* gate+up nibbles = I*D bytes */
+        const __half *s = slot_s + (size_t)sl * s_elems + (size_t)2 * I * (D >> 5) + (size_t)row * (I >> 5);
+        float acc = dot_i4_row(w, s, act + k * I, I, lane);
+        acc = __shfl_sync(0xffffffffu, acc, 0);
+        out += sel_w[k] * acc;
+    }
+    if (lane == 0) x[row] += out;
+}
+
+/* batched (prefill / verification) versions: PF_R tokens share each weight row read */
+__global__ void k_expert_gateup_rows4(const uint8_t *slot_w, const __half *slot_s, const int *slot_of, const int *cnt, const int *start,
+                                      const int *list, const float *X, float *act, int D, int I, int K, size_t w_bytes, size_t s_elems) {
+    extern __shared__ float xs[];
+    int e = blockIdx.z, c = blockIdx.y, ne = cnt[e], j0 = c * PF_R;
+    if (j0 >= ne) return;
+    int sl = slot_of[e]; if (sl < 0) return;
+    int nr = min(PF_R, ne - j0);
+    for (int r = 0; r < nr; r++) {
+        int tok = list[start[e] + j0 + r] / K;
+        for (int i = threadIdx.x; i < D; i += blockDim.x) xs[r * D + i] = X[(size_t)tok * D + i];
+    }
+    __syncthreads();
+    int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    int row = blockIdx.x * GEMV_WARPS + warp;
+    if (row >= I) return;
+    const uint8_t *w = slot_w + (size_t)sl * w_bytes; const __half *sc = slot_s + (size_t)sl * s_elems;
+    const uint4 *gp = reinterpret_cast<const uint4 *>(w + (size_t)row * (D >> 1));
+    const uint4 *up = reinterpret_cast<const uint4 *>(w + (size_t)I * (D >> 1) + (size_t)row * (D >> 1));
+    const __half *gs = sc + (size_t)row * (D >> 5), *us = sc + (size_t)I * (D >> 5) + (size_t)row * (D >> 5);
+    float ag[PF_R], au[PF_R];
+    #pragma unroll
+    for (int r = 0; r < PF_R; r++) { ag[r] = 0.f; au[r] = 0.f; }
+    for (int j = lane; j < (D >> 5); j += 32) {
+        uint4 gv = __ldg(gp + j), uv = __ldg(up + j);
+        const uint8_t *gb = reinterpret_cast<const uint8_t *>(&gv), *ub = reinterpret_cast<const uint8_t *>(&uv);
+        float gsc = __half2float(gs[j]), usc = __half2float(us[j]);
+        #pragma unroll
+        for (int r = 0; r < PF_R; r++) {
+            if (r < nr) {
+                const float *xj = xs + (size_t)r * D + (j << 5);
+                float a = 0.f, b = 0.f;
+                #pragma unroll
+                for (int i = 0; i < 16; i++) {
+                    a += (float)((int)(gb[i] & 15) - 8) * xj[2 * i] + (float)((int)(gb[i] >> 4) - 8) * xj[2 * i + 1];
+                    b += (float)((int)(ub[i] & 15) - 8) * xj[2 * i] + (float)((int)(ub[i] >> 4) - 8) * xj[2 * i + 1];
+                }
+                ag[r] += a * gsc; au[r] += b * usc;
+            }
+        }
+    }
+    #pragma unroll
+    for (int r = 0; r < PF_R; r++) {
+        float g = warp_sum(ag[r]), u = warp_sum(au[r]);
+        if (lane == 0 && r < nr) act[(size_t)(start[e] + j0 + r) * I + row] = (g / (1.f + expf(-g))) * u;
+    }
+}
+
+__global__ void k_expert_down_rows4(const uint8_t *slot_w, const __half *slot_s, const int *slot_of, const int *cnt, const int *start,
+                                    const int *list, const float *act, float *tbuf, int D, int I, size_t w_bytes, size_t s_elems) {
+    extern __shared__ float xs[];
+    int e = blockIdx.z, c = blockIdx.y, ne = cnt[e], j0 = c * PF_R;
+    if (j0 >= ne) return;
+    int sl = slot_of[e]; if (sl < 0) return;
+    int nr = min(PF_R, ne - j0);
+    for (int idx = threadIdx.x; idx < nr * I; idx += blockDim.x) xs[idx] = act[(size_t)(start[e] + j0) * I + idx];
+    __syncthreads();
+    int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    int row = blockIdx.x * GEMV_WARPS + warp;
+    if (row >= D) return;
+    const uint4 *dp = reinterpret_cast<const uint4 *>(slot_w + (size_t)sl * w_bytes + (size_t)I * D + (size_t)row * (I >> 1));
+    const __half *ds = slot_s + (size_t)sl * s_elems + (size_t)2 * I * (D >> 5) + (size_t)row * (I >> 5);
+    float ad[PF_R];
+    #pragma unroll
+    for (int r = 0; r < PF_R; r++) ad[r] = 0.f;
+    for (int j = lane; j < (I >> 5); j += 32) {
+        uint4 v = __ldg(dp + j); const uint8_t *b = reinterpret_cast<const uint8_t *>(&v);
+        float sc = __half2float(ds[j]);
+        #pragma unroll
+        for (int r = 0; r < PF_R; r++) {
+            if (r < nr) {
+                const float *xj = xs + (size_t)r * I + (j << 5);
+                float a = 0.f;
+                #pragma unroll
+                for (int i = 0; i < 16; i++) a += (float)((int)(b[i] & 15) - 8) * xj[2 * i] + (float)((int)(b[i] >> 4) - 8) * xj[2 * i + 1];
+                ad[r] += a * sc;
+            }
+        }
+    }
+    #pragma unroll
+    for (int r = 0; r < PF_R; r++) {
+        float a = warp_sum(ad[r]);
+        if (lane == 0 && r < nr) tbuf[(size_t)list[start[e] + j0 + r] * D + row] = a;
+    }
+}
+
 /* ------------------------------ host API ------------------------------ */
 
 #define UP(dst, src, bytes) do { CK(cudaMalloc(&(dst), (bytes))); CK(cudaMemcpy((dst), (src), (bytes), cudaMemcpyHostToDevice)); } while (0)
@@ -342,7 +490,9 @@ OC_API int oc_init(int device, int layers, int hidden, int heads, int head_dim, 
     CK(cudaSetDevice(device));
     g.dev = device; g.L = layers; g.D = hidden; g.H = heads; g.hd = head_dim; g.I = inter; g.E = nexp; g.K = topk;
     g.V = vocab; g.max_t = max_t; g.eps = eps; g.theta = theta; g.norm_topk = norm_topk;
+    if (hidden % 32 || inter % 32 || layers > 128) return -2;
     g.w_bytes = (size_t)3 * inter * hidden; g.s_elems = (size_t)2 * inter + hidden;
+    g.w4_bytes = (size_t)3 * inter * hidden / 2; g.s4_elems = (size_t)3 * inter * hidden / 32;
     g.layers = (LayerDev *)calloc(layers, sizeof(LayerDev));
     CK(cudaStreamCreateWithFlags(&g.st, cudaStreamNonBlocking));
     size_t kvb = (size_t)heads * max_t * head_dim * sizeof(float);
@@ -396,6 +546,26 @@ OC_API int oc_alloc_slots(int n) {
     g.n_slots = n;
     return n;
 }
+
+/* int4 pool (High-Fidelity storage): same contract as oc_alloc_slots / oc_upload_expert, other format */
+OC_API int oc_alloc_slots4(int n) {
+    g.n_slots4 = 0;
+    if (n < 1) return 0;
+    if (cudaMalloc(&g.slot_w4, g.w4_bytes * n) != cudaSuccess) { cudaGetLastError(); g.slot_w4 = nullptr; }
+    while (n > 16 && !g.slot_w4) { n -= 16; if (cudaMalloc(&g.slot_w4, g.w4_bytes * n) != cudaSuccess) { cudaGetLastError(); g.slot_w4 = nullptr; } }
+    if (!g.slot_w4) return 0;
+    if (cudaMalloc(&g.slot_s4, g.s4_elems * 2 * n) != cudaSuccess) { cudaGetLastError(); cudaFree(g.slot_w4); g.slot_w4 = nullptr; return 0; }
+    g.n_slots4 = n;
+    return n;
+}
+OC_API int oc_upload_expert4(int layer, int eid, int slot, const uint8_t *w, const uint16_t *s) {
+    if (slot < 0 || slot >= g.n_slots4) return -3;
+    CK(cudaMemcpy(g.slot_w4 + (size_t)slot * g.w4_bytes, w, g.w4_bytes, cudaMemcpyHostToDevice));
+    CK(cudaMemcpy(g.slot_s4 + (size_t)slot * g.s4_elems, s, g.s4_elems * 2, cudaMemcpyHostToDevice));
+    CK(cudaMemcpy(g.slot_of + (size_t)layer * g.E + eid, &slot, 4, cudaMemcpyHostToDevice));
+    return 1;
+}
+OC_API void oc_set_layer_fmt(int l, int fmt) { if (l >= 0 && l < 128) g.layer_fmt[l] = (unsigned char)fmt; }
 
 /* copy one expert (merged int8 blob + scales) into a VRAM slot and publish it in the device table */
 OC_API int oc_upload_expert(int layer, int eid, int slot, const int8_t *w, const float *s) {
@@ -458,6 +628,7 @@ OC_API int oc_layer_attn(int l) {
 
 OC_API int oc_layer_route(int l) {
     LayerDev *L = &g.layers[l]; int D = g.D;
+    g.cur_l = l;
     prof_begin(P_ROUTE);
     k_rmsnorm2<<<dim3(1, 1), 256, 0, g.st>>>(g.xn, g.x, L->post_ln, g.xn, g.x, L->post_ln, D, g.eps);
     k_gemv_f32<<<(g.E + GEMV_WARPS - 1) / GEMV_WARPS, 32 * GEMV_WARPS, (size_t)D * 4, g.st>>>(L->gate, g.xn, g.logits_e, D, g.E);
@@ -483,12 +654,20 @@ OC_API int oc_layer_experts(const int *slots) {
     int D = g.D, I = g.I;
     if (slots) CK(cudaMemcpyAsync(g.sel_slots, slots, g.K * 4, cudaMemcpyHostToDevice, g.st));
     prof_begin(P_GATEUP);
-    k_expert_gateup<<<dim3((I + GEMV_WARPS - 1) / GEMV_WARPS, g.K), 32 * GEMV_WARPS, (size_t)D * 4, g.st>>>(
-        g.slot_w, g.slot_s, g.sel_slots, g.xn, g.act, D, I, g.w_bytes, g.s_elems);
+    if (g.layer_fmt[g.cur_l])
+        k_expert_gateup4<<<dim3((I + GEMV_WARPS - 1) / GEMV_WARPS, g.K), 32 * GEMV_WARPS, (size_t)D * 4, g.st>>>(
+            g.slot_w4, g.slot_s4, g.sel_slots, g.xn, g.act, D, I, g.w4_bytes, g.s4_elems);
+    else
+        k_expert_gateup<<<dim3((I + GEMV_WARPS - 1) / GEMV_WARPS, g.K), 32 * GEMV_WARPS, (size_t)D * 4, g.st>>>(
+            g.slot_w, g.slot_s, g.sel_slots, g.xn, g.act, D, I, g.w_bytes, g.s_elems);
     prof_end();
     prof_begin(P_DOWN);
-    k_expert_down<<<(D + GEMV_WARPS - 1) / GEMV_WARPS, 32 * GEMV_WARPS, 0, g.st>>>(
-        g.slot_w, g.slot_s, g.sel_slots, g.sel_w, g.act, g.x, D, I, g.K, g.w_bytes, g.s_elems);
+    if (g.layer_fmt[g.cur_l])
+        k_expert_down4<<<(D + GEMV_WARPS - 1) / GEMV_WARPS, 32 * GEMV_WARPS, 0, g.st>>>(
+            g.slot_w4, g.slot_s4, g.sel_slots, g.sel_w, g.act, g.x, D, I, g.K, g.w4_bytes, g.s4_elems);
+    else
+        k_expert_down<<<(D + GEMV_WARPS - 1) / GEMV_WARPS, 32 * GEMV_WARPS, 0, g.st>>>(
+            g.slot_w, g.slot_s, g.sel_slots, g.sel_w, g.act, g.x, D, I, g.K, g.w_bytes, g.s_elems);
     prof_end();
     CK(cudaGetLastError());
     return 1;
@@ -517,8 +696,6 @@ OC_API int oc_finish(float *logits_out, float *kv_stage_out) {
  * re-reads by the other token chunks are served from L2. Tokens are grouped per expert so each routed
  * expert's weights stream once per chunk of its tokens. Each (token, k) expert output is written to its own
  * slot of tbuf and summed per token in fixed k order, i.e. the same accumulation order as decode/CPU. */
-#define PF_MAX 128
-#define PF_R 8
 struct PF {
     int S = 0, pos = 0, ok = 0;
     float *x, *xn, *q, *k, *v, *ctx, *logits_e, *w_sel, *act, *tbuf, *kvl;
@@ -813,6 +990,8 @@ static int pf_alloc(void) {
     CK(cudaFuncSetAttribute(k_gemv_f16_rows<PF_R>, cudaFuncAttributeMaxDynamicSharedMemorySize, PF_R * g.D * 4));
     CK(cudaFuncSetAttribute(k_expert_gateup_rows, cudaFuncAttributeMaxDynamicSharedMemorySize, PF_R * g.D * 4));
     CK(cudaFuncSetAttribute(k_expert_down_rows, cudaFuncAttributeMaxDynamicSharedMemorySize, PF_R * g.I * 4));
+    CK(cudaFuncSetAttribute(k_expert_gateup_rows4, cudaFuncAttributeMaxDynamicSharedMemorySize, PF_R * g.D * 4));
+    CK(cudaFuncSetAttribute(k_expert_down_rows4, cudaFuncAttributeMaxDynamicSharedMemorySize, PF_R * g.I * 4));
     pf.ok = 1;
     return 1;
 }
@@ -869,10 +1048,17 @@ OC_API int oc_pf_experts(int l) {
     int D = g.D, I = g.I, S = pf.S, E = g.E, K = g.K;
     int chunks = (S + PF_R - 1) / PF_R;   /* an expert appears at most once per token, so ne <= S */
     const int *slot_of = g.slot_of + (size_t)l * E;
+    if (g.layer_fmt[l]) {
+        k_expert_gateup_rows4<<<dim3((I + GEMV_WARPS - 1) / GEMV_WARPS, chunks, E), 32 * GEMV_WARPS, (size_t)PF_R * D * 4, g.st>>>(
+            g.slot_w4, g.slot_s4, slot_of, pf.cnt, pf.start, pf.list, pf.xn, pf.act, D, I, K, g.w4_bytes, g.s4_elems);
+        k_expert_down_rows4<<<dim3((D + GEMV_WARPS - 1) / GEMV_WARPS, chunks, E), 32 * GEMV_WARPS, (size_t)PF_R * I * 4, g.st>>>(
+            g.slot_w4, g.slot_s4, slot_of, pf.cnt, pf.start, pf.list, pf.act, pf.tbuf, D, I, g.w4_bytes, g.s4_elems);
+    } else {
     k_expert_gateup_rows<<<dim3((I + GEMV_WARPS - 1) / GEMV_WARPS, chunks, E), 32 * GEMV_WARPS, (size_t)PF_R * D * 4, g.st>>>(
         g.slot_w, g.slot_s, slot_of, pf.cnt, pf.start, pf.list, pf.xn, pf.act, D, I, K, g.w_bytes, g.s_elems);
     k_expert_down_rows<<<dim3((D + GEMV_WARPS - 1) / GEMV_WARPS, chunks, E), 32 * GEMV_WARPS, (size_t)PF_R * I * 4, g.st>>>(
         g.slot_w, g.slot_s, slot_of, pf.cnt, pf.start, pf.list, pf.act, pf.tbuf, D, I, g.w_bytes, g.s_elems);
+    }
     k_combine<<<S, 256, 0, g.st>>>(pf.x, pf.tbuf, pf.w_sel, pf.ids, D, K);
     CK(cudaGetLastError());
     return 1;

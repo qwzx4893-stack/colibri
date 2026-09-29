@@ -34,24 +34,31 @@ GIANTS = {
     "500B_A8B": dict(total_b=500, dense_b=2, layers=60, experts=640, topk=8),
     "500B_A16B": dict(total_b=500, dense_b=4, layers=60, experts=320, topk=8),
     "500B_A31B": dict(total_b=500, dense_b=6, layers=90, experts=160, topk=8),
+    "30B_A3B": dict(total_b=30, dense_b=1.3, layers=48, experts=128, topk=8),
+    "60B_A5B": dict(total_b=60, dense_b=1.5, layers=48, experts=128, topk=8),
 }
 
 
-def preset_dims(name):
+def preset_dims(name, gpu_shape=False):
     g = GIANTS[name]
     routed = (g["total_b"] - g["dense_b"]) * 1e9
     pe = routed / (g["layers"] * g["experts"])
     active_b = (g["dense_b"] * 1e9 + g["layers"] * g["topk"] * pe) / 1e9
     inter = round(pe / (3 * HIDDEN))
+    if gpu_shape:                    # the CUDA kernels need inter % 32 == 0
+        inter = max(32, (inter + 16) // 32 * 32)
     w_bytes = 3 * inter * HIDDEN
     s_elems = 2 * inter + HIDDEN
     return dict(layers=g["layers"], experts=g["experts"], topk=g["topk"], inter=inter,
                 w_bytes=w_bytes, s_elems=s_elems, active_b=active_b, total_b=g["total_b"])
 
 
-def build(preset_name, out_dir, pool_gb=2.0, seed=0):
+def build(preset_name, out_dir, pool_gb=2.0, seed=0, gpu_shape=False):
     import random
-    d = preset_dims(preset_name)
+    global N_HEADS
+    if gpu_shape:
+        N_HEADS = 4                  # head_dim 128, what the CUDA path implements
+    d = preset_dims(preset_name, gpu_shape)
     os.makedirs(out_dir, exist_ok=True)
     expert_bytes_total = d["w_bytes"] + d["s_elems"] * 4
     pool_blocks = max(4, int(pool_gb * 1e9 / expert_bytes_total))
@@ -79,15 +86,25 @@ def build(preset_name, out_dir, pool_gb=2.0, seed=0):
     def randfloats(n):
         return struct.pack(f"<{n}f", *[rng.uniform(-1, 1) for _ in range(n)])
 
+    def randhalves(n):   # FP16 dense tensors (what the checkpoint format stores and the GPU path keeps resident)
+        return struct.pack(f"<{n}e", *[rng.uniform(-1, 1) * 0.05 for _ in range(n)])
+
     add_tensor("model.embed_tokens.weight", "F32", [VOCAB, HIDDEN], VOCAB*HIDDEN*4, randfloats(VOCAB*HIDDEN))
-    add_tensor("lm_head.weight", "F32", [VOCAB, HIDDEN], VOCAB*HIDDEN*4, randfloats(VOCAB*HIDDEN))
+    if gpu_shape:
+        add_tensor("lm_head.weight", "F16", [VOCAB, HIDDEN], VOCAB*HIDDEN*2, randhalves(VOCAB*HIDDEN))
+    else:
+        add_tensor("lm_head.weight", "F32", [VOCAB, HIDDEN], VOCAB*HIDDEN*4, randfloats(VOCAB*HIDDEN))
     add_tensor("model.norm.weight", "F32", [HIDDEN], HIDDEN*4, randfloats(HIDDEN))
     for i in range(n_layers):
         add_tensor(f"model.layers.{i}.input_layernorm.weight", "F32", [HIDDEN], HIDDEN*4, randfloats(HIDDEN))
         add_tensor(f"model.layers.{i}.post_attention_layernorm.weight", "F32", [HIDDEN], HIDDEN*4, randfloats(HIDDEN))
         for proj in ("q_proj", "k_proj", "v_proj", "o_proj"):
-            add_tensor(f"model.layers.{i}.self_attn.{proj}.weight", "F32", [HIDDEN, HIDDEN],
-                       HIDDEN*HIDDEN*4, randfloats(HIDDEN*HIDDEN))
+            if gpu_shape:
+                add_tensor(f"model.layers.{i}.self_attn.{proj}.weight", "F16", [HIDDEN, HIDDEN],
+                           HIDDEN*HIDDEN*2, randhalves(HIDDEN*HIDDEN))
+            else:
+                add_tensor(f"model.layers.{i}.self_attn.{proj}.weight", "F32", [HIDDEN, HIDDEN],
+                           HIDDEN*HIDDEN*4, randfloats(HIDDEN*HIDDEN))
         add_tensor(f"model.layers.{i}.self_attn.q_norm.weight", "F32", [HIDDEN], HIDDEN*4, randfloats(HIDDEN))
         add_tensor(f"model.layers.{i}.self_attn.k_norm.weight", "F32", [HIDDEN], HIDDEN*4, randfloats(HIDDEN))
         add_tensor(f"model.layers.{i}.mlp.gate.weight", "F32", [n_experts, HIDDEN],
@@ -144,9 +161,42 @@ def build(preset_name, out_dir, pool_gb=2.0, seed=0):
                 total_expert_ids=total_expert_tensors, n_layers=n_layers, n_experts=n_experts, vocab=VOCAB)
 
 
+def build_overlay(preset_name, out_dir, pool_gb=2.0, seed=1, gpu_shape=True):
+    """int4 overlay for the emulated model: `.w4` (U8) / `.s4` (F16) tensors for every (layer, expert), aliasing a pool of
+    REAL written blocks exactly like the int8 shard does, so every read is a genuine pread of int4-sized data."""
+    import random
+    d = preset_dims(preset_name, gpu_shape)
+    os.makedirs(out_dir, exist_ok=True)
+    ng = d["inter"] * HIDDEN
+    w4b, s4n = 3 * ng // 2, 3 * ng // 32
+    blk = w4b + 2 * s4n
+    pool_blocks = max(4, int(pool_gb * 1e9 / blk))
+    rng = random.Random(seed)
+    header, chunks, offset = {}, [], 0
+    pool = []
+    for b in range(pool_blocks):
+        pool.append(offset)
+        chunks.append(rng.randbytes(blk)); offset += blk
+    for l in range(d["layers"]):
+        for e in range(d["experts"]):
+            o = pool[(l * d["experts"] + e) % pool_blocks]
+            header[f"model.layers.{l}.mlp.experts.{e}.w4"] = {"dtype": "U8", "shape": [w4b], "data_offsets": [o, o + w4b]}
+            header[f"model.layers.{l}.mlp.experts.{e}.s4"] = {"dtype": "F16", "shape": [s4n], "data_offsets": [o + w4b, o + blk]}
+    hj = json.dumps(header).encode("utf-8")
+    path = os.path.join(out_dir, "overlay-00000.safetensors")
+    with open(path, "wb") as f:
+        f.write(struct.pack("<Q", len(hj))); f.write(hj)
+        for c in chunks: f.write(c)
+    print(f"[{preset_name}] int4 overlay: {blk/1e6:.2f} MB/expert, {pool_blocks} real blocks, {os.path.getsize(path)/1e9:.2f} GB on disk")
+    return dict(dir=out_dir, expert_mb_int4=blk / 1e6)
+
+
 if __name__ == "__main__":
     preset = sys.argv[1]
     out_dir = sys.argv[2]
     pool_gb = float(sys.argv[3]) if len(sys.argv) > 3 else 2.0
-    info = build(preset, out_dir, pool_gb=pool_gb)
+    gpu = "--gpu" in sys.argv
+    info = build(preset, out_dir, pool_gb=pool_gb, gpu_shape=gpu)
+    if "--int4" in sys.argv:
+        info["overlay"] = build_overlay(preset, out_dir + "_int4", pool_gb=pool_gb)
     print(json.dumps(info, indent=2))

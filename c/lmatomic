@@ -507,6 +507,17 @@ def env_for_engine(a, arch, plan=None):
             env.setdefault("PILOT", "2"); env.setdefault("WIDE", "3")
             env.setdefault("HOT", "8"); env.setdefault("HOT_REEVAL_TOK", "0")
             env.setdefault("PILOT_WORKERS", "4"); env.setdefault("SCHED_COST", "1")
+        # A stored, still-valid Model Agent profile (same model AND same hardware) contributes runtime defaults: the CPU
+        # baseline the GPU circuit breaker compares against and, when Exact was below the daily-use target, the selected
+        # High-Fidelity profile. setdefault: anything the user set explicitly wins. Failure here never blocks a launch.
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from lmatomic import profiles as _prof
+            if getattr(a, "model", None):
+                for _k, _v in _prof.runtime_env(_prof.load_profile(a.model)).items():
+                    env.setdefault(_k, _v)
+        except Exception:
+            pass
         # "auto": no defaults injected here — olmoe.c's own built-in defaults
         # (PILOT=0, PILOT_WORKERS=2, SCHED_COST=1, PREDICT_BETA=0.4) apply,
         # and the Model Agent's pin_hot_fraction (if a profile exists) already
@@ -1185,6 +1196,14 @@ def stream_turn(p, sentinel, on_bytes):
             on_bytes(out)
 
 # ---------- comandi ----------
+def cmd_auto(a):
+    """Measure this model on this machine once and store the result; later launches reuse it automatically."""
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from lmatomic import auto as _auto
+    require_model(a.model, file="config.json")
+    _auto.run(a.model, target=a.target, rebuild=a.rebuild, log=print)
+    return 0
+
 def cmd_build(a):
     banner("build")
     if not os.path.exists(os.path.join(HERE, "Makefile")):
@@ -2728,8 +2747,11 @@ def main():
     pc.add_argument("--group-size",type=int,default=None,
         help="int4 scale group size: 64 (default, group-scaled quality) or 0 (legacy per-row)")
     pc.add_argument("--no-mtp",action="store_true",help="skip the MTP head (no speculative drafts)")
+    pa=sub.add_parser("auto", parents=[common], help="Add Model -> Analyze -> Benchmark -> Optimize -> Ready")
+    pa.add_argument("--target",type=float,default=None,help="daily-use tok/s target (default 30)")
+    pa.add_argument("--rebuild",action="store_true",help="ignore a stored profile and measure again")
     a=ap.parse_args()
-    handler={"build":cmd_build,"info":cmd_info,"plan":cmd_plan,"mirror":cmd_mirror,
+    handler={"auto":cmd_auto,"build":cmd_build,"info":cmd_info,"plan":cmd_plan,"mirror":cmd_mirror,
              "doctor":cmd_doctor,"tune":cmd_tune,
              "run":cmd_run,"chat":cmd_chat,"serve":cmd_serve,"stop":cmd_stop,"bench":cmd_bench,
              "convert":cmd_convert,"web":cmd_web}.get(a.cmd)

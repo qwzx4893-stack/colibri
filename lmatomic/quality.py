@@ -197,6 +197,16 @@ def build_qref(model_dir, suite_results, out_json, max_len=1900, exe=None):
     return len(ids)
 
 
+def dump_logits(model_dir, env, qref_json, out_path, exe=None, timeout=3600):
+    """Teacher-forced pass of the engine over `qref_json` (see build_qref) with profile `env`, writing the QDUMP file.
+    Returns the engine's TF-NLL summary line."""
+    exe = exe or str(CDIR / ("olmoe.exe" if sys.platform == "win32" else "olmoe"))
+    e = dict(os.environ, SNAP=str(model_dir), PPL="1", QDUMP=str(out_path), LMA_GPU_CTX="2048", LMA_TEMP="0")
+    e.update(env or {})
+    r = subprocess.run([exe, "64", "8", str(qref_json)], env=e, capture_output=True, text=True, timeout=timeout)
+    return next((l for l in r.stdout.splitlines() if l.startswith("TF-NLL")), None)
+
+
 def read_dump(path):
     """QDUMP file: int32 vocab, int32 n, then n records of (int32 target, float32 logprob[vocab])."""
     import numpy as np
