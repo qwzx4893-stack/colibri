@@ -114,6 +114,7 @@ typedef struct {
 /* ---------- pesi densi per-layer ---------- */
 typedef struct {
     float *in_ln, *post_ln, *q, *k, *v, *o, *qn, *kn, *gate;
+    uint16_t *q_h, *k_h, *v_h, *o_h;   /* FP16-resident twins of q/k/v/o (LMA_DENSE_F16); when set the FP32 pointer is NULL */
 } Layer;
 
 /* ---------- cache LRU degli expert (pesi QUANTIZZATI) ----------
@@ -135,6 +136,7 @@ typedef struct {
     shards S;
     int quant_bits;
     float *embed, *lm_head, *final_norm;
+    uint16_t *lm_head_h;    /* FP16-resident lm_head (LMA_DENSE_F16); lm_head is NULL when set */
     Layer *L;
     LCache *cache;          /* [n_layers] */
     uint64_t clock, hits, miss;
@@ -402,6 +404,42 @@ static float g_temp = 0.7f;   /* TEMP env overrides */
 static float g_nuc  = 0.95f;  /* NUCLEUS env overrides */
 #include "sample.h"
 
+/* LM ATOMIC Exact-Mode bandwidth reduction: the checkpoint stores the dense
+ * attention/lm_head weights as FP16, and this engine used to expand them to FP32
+ * in RAM, doubling the bytes streamed from DRAM per token (~1.5 GB/token of the
+ * ~2.3 GB a cached decode step reads). FP16->FP32 is exact, so keeping them FP16
+ * resident and converting in registers changes no value. matmul_h reproduces the
+ * exact reduction structure GCC emits for matmul() below (verified in the
+ * assembly): ONE 8-lane accumulator, acc = acc + (x*w) per lane as separate
+ * multiply and add (no FMA in the vector body), then lanes 0..7 summed
+ * sequentially from 0.0f. Same order, same roundings => bit-identical results;
+ * tests/ + the A/B token comparison prove it rather than assume it.
+ * Enabled by LMA_DENSE_F16 (default 1) only for the standalone engine and only
+ * when I % 8 == 0 and the tensor really is FP16; anything else stays FP32. */
+static int g_dense_f16 = 0;
+#if defined(__AVX2__) && defined(__F16C__)
+#include <immintrin.h>
+static void matmul_h(float *y, const float *x, const uint16_t *W, int S, int I, int O) {
+    #pragma omp parallel for schedule(static)
+    for (int o = 0; o < O; o++) {
+        const uint16_t *w = W + (int64_t)o * I;
+        for (int s = 0; s < S; s++) {
+            const float *xs = x + (int64_t)s * I;
+            __m256 acc = _mm256_setzero_ps();
+            for (int i = 0; i < I; i += 8) {
+                __m256 wv = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)(w + i)));
+                acc = _mm256_add_ps(_mm256_mul_ps(_mm256_loadu_ps(xs + i), wv), acc);
+            }
+            float lane[8]; _mm256_storeu_ps(lane, acc);
+            float r = 0.f;
+            for (int k = 0; k < 8; k++) r += lane[k];
+            y[(int64_t)s * O + o] = r;
+        }
+    }
+}
+#define LMA_HAVE_MATMUL_H 1
+#endif
+
 /* y[S,O] = x[S,I] @ W^T,  W e' [O,I] row-major */
 static void matmul(float *y, const float *x, const float *W, int S, int I, int O) {
     #pragma omp parallel for schedule(static)
@@ -612,6 +650,35 @@ static float *load_t(Model *m, const char *name) {
     return p;
 }
 
+/* FP16-resident load (see matmul_h): returns NULL and fills *h when the tensor is
+ * FP16 with an inner dimension divisible by 8 and LMA_DENSE_F16 is on; otherwise
+ * loads the usual FP32 copy and leaves *h NULL. */
+static float *load_t_dense(Model *m, const char *name, uint16_t **h) {
+    *h = NULL;
+#ifdef LMA_HAVE_MATMUL_H
+    if (g_dense_f16) {
+        st_tensor *t = st_find(&m->S, name);
+        if (t && t->dtype == 1 && t->rank == 2 && (t->shape[1] % 8) == 0 && t->nbytes == t->numel * 2) {
+            uint16_t *p = malloc((size_t)t->nbytes);
+            if (!p) { fprintf(stderr, "OOM %s\n", name); exit(1); }
+            st_read_raw(&m->S, name, p, 0);
+            *h = p;
+            return NULL;
+        }
+    }
+#endif
+    return load_t(m, name);
+}
+
+/* y = x @ W^T with either the FP32 or the FP16-resident copy of W. */
+static inline void mm_dense(float *y, const float *x, const float *W, const uint16_t *Wh,
+                            int S, int I, int O) {
+#ifdef LMA_HAVE_MATMUL_H
+    if (Wh) { matmul_h(y, x, Wh, S, I, O); return; }
+#endif
+    matmul(y, x, W, S, I, O);
+}
+
 /* LM ATOMIC: close the loop from lmatomic/agent.py's offline analysis into
  * this engine's own runtime knobs. Reads <snap>/agent_profile.json (written
  * by `lmatomic agent`) for strategy.pin_hot_fraction — a crude substring
@@ -659,7 +726,7 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
     double t0 = now_s();
     if (load_boundaries) {
         m->embed      = load_t(m, "model.embed_tokens.weight");
-        m->lm_head    = load_t(m, "lm_head.weight");
+        m->lm_head    = load_t_dense(m, "lm_head.weight", &m->lm_head_h);
         m->final_norm = load_t(m, "model.norm.weight");
     }
     m->L = calloc(c->n_layers, sizeof(Layer));
@@ -669,8 +736,10 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
         #define LD(field, suffix) snprintf(nm,sizeof(nm),"model.layers.%d." suffix,i); l->field = load_t(m,nm)
         LD(in_ln,  "input_layernorm.weight");
         LD(post_ln,"post_attention_layernorm.weight");
-        LD(q, "self_attn.q_proj.weight"); LD(k, "self_attn.k_proj.weight");
-        LD(v, "self_attn.v_proj.weight"); LD(o, "self_attn.o_proj.weight");
+        #define LDD(field, hfield, suffix) snprintf(nm,sizeof(nm),"model.layers.%d." suffix,i); l->field = load_t_dense(m,nm,&l->hfield)
+        LDD(q, q_h, "self_attn.q_proj.weight"); LDD(k, k_h, "self_attn.k_proj.weight");
+        LDD(v, v_h, "self_attn.v_proj.weight"); LDD(o, o_h, "self_attn.o_proj.weight");
+        #undef LDD
         LD(qn,"self_attn.q_norm.weight"); LD(kn,"self_attn.k_norm.weight");
         LD(gate, "mlp.gate.weight");
         #undef LD
@@ -1178,9 +1247,9 @@ static void rope_head(float *x, int pos, const Cfg *c) {
 static void attention(Model *m, Layer *l, int layer, float *x, int S, int pos_base, float *out) {
     Cfg *c = &m->c; int H = c->n_heads, hd = c->head_dim, D = c->hidden;
     float *q = falloc((int64_t)S*D), *k = falloc((int64_t)S*D), *vv = falloc((int64_t)S*D);
-    matmul(q, x, l->q, S, D, D);
-    matmul(k, x, l->k, S, D, D);
-    matmul(vv, x, l->v, S, D, D);
+    mm_dense(q, x, l->q, l->q_h, S, D, D);
+    mm_dense(k, x, l->k, l->k_h, S, D, D);
+    mm_dense(vv, x, l->v, l->v_h, S, D, D);
     /* qk-norm sull'intero vettore hidden, poi RoPE per testa */
     for (int s = 0; s < S; s++) {
         rmsnorm_row(q + (int64_t)s*D, q + (int64_t)s*D, l->qn, D, c->eps);
@@ -1219,7 +1288,7 @@ static void attention(Model *m, Layer *l, int layer, float *x, int S, int pos_ba
         }
     }
     (void)Tk;
-    matmul(out, ctx, l->o, S, D, D);
+    mm_dense(out, ctx, l->o, l->o_h, S, D, D);
     free(q); free(k); free(vv); free(ctx);
 }
 
@@ -1541,7 +1610,7 @@ static float *step(Model *m, const int *ids, int S, int pos_base) {
             olmoe_echo(g_echo_id, pos_base, ids[0], g_pin_logit, c->vocab, g_echo_k);
         for (int p = 0; p + 1 < S; p++) {
             rmsnorm_row(erow, x + (int64_t)p*D, m->final_norm, D, c->eps);
-            matmul(elog, erow, m->lm_head, 1, D, c->vocab);
+            mm_dense(elog, erow, m->lm_head, m->lm_head_h, 1, D, c->vocab);
             olmoe_echo(g_echo_id, pos_base + p + 1, ids[p+1], elog, c->vocab, g_echo_k);
         }
         free(erow); free(elog);
@@ -1550,7 +1619,7 @@ static float *step(Model *m, const int *ids, int S, int pos_base) {
     rmsnorm_row(last, x + (int64_t)(S-1)*D, m->final_norm, D, c->eps);
     float *logit = falloc(c->vocab);
     double t_head = now_s();
-    matmul(logit, last, m->lm_head, 1, D, c->vocab);
+    mm_dense(logit, last, m->lm_head, m->lm_head_h, 1, D, c->vocab);
     g_prof_head_s += now_s() - t_head;
     g_prof_forwards += 1;   /* forward passes, not positions: a prefill of S rows is one */
     free(x); free(last);
@@ -2317,6 +2386,7 @@ int main(int argc, char **argv) {
     g_pilot_evict_guard = getenv("PILOT_EVICT_GUARD") ? atoi(getenv("PILOT_EVICT_GUARD")) : 1;
     g_expert_drop = getenv("EXPERT_DROP") ? atoi(getenv("EXPERT_DROP")) : 0;
     g_fused3     = getenv("FUSED3") ? atoi(getenv("FUSED3")) : 0;
+    g_dense_f16 = getenv("LMA_DENSE_F16") ? atoi(getenv("LMA_DENSE_F16")) : 1;
     g_giant_stick = getenv("LMA_GIANT_STICK") ? (float)atof(getenv("LMA_GIANT_STICK")) : 0.0f;
     if (g_giant_stick < 0.f) g_giant_stick = 0.f; if (g_giant_stick > 1.f) g_giant_stick = 1.f;
     if (g_wide < 1) g_wide = 1;

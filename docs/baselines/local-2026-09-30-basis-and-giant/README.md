@@ -54,3 +54,25 @@ The earlier single-sample rows suggested tok/s fell as locality rose. Repeated r
 Hit rate responds monotonically to injected locality; throughput is flat because at 10 slots for 128
 experts per layer even the favorable regime leaves ~80% of expert reads on disk. The cache, not the
 scheduler, is the limit at this RAM size. Raw data: `giant_100B_A9B_cap10_3reps.json`.
+
+## 5. Exact-Mode win: FP16-resident dense weights (`LMA_DENSE_F16`, default on)
+
+Correction to section 2: FUSED3 gaining only ~4% showed the cached engine is *memory-bandwidth*-bound,
+not ALU-bound. The checkpoint stores attention and lm_head as FP16 (743 MB) but the engine expanded them
+to FP32 in RAM, so every decode step streamed ~1.5 GB of dense weights instead of ~0.75 GB. FP16->FP32 is
+exact, so `matmul_h` keeps them FP16-resident and converts in registers, reproducing the exact reduction
+structure GCC emits for `matmul` (one 8-lane accumulator, separate mul/add, lanes summed sequentially
+from 0.0f — read from the generated assembly, not assumed).
+
+Measured (256 tokens greedy, all experts cached, 3 interleaved reps each):
+
+| config | median tok/s | min-max |
+|---|---|---|
+| FP32-resident (`LMA_DENSE_F16=0`) | 5.21 | 5.17-5.30 |
+| FP16-resident (default) | 6.80 | 6.69-6.86 |
+
+**+30.6%, token-exact across all six runs.** 1486 Python tests and every native C gate pass.
+Remaining per-token traffic is ~0.75 GB dense + ~0.8 GB int8 experts, i.e. a ~13 tok/s ceiling at this
+machine's ~20 GB/s RAM bandwidth. Reaching 30 tok/s in Exact Mode on this model therefore needs the
+GPU (207 GB/s VRAM, and the whole 7.2 GB model nearly fits in 7.45 GB free VRAM), which olmoe.c does
+not have today; that is the next real lever, not weight compression.
