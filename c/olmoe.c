@@ -227,6 +227,9 @@ typedef struct {
     float gpu_max_dlogit; uint64_t gpu_verify_n, gpu_verify_agree;   /* LMA_GPU_VERIFY statistics */
     uint64_t gpu_pf_rows, gpu_pf_calls; double gpu_pf_s;             /* GPU prefill: rows, calls, wall seconds */
     float gpu_pf_max_dlogit; uint64_t gpu_pf_verify_n, gpu_pf_verify_agree;
+    int gpu_win_n; double gpu_win_s; uint64_t gpu_win_miss;          /* circuit-breaker health window (32 decode tokens) */
+    double gpu_peak_d2d_gbs, gpu_peak_h2d_gbs, gpu_bytes_tok;         /* measured ceilings; weight bytes read per token */
+    char gpu_trip_reason[96];
     /* LM ATOMIC Physical Giant Emulator ONLY (see g_giant_stick above). */
     int *giant_prev_idx;             /* [n_layers * topk] */
     uint8_t *giant_prev_valid;       /* [n_layers] */
@@ -1620,9 +1623,11 @@ typedef struct {
     int   (*pf_route)(int, int *);
     int   (*pf_experts)(int);
     int   (*pf_finish)(int, int, float *, float **);
+    int   (*bench_bw)(double *, double *);                 /* optional */
 } OcApi;
 static OcApi g_oc;
 static int g_gpu_verify = 0;
+static double g_gpu_baseline_tok_s = 0;   /* LMA_CPU_BASELINE_TOK_S: measured CPU decode speed (0 = unknown) */
 static int g_gpu_prefill = 1;      /* LMA_GPU_PREFILL=0 keeps prompts on the CPU */
 #define GPU_PF_MAX 128             /* must match PF_MAX in olmoe_cuda.cu */
 
@@ -1655,7 +1660,8 @@ static int oc_load_dll(void) {
       int all = 1; for (int i = 0; i < 5; i++) { p[i] = GetProcAddress(h, nm[i]); if (!p[i]) all = 0; }
       if (all) { memcpy(&g_oc.pf_begin, &p[0], sizeof p[0]); memcpy(&g_oc.pf_attn, &p[1], sizeof p[1]);
                  memcpy(&g_oc.pf_route, &p[2], sizeof p[2]); memcpy(&g_oc.pf_experts, &p[3], sizeof p[3]);
-                 memcpy(&g_oc.pf_finish, &p[4], sizeof p[4]); } }
+                 memcpy(&g_oc.pf_finish, &p[4], sizeof p[4]); }
+      FARPROC bb = GetProcAddress(h, "oc_bench_bw"); if (bb) memcpy(&g_oc.bench_bw, &bb, sizeof bb); }
 #else
     { void *a = dlsym(h, "oc_prof_enable"), *b = dlsym(h, "oc_prof_get");
       if (a && b) { memcpy(&g_oc.prof_enable, &a, sizeof a); memcpy(&g_oc.prof_get, &b, sizeof b); } }
@@ -1663,7 +1669,8 @@ static int oc_load_dll(void) {
       int all = 1; for (int i = 0; i < 5; i++) { p[i] = dlsym(h, nm[i]); if (!p[i]) all = 0; }
       if (all) { memcpy(&g_oc.pf_begin, &p[0], sizeof p[0]); memcpy(&g_oc.pf_attn, &p[1], sizeof p[1]);
                  memcpy(&g_oc.pf_route, &p[2], sizeof p[2]); memcpy(&g_oc.pf_experts, &p[3], sizeof p[3]);
-                 memcpy(&g_oc.pf_finish, &p[4], sizeof p[4]); } }
+                 memcpy(&g_oc.pf_finish, &p[4], sizeof p[4]); }
+      void *bb = dlsym(h, "oc_bench_bw"); if (bb) memcpy(&g_oc.bench_bw, &bb, sizeof bb); }
 #endif
     return 1;
 }
@@ -1732,6 +1739,12 @@ static void gpu_try_init(Model *m) {
     m->gpu_on = 1;
     g_gpu_verify = getenv("LMA_GPU_VERIFY") ? atoi(getenv("LMA_GPU_VERIFY")) : 0;
     g_gpu_prefill = getenv("LMA_GPU_PREFILL") ? atoi(getenv("LMA_GPU_PREFILL")) : 1;
+    g_gpu_baseline_tok_s = getenv("LMA_CPU_BASELINE_TOK_S") ? atof(getenv("LMA_CPU_BASELINE_TOK_S")) : 0.0;
+    if (g_oc.bench_bw) g_oc.bench_bw(&m->gpu_peak_d2d_gbs, &m->gpu_peak_h2d_gbs);
+    /* weight bytes one decode token reads: q/k/v/o FP16 + router FP32 per layer, K routed int8 experts per layer, lm_head FP16 */
+    m->gpu_bytes_tok = (double)c->n_layers * (4.0 * c->hidden * c->hidden * 2 + (double)c->n_experts * c->hidden * 4 +
+                       (double)c->topk * (3.0 * c->inter * c->hidden + (2.0 * c->inter + c->hidden) * 4)) +
+                       (double)c->vocab * c->hidden * 2;
     if (g_oc.prof_enable && getenv("LMA_GPU_PROF") && atoi(getenv("LMA_GPU_PROF"))) g_oc.prof_enable(1);
     fprintf(stderr, "[GPU] ready in %.1fs: %d/%d experts resident in VRAM (%.2f GB), ctx %d, %s%s\n",
             now_s() - t0, loaded, want, (double)loaded * per / 1e9, max_t,
@@ -1797,6 +1810,24 @@ static int gpu_decode(Model *m, int tok, int pos, float *logit_out, int mirror_k
     m->gpu_kv_len = pos + 1;
     m->gpu_tokens++; m->gpu_s += now_s() - t0;
     return 1;
+}
+
+/* Circuit-breaker health check after each GPU decode token. Returns 0 = healthy, 1 = this token is bad (redo on the
+ * CPU and disable), 2 = token is fine but the optimisation must be switched off from now on. */
+static int gpu_health(Model *m, const float *lg, double dt, uint64_t miss_before) {
+    Cfg *c = &m->c;
+    for (int i = 0; i < c->vocab; i++)
+        if (!isfinite(lg[i])) { snprintf(m->gpu_trip_reason, sizeof m->gpu_trip_reason, "non-finite logits (correctness)"); return 1; }
+    m->gpu_win_n++; m->gpu_win_s += dt; m->gpu_win_miss += m->gpu_miss - miss_before;
+    if (m->gpu_win_n < 32) return 0;
+    double tps = m->gpu_win_n / m->gpu_win_s, mpt = (double)m->gpu_win_miss / m->gpu_win_n;
+    m->gpu_win_n = 0; m->gpu_win_s = 0; m->gpu_win_miss = 0;
+    if (g_gpu_baseline_tok_s > 0 && tps < g_gpu_baseline_tok_s) {
+        snprintf(m->gpu_trip_reason, sizeof m->gpu_trip_reason, "%s: GPU %.1f tok/s < CPU baseline %.1f tok/s (%.1f expert misses/token)",
+                 mpt > 0.5 * c->topk * c->n_layers ? "cache thrash" : "slower than baseline", tps, g_gpu_baseline_tok_s, mpt);
+        return 2;
+    }
+    return 0;
 }
 
 /* S prompt/verification tokens on the GPU in chunks of GPU_PF_MAX (batched "rows" kernels: each weight row is read
@@ -1879,16 +1910,24 @@ static float *step(Model *m, const int *ids, int S, int pos_base) {
     }
     if (m->gpu_on && S == 1 && !g_gpu_verify) {
         float *lg = falloc(c->vocab);
-        if (gpu_decode(m, ids[0], pos_base, lg, 1)) {
+        double s0 = m->gpu_s; uint64_t miss0 = m->gpu_miss;
+        int ok = gpu_decode(m, ids[0], pos_base, lg, 1), hv = 0;
+        if (ok) { hv = gpu_health(m, lg, m->gpu_s - s0, miss0); if (hv == 1) ok = 0; }
+        if (ok) {
             m->token_count += 1; m->freq_token_count += 1;
             m->kv_len = pos_base + 1;
             kv_prefix_record(&m->kvp, ids, pos_base, 1);
             g_prof_forwards += 1;
+            if (hv == 2) {   /* circuit breaker (performance): keep this token, run the rest of the session on the CPU */
+                m->gpu_on = 0;
+                fprintf(stderr, "[GPU] circuit breaker: %s; continuing on the CPU\n", m->gpu_trip_reason);
+            }
             return lg;
         }
         free(lg);
         m->gpu_on = 0;   /* circuit breaker: this session continues on the CPU */
-        fprintf(stderr, "[GPU] decode failed at position %d: falling back to the CPU for the rest of the session\n", pos_base);
+        fprintf(stderr, "[GPU] decode failed at position %d%s%s: falling back to the CPU for the rest of the session\n", pos_base,
+                m->gpu_trip_reason[0] ? ": " : "", m->gpu_trip_reason);
     }
     if (m->gpu_on && pos_base < m->gpu_kv_len) m->gpu_kv_len = pos_base;   /* CPU rewrites these rows */
     if (g_pilot && m->token_count > 0) {
@@ -2481,6 +2520,49 @@ static void serve_hits(Model *m) {
  * and the B arm of the A/B that shows reuse changes nothing but the time. */
 static int kv_prefix_off(void){ const char *e = getenv("LMA_KV_PREFIX"); return e && *e == '0'; }
 
+/* ---- Bottleneck diagnostics (counter-based: measured counters vs measured ceilings, nothing modelled) ---- */
+static double weight_bytes_tok(const Cfg *c) {   /* weight bytes one decode token reads (FP16 dense + router, K int8 experts, lm_head) */
+    return (double)c->n_layers * (4.0 * c->hidden * c->hidden * 2 + (double)c->n_experts * c->hidden * 4 +
+           (double)c->topk * (3.0 * c->inter * c->hidden + (2.0 * c->inter + c->hidden) * 4)) + (double)c->vocab * c->hidden * 2;
+}
+static double ram_ceiling_gbs(void) {   /* multi-threaded memcpy traffic (read+write bytes), measured once */
+    static double v = 0;
+    if (v > 0) return v;
+    size_t n = (size_t)128 << 20; char *a = malloc(n), *b = malloc(n);
+    if (!a || !b) { free(a); free(b); return 0; }
+    memset(a, 1, n); memset(b, 2, n);
+    int nt = 8; size_t chunk = n / nt; double best = 0;
+    for (int r = 0; r < 4; r++) {
+        double t = now_s();
+        #pragma omp parallel for num_threads(nt)
+        for (int k = 0; k < nt; k++) memcpy(b + (size_t)k * chunk, a + (size_t)k * chunk, chunk);
+        double bw = 2.0 * n / (now_s() - t) / 1e9; if (bw > best) best = bw;
+    }
+    free(a); free(b);
+    return v = best;
+}
+static void emit_diag(Model *m, int gen, double decode_s, uint64_t g_tok, double g_s, uint64_t g_miss, uint64_t disk_b) {
+    if (gen < 2 || decode_s <= 0) return;
+    const double target = 30.0;
+    double tps = (gen - 1) / decode_s, bt = weight_bytes_tok(&m->c);
+    double pe = 3.0 * m->c.inter * m->c.hidden + (2.0 * m->c.inter + m->c.hidden) * 4;
+    int gpu = g_tok > 0 && g_s > 0;
+    double gtps = gpu ? g_tok / g_s : tps, meas = bt * gtps / 1e9, req = bt * target / 1e9;
+    double ceil_ = gpu ? m->gpu_peak_d2d_gbs : ram_ceiling_gbs();
+    double mpt = gpu ? (double)g_miss / g_tok : 0.0, util = ceil_ > 0 ? meas / ceil_ : 0.0;
+    const char *cls;
+    if (gpu && decode_s > 0 && g_s < 0.75 * decode_s * ((double)g_tok / (gen - 1 > 0 ? gen - 1 : 1)))
+        cls = "host-side work outside the GPU step (sampling, protocol, sync)";
+    else if (gpu && mpt > 0.5) { cls = "expert upload (disk/RAM -> VRAM)"; meas = mpt * pe * gtps / 1e9; ceil_ = m->gpu_peak_h2d_gbs; req = mpt * pe * target / 1e9; util = ceil_ > 0 ? meas / ceil_ : 0; }
+    else if (util > 0.5) cls = gpu ? "VRAM bandwidth" : "RAM bandwidth";
+    else if (!gpu && (double)disk_b / gen > 1e6) cls = "expert disk I/O";
+    else cls = gpu ? "GPU kernel latency (not bandwidth-bound)" : "CPU compute / latency (not bandwidth-bound)";
+    fprintf(stderr, "[LMA_DIAG] path=%s decode_tok_s=%.1f target=%.0f %s bottleneck=\"%s\" measured_gbs=%.1f ceiling_gbs=%.1f "
+                    "required_for_target_gbs=%.1f util=%.0f%% weight_mb_per_token=%.0f misses_per_token=%.2f disk_mb_per_token=%.3f trip=\"%s\"\n",
+            gpu ? "gpu" : "cpu", tps, target, tps >= target ? "MET" : "BELOW", cls, meas, ceil_, req, util * 100.0, bt / 1e6, mpt,
+            (double)disk_b / gen / 1e6, m->gpu_trip_reason);
+}
+
 static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
     Cfg *c = &m->c;
     int cap = q->plen + 16;
@@ -2562,7 +2644,9 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
     /* `reuse` is the ABSOLUTE position of the first fresh token: attention
      * and the KV rows are position-indexed, so this has to be the real
      * offset, not a count of what is left to do. */
+    uint64_t gtok0 = m->gpu_tokens, gmiss0 = m->gpu_miss; double gs0 = m->gpu_s;
     float *logit = step(m, ids + reuse, np - reuse, reuse);
+    double t_pf = now_s() - t0;
     int hist_len = np, gen = 0, limited = 1, cancelled = 0;
     char buf[512];
     if (q->pin && logit) {
@@ -2630,6 +2714,8 @@ static int serve_one(Model *m, Tok *T, SReq *q, int ctx_cap) {
                                 "expert_gateup=%.3f expert_down=%.3f head=%.3f\n", tk, ms[0]/tk, ms[1]/tk, ms[2]/tk, ms[3]/tk, ms[4]/tk, ms[5]/tk);
         }
     }
+    emit_diag(m, gen, dt - t_pf, m->gpu_tokens - gtok0, m->gpu_s - gs0, m->gpu_miss - gmiss0,
+              __atomic_load_n(&m->disk_bytes, __ATOMIC_RELAXED) - bytes0);
     if (getenv("LMA_BYTES_LOG") && gen > 0) {
         uint64_t db = __atomic_load_n(&m->disk_bytes, __ATOMIC_RELAXED) - bytes0;
         uint64_t pfi = m->pf_issued - pfi0, pfu = m->pf_used - pfu0;

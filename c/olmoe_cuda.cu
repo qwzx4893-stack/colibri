@@ -881,6 +881,26 @@ OC_API int oc_pf_finish(int first, int nrows, float *logits_out, float **kv_out)
     return 1;
 }
 
+/* achievable device-memory traffic (D2D copy, read+write bytes) and pinned host->device bandwidth, GB/s; used by the
+ * engine's bottleneck diagnostics as the measured ceilings */
+OC_API int oc_bench_bw(double *d2d_gbs, double *h2d_gbs) {
+    size_t n = (size_t)64 << 20; void *a = nullptr, *b = nullptr, *h = nullptr;
+    cudaEvent_t e0, e1; float ms = 0;
+    CK(cudaMalloc(&a, n)); CK(cudaMalloc(&b, n)); CK(cudaHostAlloc(&h, n, 0));
+    CK(cudaEventCreate(&e0)); CK(cudaEventCreate(&e1));
+    CK(cudaMemcpyAsync(b, a, n, cudaMemcpyDeviceToDevice, g.st));
+    CK(cudaEventRecord(e0, g.st));
+    for (int i = 0; i < 8; i++) CK(cudaMemcpyAsync(b, a, n, cudaMemcpyDeviceToDevice, g.st));
+    CK(cudaEventRecord(e1, g.st)); CK(cudaEventSynchronize(e1)); CK(cudaEventElapsedTime(&ms, e0, e1));
+    *d2d_gbs = 8.0 * 2.0 * n / (ms * 1e-3) / 1e9;
+    CK(cudaEventRecord(e0, g.st));
+    for (int i = 0; i < 8; i++) CK(cudaMemcpyAsync(a, h, n, cudaMemcpyHostToDevice, g.st));
+    CK(cudaEventRecord(e1, g.st)); CK(cudaEventSynchronize(e1)); CK(cudaEventElapsedTime(&ms, e0, e1));
+    *h2d_gbs = 8.0 * n / (ms * 1e-3) / 1e9;
+    cudaEventDestroy(e0); cudaEventDestroy(e1); cudaFree(a); cudaFree(b); cudaFreeHost(h);
+    return 1;
+}
+
 OC_API void oc_shutdown(void) { if (g.ready) { cudaDeviceSynchronize(); cudaDeviceReset(); g.ready = 0; } }
 
 OC_API void oc_prof_enable(int on) { prof_on = on; }
