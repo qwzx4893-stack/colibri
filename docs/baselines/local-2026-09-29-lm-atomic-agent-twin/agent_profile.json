@@ -1,0 +1,275 @@
+{
+  "schema": 1,
+  "kind": "model_agent",
+  "created_utc": "2026-09-29T02:54:42+00:00",
+  "model_hash": "0589c20c3d64a4c67521ad39",
+  "hardware_fingerprint_id": "ff9f7e1706b9f2a1",
+  "graph": {
+    "model_dir": "C:\\Users\\STS\\models\\olmoe-colibri",
+    "family": "olmoe",
+    "model_type": "olmoe",
+    "hidden": 2048,
+    "layers_total": 16,
+    "moe_layers": 16,
+    "moe_layer_ids": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "experts_per_layer": 64,
+    "topk": 8,
+    "shared_experts": false,
+    "expert_bytes": {
+      "min": 6307840,
+      "max": 6307840,
+      "distinct_sizes": 1
+    },
+    "expert_dtypes_bytes": {
+      "F32": 16777216,
+      "I8": 6442450944
+    },
+    "routed_bytes": 6459228160,
+    "dense_bytes": 953688064,
+    "total_bytes": 7412916224,
+    "bytes_per_token_if_uncached": 807403520,
+    "tensor_count": 2195,
+    "shards": [
+      "model-00000.safetensors",
+      "model-00001.safetensors",
+      "model-00002.safetensors",
+      "model-00003.safetensors",
+      "model-00004.safetensors"
+    ],
+    "router_tensors": [
+      "model.layers.0.mlp.gate.weight",
+      "model.layers.1.mlp.gate.weight",
+      "model.layers.10.mlp.gate.weight",
+      "model.layers.11.mlp.gate.weight"
+    ]
+  },
+  "routing_fingerprint": {
+    "all": {
+      "decode_tokens": 374,
+      "n_layers": 16,
+      "n_experts": 64,
+      "topk": 8,
+      "reuse_next_token": 0.3958,
+      "chance_next_token": 0.125,
+      "entropy_norm": 0.9487,
+      "top_mass_experts_95": 52.25,
+      "working_set_w16": 38.89,
+      "working_set_w64": 55.52,
+      "working_set_w256": 63.34,
+      "hot_stability": 0.2429,
+      "layer_transition_recall": 0.4592,
+      "cache_curves": {
+        "0.0625": {
+          "cap": 4,
+          "lru_hit": 0.0332,
+          "belady_hit": 0.3146
+        },
+        "0.125": {
+          "cap": 8,
+          "lru_hit": 0.2694,
+          "belady_hit": 0.5384
+        },
+        "0.25": {
+          "cap": 16,
+          "lru_hit": 0.5341,
+          "belady_hit": 0.7439
+        },
+        "0.5": {
+          "cap": 32,
+          "lru_hit": 0.7992,
+          "belady_hit": 0.9055
+        }
+      },
+      "locality_class": "typical",
+      "cross_domain_hot_jaccard": {
+        "prose~code": 0.149,
+        "prose~math": 0.169,
+        "prose~qa": 0.207,
+        "code~math": 0.331,
+        "code~qa": 0.085,
+        "math~qa": 0.099
+      }
+    },
+    "by_domain": {
+      "prose": {
+        "decode_tokens": 94,
+        "n_layers": 16,
+        "n_experts": 64,
+        "topk": 8,
+        "reuse_next_token": 0.3588,
+        "chance_next_token": 0.125,
+        "entropy_norm": 0.9296,
+        "top_mass_experts_95": 47.88,
+        "working_set_w16": 41.61,
+        "working_set_w64": 59.16,
+        "working_set_w256": null,
+        "hot_stability": 0.0429,
+        "layer_transition_recall": 0.3215,
+        "cache_curves": {
+          "0.0625": {
+            "cap": 4,
+            "lru_hit": 0.0316,
+            "belady_hit": 0.2948
+          },
+          "0.125": {
+            "cap": 8,
+            "lru_hit": 0.2328,
+            "belady_hit": 0.5017
+          },
+          "0.25": {
+            "cap": 16,
+            "lru_hit": 0.4818,
+            "belady_hit": 0.696
+          },
+          "0.5": {
+            "cap": 32,
+            "lru_hit": 0.7433,
+            "belady_hit": 0.8636
+          }
+        },
+        "locality_class": "typical"
+      },
+      "code": {
+        "decode_tokens": 94,
+        "n_layers": 16,
+        "n_experts": 64,
+        "topk": 8,
+        "reuse_next_token": 0.4813,
+        "chance_next_token": 0.125,
+        "entropy_norm": 0.8385,
+        "top_mass_experts_95": 40.12,
+        "working_set_w16": 35.57,
+        "working_set_w64": 51.88,
+        "working_set_w256": null,
+        "hot_stability": 0.61,
+        "layer_transition_recall": 0.5388,
+        "cache_curves": {
+          "0.0625": {
+            "cap": 4,
+            "lru_hit": 0.0402,
+            "belady_hit": 0.3484
+          },
+          "0.125": {
+            "cap": 8,
+            "lru_hit": 0.3431,
+            "belady_hit": 0.5989
+          },
+          "0.25": {
+            "cap": 16,
+            "lru_hit": 0.6347,
+            "belady_hit": 0.7799
+          },
+          "0.5": {
+            "cap": 32,
+            "lru_hit": 0.825,
+            "belady_hit": 0.8906
+          }
+        },
+        "locality_class": "high"
+      },
+      "math": {
+        "decode_tokens": 94,
+        "n_layers": 16,
+        "n_experts": 64,
+        "topk": 8,
+        "reuse_next_token": 0.4202,
+        "chance_next_token": 0.125,
+        "entropy_norm": 0.8788,
+        "top_mass_experts_95": 42.94,
+        "working_set_w16": 38.45,
+        "working_set_w64": 53.94,
+        "working_set_w256": null,
+        "hot_stability": 0.2741,
+        "layer_transition_recall": 0.4061,
+        "cache_curves": {
+          "0.0625": {
+            "cap": 4,
+            "lru_hit": 0.0329,
+            "belady_hit": 0.3235
+          },
+          "0.125": {
+            "cap": 8,
+            "lru_hit": 0.2852,
+            "belady_hit": 0.5476
+          },
+          "0.25": {
+            "cap": 16,
+            "lru_hit": 0.5657,
+            "belady_hit": 0.7373
+          },
+          "0.5": {
+            "cap": 32,
+            "lru_hit": 0.7806,
+            "belady_hit": 0.8792
+          }
+        },
+        "locality_class": "typical"
+      },
+      "qa": {
+        "decode_tokens": 92,
+        "n_layers": 16,
+        "n_experts": 64,
+        "topk": 8,
+        "reuse_next_token": 0.3303,
+        "chance_next_token": 0.125,
+        "entropy_norm": 0.8884,
+        "top_mass_experts_95": 41.88,
+        "working_set_w16": 38.67,
+        "working_set_w64": 53.09,
+        "working_set_w256": null,
+        "hot_stability": 0.2048,
+        "layer_transition_recall": 0.4054,
+        "cache_curves": {
+          "0.0625": {
+            "cap": 4,
+            "lru_hit": 0.0273,
+            "belady_hit": 0.286
+          },
+          "0.125": {
+            "cap": 8,
+            "lru_hit": 0.2129,
+            "belady_hit": 0.4875
+          },
+          "0.25": {
+            "cap": 16,
+            "lru_hit": 0.4407,
+            "belady_hit": 0.7143
+          },
+          "0.5": {
+            "cap": 32,
+            "lru_hit": 0.7906,
+            "belady_hit": 0.8801
+          }
+        },
+        "locality_class": "typical"
+      }
+    }
+  },
+  "strategy": {
+    "locality_class": "typical",
+    "cache_policy": "lru with second-chance guard",
+    "pin_hot_fraction": 0.25,
+    "prefetch": "cross-layer gate prediction, depth 1-2, byte-budgeted",
+    "prefill": "expert-major, one layer-wise pass over the whole prompt",
+    "decode": "cpu executes RAM-resident misses; gpu executes vram-resident experts",
+    "cpu_gpu_crossover_note": "cpu expert time is memory-bound at 26.6 GB/s; a transfer at 12.8 GB/s costs 2.09x the cpu time of one token"
+  },
+  "build_seconds": 254.3
+}

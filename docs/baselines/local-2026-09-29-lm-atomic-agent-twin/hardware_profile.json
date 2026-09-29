@@ -1,0 +1,309 @@
+{
+  "schema": 1,
+  "kind": "hardware_profile",
+  "created_utc": "2026-09-29T02:56:42+00:00",
+  "fingerprint": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "python": "3.13.15",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "cores_physical": 14,
+    "cores_logical": 20,
+    "ram_gb": 15.6,
+    "disk": "WD PC SN740 SDDPNQD-512G-1002",
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU, 616.92, 8188 MiB",
+    "tool_version": 1
+  },
+  "fingerprint_id": "ff9f7e1706b9f2a1",
+  "measured": {
+    "cpu_ram": {
+      "tool": "lma_hwprof",
+      "version": 1,
+      "threads": 20,
+      "hidden": 2048,
+      "inter": 1024,
+      "expert_int8_bytes": 6291456,
+      "ram_read_gbs_1thread": 13.71,
+      "ram_read_gbs_all": 20.94,
+      "ram_copy_gbs_all": 19.11,
+      "cpu_expert_ms_cache_resident_1thread": 0.7411,
+      "cpu_expert_ms_dram_streamed_1thread": 0.8537,
+      "cpu_expert_weight_gbs_1thread_resident": 8.49,
+      "cpu_expert_weight_gbs_1thread_dram": 7.37,
+      "cpu_experts_per_s_all_threads": 3622.3,
+      "cpu_expert_weight_gbs_all_threads": 22.79
+    },
+    "gpu": {
+      "tool": "lma_hwprof_cuda",
+      "version": 1,
+      "device": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "sm": 89,
+      "sm_count": 24,
+      "vram_total_gb": 8.59,
+      "vram_free_gb": 7.45,
+      "cuda_driver": 13040,
+      "cuda_runtime": 13040,
+      "async_engines": 1,
+      "concurrent_kernels": 1,
+      "transfer": [
+        {
+          "bytes": 1048576,
+          "h2d_pinned_gbs": 10.89,
+          "d2h_pinned_gbs": 10.97,
+          "h2d_pageable_gbs": 6.85,
+          "d2h_pageable_gbs": 4.45
+        },
+        {
+          "bytes": 8388608,
+          "h2d_pinned_gbs": 12.72,
+          "d2h_pinned_gbs": 12.73,
+          "h2d_pageable_gbs": 7.59,
+          "d2h_pageable_gbs": 5.92
+        },
+        {
+          "bytes": 33554432,
+          "h2d_pinned_gbs": 12.69,
+          "d2h_pinned_gbs": 12.73,
+          "h2d_pageable_gbs": 5.5,
+          "d2h_pageable_gbs": 6.33
+        },
+        {
+          "bytes": 268435456,
+          "h2d_pinned_gbs": 12.8,
+          "d2h_pinned_gbs": 12.98,
+          "h2d_pageable_gbs": 5.31,
+          "d2h_pageable_gbs": 5.42
+        }
+      ],
+      "vram_read_gbs": 207.2,
+      "vram_copy_gbs": 201.5,
+      "gpu_expert_ms_by_tokens": {
+        "1": 0.0678,
+        "16": 0.4597,
+        "64": 2.1837,
+        "256": 9.355
+      },
+      "overlap": {
+        "kernel_ms": 8.35,
+        "copy_ms": 5.55,
+        "both_ms": 7.92,
+        "overlap_fraction": 1.08
+      },
+      "pinned_alloc_gb": 7.52
+    },
+    "nvme": {
+      "file_gb": 4.0,
+      "unbuffered": true,
+      "points": [
+        {
+          "block_mb": 0.5,
+          "threads": 1,
+          "gbs": 1.05,
+          "ms_per_block": 0.5,
+          "direct": true
+        },
+        {
+          "block_mb": 0.5,
+          "threads": 2,
+          "gbs": 1.97,
+          "ms_per_block": 0.3,
+          "direct": true
+        },
+        {
+          "block_mb": 0.5,
+          "threads": 4,
+          "gbs": 3.37,
+          "ms_per_block": 0.2,
+          "direct": true
+        },
+        {
+          "block_mb": 0.5,
+          "threads": 8,
+          "gbs": 3.98,
+          "ms_per_block": 0.1,
+          "direct": true
+        },
+        {
+          "block_mb": 3.5,
+          "threads": 1,
+          "gbs": 2.73,
+          "ms_per_block": 1.3,
+          "direct": true
+        },
+        {
+          "block_mb": 3.5,
+          "threads": 2,
+          "gbs": 4.43,
+          "ms_per_block": 0.8,
+          "direct": true
+        },
+        {
+          "block_mb": 3.5,
+          "threads": 4,
+          "gbs": 4.66,
+          "ms_per_block": 0.8,
+          "direct": true
+        },
+        {
+          "block_mb": 3.5,
+          "threads": 8,
+          "gbs": 4.81,
+          "ms_per_block": 0.8,
+          "direct": true
+        },
+        {
+          "block_mb": 6.3,
+          "threads": 1,
+          "gbs": 3.15,
+          "ms_per_block": 2.1,
+          "direct": true
+        },
+        {
+          "block_mb": 6.3,
+          "threads": 2,
+          "gbs": 4.64,
+          "ms_per_block": 1.4,
+          "direct": true
+        },
+        {
+          "block_mb": 6.3,
+          "threads": 4,
+          "gbs": 4.67,
+          "ms_per_block": 1.4,
+          "direct": true
+        },
+        {
+          "block_mb": 6.3,
+          "threads": 8,
+          "gbs": 4.65,
+          "ms_per_block": 1.4,
+          "direct": true
+        },
+        {
+          "block_mb": 13,
+          "threads": 1,
+          "gbs": 3.28,
+          "ms_per_block": 4.2,
+          "direct": true
+        },
+        {
+          "block_mb": 13,
+          "threads": 2,
+          "gbs": 4.68,
+          "ms_per_block": 2.9,
+          "direct": true
+        },
+        {
+          "block_mb": 13,
+          "threads": 4,
+          "gbs": 4.67,
+          "ms_per_block": 2.9,
+          "direct": true
+        },
+        {
+          "block_mb": 13,
+          "threads": 8,
+          "gbs": 4.62,
+          "ms_per_block": 2.9,
+          "direct": true
+        },
+        {
+          "block_mb": 25,
+          "threads": 1,
+          "gbs": 3.44,
+          "ms_per_block": 7.6,
+          "direct": true
+        },
+        {
+          "block_mb": 25,
+          "threads": 2,
+          "gbs": 4.81,
+          "ms_per_block": 5.5,
+          "direct": true
+        },
+        {
+          "block_mb": 25,
+          "threads": 4,
+          "gbs": 4.64,
+          "ms_per_block": 5.6,
+          "direct": true
+        },
+        {
+          "block_mb": 25,
+          "threads": 8,
+          "gbs": 4.7,
+          "ms_per_block": 5.6,
+          "direct": true
+        },
+        {
+          "block_mb": 64,
+          "threads": 1,
+          "gbs": 3.47,
+          "ms_per_block": 19.4,
+          "direct": true
+        },
+        {
+          "block_mb": 64,
+          "threads": 2,
+          "gbs": 4.39,
+          "ms_per_block": 15.3,
+          "direct": true
+        },
+        {
+          "block_mb": 64,
+          "threads": 4,
+          "gbs": 4.49,
+          "ms_per_block": 14.9,
+          "direct": true
+        },
+        {
+          "block_mb": 64,
+          "threads": 8,
+          "gbs": 4.42,
+          "ms_per_block": 15.2,
+          "direct": true
+        }
+      ]
+    }
+  },
+  "measurement_seconds": 49.8,
+  "cost_model": {
+    "nvme_peak_gbs": 4.81,
+    "nvme_peak_at": {
+      "block_mb": 3.5,
+      "threads": 8
+    },
+    "nvme_gbs_by_block_mb_qd8": {
+      "0.5": 3.98,
+      "3.5": 4.81,
+      "6.3": 4.65,
+      "13": 4.62,
+      "25": 4.7,
+      "64": 4.42
+    },
+    "nvme_gbs_by_block_mb_qd1": {
+      "0.5": 1.05,
+      "3.5": 2.73,
+      "6.3": 3.15,
+      "13": 3.28,
+      "25": 3.44,
+      "64": 3.47
+    },
+    "ram_gbs": 20.94,
+    "cpu_expert_gbs_all_threads": 22.79,
+    "cpu_expert_gbs_1thread_resident": 8.49,
+    "h2d_pinned_gbs": 12.69,
+    "h2d_pageable_gbs": 5.5,
+    "d2h_pinned_gbs": 12.73,
+    "vram_read_gbs": 207.2,
+    "gpu_expert_ms": {
+      "1": 0.0678,
+      "16": 0.4597,
+      "64": 2.1837,
+      "256": 9.355
+    },
+    "copy_kernel_overlap_fraction": 1.08,
+    "pinned_alloc_gb": 7.52,
+    "vram_free_gb": 7.45
+  }
+}

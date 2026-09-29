@@ -1,0 +1,347 @@
+{
+  "label": "SIMULATED/PROJECTED - digital twin, NOT a real benchmark",
+  "hardware_source": "measured on this machine: RTX 4060 Laptop 8GB, i7-12700H, NVMe (see hardware_profile.json)",
+  "vram_cache_gb_assumed": 6.5,
+  "ram_cache_gb_assumed": 8.0,
+  "dense_layer_ms_assumed": 0.0,
+  "note": "dense_layer_ms=0.0: attention/dense compute time is NOT included (not yet calibrated against a real engine run) - tok/s here is an expert-layer-only ceiling, not a full-model projection",
+  "tokens_simulated": 200,
+  "warm_tokens": 32,
+  "results": [
+    {
+      "giant": "100B/A~9B",
+      "params_total_b": 100.0,
+      "params_active_b": 8.12,
+      "expert_bytes": 8972168.0,
+      "bytes_per_token_uncached_gb": 3.445,
+      "favorable/lru-only": {
+        "tok_s": 4.1929,
+        "nvme_gb_per_token": 0.8154,
+        "hit_vram": 0.681,
+        "hit_ram": 0.082,
+        "miss": 0.237,
+        "gpu_stall_frac": 0.783,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "favorable/predict+prefetch+pin": {
+        "tok_s": 4.1651,
+        "nvme_gb_per_token": 0.8222,
+        "hit_vram": 0.681,
+        "hit_ram": 0.129,
+        "miss": 0.19,
+        "gpu_stall_frac": 0.785,
+        "prefetch_issued": 3320,
+        "prefetch_useful_frac": 0.3710843373493976
+      },
+      "typical/lru-only": {
+        "tok_s": 2.3054,
+        "nvme_gb_per_token": 1.621,
+        "hit_vram": 0.438,
+        "hit_ram": 0.091,
+        "miss": 0.471,
+        "gpu_stall_frac": 0.804,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "typical/predict+prefetch+pin": {
+        "tok_s": 2.2944,
+        "nvme_gb_per_token": 1.6184,
+        "hit_vram": 0.438,
+        "hit_ram": 0.2,
+        "miss": 0.362,
+        "gpu_stall_frac": 0.805,
+        "prefetch_issued": 7669,
+        "prefetch_useful_frac": 0.43864910679358454
+      },
+      "hostile/lru-only": {
+        "tok_s": 1.3319,
+        "nvme_gb_per_token": 2.846,
+        "hit_vram": 0.072,
+        "hit_ram": 0.102,
+        "miss": 0.826,
+        "gpu_stall_frac": 0.813,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "hostile/predict+prefetch+pin": {
+        "tok_s": 1.328,
+        "nvme_gb_per_token": 2.8573,
+        "hit_vram": 0.072,
+        "hit_ram": 0.419,
+        "miss": 0.508,
+        "gpu_stall_frac": 0.814,
+        "prefetch_issued": 24283,
+        "prefetch_useful_frac": 0.24861013878021662
+      }
+    },
+    {
+      "giant": "300B/A~14B",
+      "params_total_b": 300.0,
+      "params_active_b": 12.28,
+      "expert_bytes": 10876465.0,
+      "bytes_per_token_uncached_gb": 5.221,
+      "favorable/lru-only": {
+        "tok_s": 2.1927,
+        "nvme_gb_per_token": 1.6322,
+        "hit_vram": 0.588,
+        "hit_ram": 0.099,
+        "miss": 0.313,
+        "gpu_stall_frac": 0.789,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "favorable/predict+prefetch+pin": {
+        "tok_s": 2.1632,
+        "nvme_gb_per_token": 1.646,
+        "hit_vram": 0.588,
+        "hit_ram": 0.178,
+        "miss": 0.234,
+        "gpu_stall_frac": 0.792,
+        "prefetch_issued": 7250,
+        "prefetch_useful_frac": 0.41572413793103447
+      },
+      "typical/lru-only": {
+        "tok_s": 1.2461,
+        "nvme_gb_per_token": 3.0374,
+        "hit_vram": 0.338,
+        "hit_ram": 0.08,
+        "miss": 0.582,
+        "gpu_stall_frac": 0.811,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "typical/predict+prefetch+pin": {
+        "tok_s": 1.2423,
+        "nvme_gb_per_token": 3.0371,
+        "hit_vram": 0.338,
+        "hit_ram": 0.232,
+        "miss": 0.43,
+        "gpu_stall_frac": 0.812,
+        "prefetch_issued": 14062,
+        "prefetch_useful_frac": 0.39795192717963307
+      },
+      "hostile/lru-only": {
+        "tok_s": 0.7793,
+        "nvme_gb_per_token": 4.9236,
+        "hit_vram": 0.029,
+        "hit_ram": 0.028,
+        "miss": 0.943,
+        "gpu_stall_frac": 0.827,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "hostile/predict+prefetch+pin": {
+        "tok_s": 0.7662,
+        "nvme_gb_per_token": 5.0528,
+        "hit_vram": 0.029,
+        "hit_ram": 0.404,
+        "miss": 0.566,
+        "gpu_stall_frac": 0.83,
+        "prefetch_issued": 38162,
+        "prefetch_useful_frac": 0.13303810072847336
+      }
+    },
+    {
+      "giant": "500B/A~8B",
+      "params_total_b": 500.0,
+      "params_active_b": 8.22,
+      "expert_bytes": 7294922.0,
+      "bytes_per_token_uncached_gb": 3.502,
+      "favorable/lru-only": {
+        "tok_s": 3.5647,
+        "nvme_gb_per_token": 0.9735,
+        "hit_vram": 0.609,
+        "hit_ram": 0.113,
+        "miss": 0.278,
+        "gpu_stall_frac": 0.78,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "favorable/predict+prefetch+pin": {
+        "tok_s": 3.5043,
+        "nvme_gb_per_token": 0.991,
+        "hit_vram": 0.609,
+        "hit_ram": 0.161,
+        "miss": 0.231,
+        "gpu_stall_frac": 0.784,
+        "prefetch_issued": 4497,
+        "prefetch_useful_frac": 0.33244385145652655
+      },
+      "typical/lru-only": {
+        "tok_s": 1.8719,
+        "nvme_gb_per_token": 2.0039,
+        "hit_vram": 0.321,
+        "hit_ram": 0.107,
+        "miss": 0.572,
+        "gpu_stall_frac": 0.805,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "typical/predict+prefetch+pin": {
+        "tok_s": 1.8316,
+        "nvme_gb_per_token": 2.0525,
+        "hit_vram": 0.321,
+        "hit_ram": 0.214,
+        "miss": 0.465,
+        "gpu_stall_frac": 0.809,
+        "prefetch_issued": 10723,
+        "prefetch_useful_frac": 0.28350275109577544
+      },
+      "hostile/lru-only": {
+        "tok_s": 1.1396,
+        "nvme_gb_per_token": 3.3804,
+        "hit_vram": 0.021,
+        "hit_ram": 0.014,
+        "miss": 0.965,
+        "gpu_stall_frac": 0.829,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "hostile/predict+prefetch+pin": {
+        "tok_s": 1.0267,
+        "nvme_gb_per_token": 3.8436,
+        "hit_vram": 0.021,
+        "hit_ram": 0.32,
+        "miss": 0.659,
+        "gpu_stall_frac": 0.846,
+        "prefetch_issued": 40249,
+        "prefetch_useful_frac": 0.054162836343760096
+      }
+    },
+    {
+      "giant": "500B/A~16B",
+      "params_total_b": 500.0,
+      "params_active_b": 16.4,
+      "expert_bytes": 14531250.0,
+      "bytes_per_token_uncached_gb": 6.975,
+      "favorable/lru-only": {
+        "tok_s": 1.4071,
+        "nvme_gb_per_token": 2.4957,
+        "hit_vram": 0.451,
+        "hit_ram": 0.191,
+        "miss": 0.358,
+        "gpu_stall_frac": 0.762,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "favorable/predict+prefetch+pin": {
+        "tok_s": 1.3898,
+        "nvme_gb_per_token": 2.5123,
+        "hit_vram": 0.451,
+        "hit_ram": 0.299,
+        "miss": 0.251,
+        "gpu_stall_frac": 0.765,
+        "prefetch_issued": 10241,
+        "prefetch_useful_frac": 0.4423396152719461
+      },
+      "typical/lru-only": {
+        "tok_s": 0.8272,
+        "nvme_gb_per_token": 4.5793,
+        "hit_vram": 0.258,
+        "hit_ram": 0.086,
+        "miss": 0.657,
+        "gpu_stall_frac": 0.812,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "typical/predict+prefetch+pin": {
+        "tok_s": 0.8243,
+        "nvme_gb_per_token": 4.5963,
+        "hit_vram": 0.258,
+        "hit_ram": 0.265,
+        "miss": 0.478,
+        "gpu_stall_frac": 0.813,
+        "prefetch_issued": 16939,
+        "prefetch_useful_frac": 0.38892496605466675
+      },
+      "hostile/lru-only": {
+        "tok_s": 0.5645,
+        "nvme_gb_per_token": 6.8104,
+        "hit_vram": 0.009,
+        "hit_ram": 0.014,
+        "miss": 0.976,
+        "gpu_stall_frac": 0.829,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "hostile/predict+prefetch+pin": {
+        "tok_s": 0.5483,
+        "nvme_gb_per_token": 7.0927,
+        "hit_vram": 0.009,
+        "hit_ram": 0.401,
+        "miss": 0.59,
+        "gpu_stall_frac": 0.834,
+        "prefetch_issued": 40677,
+        "prefetch_useful_frac": 0.10544042087666249
+      }
+    },
+    {
+      "giant": "500B/A~31B",
+      "params_total_b": 500.0,
+      "params_active_b": 30.7,
+      "expert_bytes": 19296875.0,
+      "bytes_per_token_uncached_gb": 13.894,
+      "favorable/lru-only": {
+        "tok_s": 0.2789,
+        "nvme_gb_per_token": 13.8938,
+        "hit_vram": 0.0,
+        "hit_ram": 0.0,
+        "miss": 1.0,
+        "gpu_stall_frac": 0.83,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "favorable/predict+prefetch+pin": {
+        "tok_s": 0.2796,
+        "nvme_gb_per_token": 13.819,
+        "hit_vram": 0.0,
+        "hit_ram": 0.431,
+        "miss": 0.569,
+        "gpu_stall_frac": 0.83,
+        "prefetch_issued": 63237,
+        "prefetch_useful_frac": 0.7772190331609659
+      },
+      "typical/lru-only": {
+        "tok_s": 0.2789,
+        "nvme_gb_per_token": 13.8938,
+        "hit_vram": 0.0,
+        "hit_ram": 0.0,
+        "miss": 1.0,
+        "gpu_stall_frac": 0.83,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "typical/predict+prefetch+pin": {
+        "tok_s": 0.2811,
+        "nvme_gb_per_token": 13.728,
+        "hit_vram": 0.0,
+        "hit_ram": 0.386,
+        "miss": 0.614,
+        "gpu_stall_frac": 0.829,
+        "prefetch_issued": 54711,
+        "prefetch_useful_frac": 0.6319935661932701
+      },
+      "hostile/lru-only": {
+        "tok_s": 0.2789,
+        "nvme_gb_per_token": 13.8938,
+        "hit_vram": 0.0,
+        "hit_ram": 0.0,
+        "miss": 1.0,
+        "gpu_stall_frac": 0.83,
+        "prefetch_issued": 0,
+        "prefetch_useful_frac": null
+      },
+      "hostile/predict+prefetch+pin": {
+        "tok_s": 0.2773,
+        "nvme_gb_per_token": 13.9582,
+        "hit_vram": 0.0,
+        "hit_ram": 0.417,
+        "miss": 0.583,
+        "gpu_stall_frac": 0.831,
+        "prefetch_issued": 61336,
+        "prefetch_useful_frac": 0.19937720099126124
+      }
+    }
+  ]
+}
