@@ -491,6 +491,28 @@ def env_for_engine(a, arch, plan=None):
         # legacy TEMP alias here also clobbered %TEMP% with "0.7" for every child
         # of the chat process on Windows — and olmoe never read LMA_TEMP, so the
         # ONLY working channel was a poisoned system variable (#509's exact shape).
+        preset = getattr(a, "preset", "auto")
+        if preset == "single-user":
+            # Lowest TTFT/TPOT for one session: deep lookahead, wide candidates,
+            # a session-adaptive hot set that keeps tracking the conversation
+            # instead of freezing at warmup, cost-aware eviction on.
+            env.setdefault("PILOT", "3"); env.setdefault("WIDE", "2")
+            env.setdefault("HOT", "8"); env.setdefault("HOT_REEVAL_TOK", "100")
+            env.setdefault("PILOT_WORKERS", "2"); env.setdefault("SCHED_COST", "1")
+        elif preset == "throughput":
+            # Aggregate throughput under concurrent load: wider prefetch and
+            # more worker threads to keep more NVMe reads in flight at once;
+            # no session-adaptive re-pinning (its per-request overhead is
+            # amortized worse when many independent sessions share the process).
+            env.setdefault("PILOT", "2"); env.setdefault("WIDE", "3")
+            env.setdefault("HOT", "8"); env.setdefault("HOT_REEVAL_TOK", "0")
+            env.setdefault("PILOT_WORKERS", "4"); env.setdefault("SCHED_COST", "1")
+        # "auto": no defaults injected here — olmoe.c's own built-in defaults
+        # (PILOT=0, PILOT_WORKERS=2, SCHED_COST=1, PREDICT_BETA=0.4) apply,
+        # and the Model Agent's pin_hot_fraction (if a profile exists) already
+        # auto-picks HOT. This is deliberately the conservative baseline: the
+        # measured before/after numbers in this phase's report were taken
+        # against these same built-in defaults, not the single-user preset.
     # --ram reaches the engines that read it. kimi_k3 gained a RAM budget in
     # #855; before that `grep -c RAM_GB c/kimi_k3.c` returned 0, so `lmatomic chat
     # --ram 242` on Kimi K3 set an environment variable nobody looked at and the
@@ -2567,6 +2589,16 @@ def main():
                         default=os.environ.get("LMA_POLICY","quality"),
                         help="resource policy (explicit --topk/--topp overrides warn and proceed)")
     common.add_argument("--repin", type=int, default=0, help="adapt RAM/VRAM experts every N tokens")
+    # LM Atomic runtime preset (currently affects the olmoe family's PILOT/
+    # WIDE/HOT_REEVAL_TOK/PILOT_WORKERS/SCHED_COST knobs — see olmoe.c's own
+    # header comment for what each does). "single-user" trades some aggregate
+    # throughput headroom for lower TTFT/TPOT and a session-adaptive working
+    # set; "throughput" widens prefetch and worker count for higher aggregate
+    # tok/s under concurrent load. Every knob a preset sets uses env.setdefault
+    # in env_for_engine(), so an explicit PILOT=/HOT=/etc. the user already set
+    # always wins — a preset only fills gaps, never overrides.
+    common.add_argument("--preset", choices=("auto", "single-user", "throughput"), default="auto",
+                        help="runtime tuning preset: auto (default), single-user (low latency), throughput (concurrent load)")
     # Absent (None) = not explicitly set: the glm engine gets the 0 sentinel and picks
     # (8 historically; 1 on Metal+darwin+fast SSD, #379 -- an honest F_NOCACHE probe
     # measures "fast", cached in <model>/.lma_ssd), while non-glm arches get the

@@ -53,6 +53,9 @@
  *                    exactly; set e.g. 200 to enable adaptation).
  *   LMA_BYTES_LOG=1  : report external bytes moved (NVMe reads) per generated
  *                    token to stderr at the end of a CLI generate/PPL run.
+ *   LMA_GIANT_STICK=F: Physical Giant Emulator ONLY (default 0, no effect on
+ *                    any real model/checkpoint). See g_giant_stick's own
+ *                    comment near its declaration.
  */
 #define _GNU_SOURCE
 #include <stdio.h>
@@ -204,6 +207,11 @@ typedef struct {
      * Digital Twin's prefetch_useful_frac so the two are comparable. */
     uint64_t pf_issued, pf_used;
     uint8_t *pf_flag;               /* [n_layers * n_experts], 1 = resident copy came from a pilot load */
+
+    /* LM ATOMIC Physical Giant Emulator ONLY (see g_giant_stick above). */
+    int *giant_prev_idx;             /* [n_layers * topk] */
+    uint8_t *giant_prev_valid;       /* [n_layers] */
+    uint64_t giant_rng;
 } Model;
 
 static pthread_mutex_t g_pilot_mx = PTHREAD_MUTEX_INITIALIZER;
@@ -220,6 +228,15 @@ static int g_fused3 = 0;            /* FUSED3=1: AVX2 activation quant + gate/up
                                      * matmul_q_idot_pair_v3). Exact integer arithmetic only —
                                      * bit-identical to the stock matmul_q path; OFF by default. */
 static int g_pilot_workers = 2;     /* PILOT_WORKERS env: concurrent prefetch worker threads */
+/* LM ATOMIC Physical Giant Emulator ONLY: LMA_GIANT_STICK=0.0-1.0 (default 0,
+ * meaning zero effect on any real model). Blends real router picks with the
+ * previous row's picks at the same layer, mirroring lmatomic/twin.py's
+ * SyntheticRouting `stick` parameter, so a synthetic giant model built with
+ * random dense/gate weights (which routes ~uniformly, i.e. already the
+ * "hostile" regime) can also be driven at favorable/typical locality to
+ * measure whether the real scheduler/predictor benefit from it. Never used
+ * outside an explicit giant-emulation run; real inference never sets this. */
+static float g_giant_stick = 0.0f;
 
 static uint64_t lfru_score(uint32_t heat, uint64_t last, uint64_t clock) {
     uint64_t age = (clock > last) ? (clock - last) : 0;
@@ -796,6 +813,12 @@ static void model_init_range(Model *m, const char *snap, int cap, int bits,
     m->pf_issued = 0; m->pf_used = 0;
     m->disk_bytes = 0;
 
+    if (g_giant_stick > 0.f) {
+        m->giant_prev_idx = calloc((size_t)c->n_layers * c->topk, sizeof(int));
+        m->giant_prev_valid = calloc((size_t)c->n_layers, sizeof(uint8_t));
+        m->giant_rng = 0x9E3779B97F4A7C15ULL;
+    }
+
     m->dense_load_s = now_s() - t0;
 
     /* Persistent hot pinning belongs to the standalone runtime. A Segment
@@ -1312,6 +1335,23 @@ static void moe(Model *m, Layer *l, int layer, float *x, int S, float *out) {
         /* shared ranking (moe_router.h): all-NaN probabilities must not reach
          * expert_get() as -1 and then last_access[layer*E - 1] (heap write) */
         lma_router_topk(pr, NULL, NULL, E, K, idx, NULL, layer, 1);
+        /* LM ATOMIC Physical Giant Emulator ONLY: blend in artificial
+         * repeat-locality (see g_giant_stick's declaration). No-op (g_giant_stick
+         * stays 0.0) for every real model and every existing test. */
+        if (g_giant_stick > 0.f && m->giant_prev_valid && m->giant_prev_valid[layer]) {
+            int *prev = m->giant_prev_idx + (int64_t)layer * K;
+            for (int kk = 0; kk < K; kk++) {
+                uint64_t x = m->giant_rng;
+                x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+                m->giant_rng = x;
+                if ((double)(x >> 11) / (double)(1ULL << 53) < g_giant_stick)
+                    idx[kk] = prev[kk];
+            }
+        }
+        if (m->giant_prev_idx) {
+            memcpy(m->giant_prev_idx + (int64_t)layer * K, idx, K * sizeof(int));
+            m->giant_prev_valid[layer] = 1;
+        }
         for (int kk = 0; kk < K; kk++) val[kk] = pr[idx[kk]];
         if (c->norm_topk) { float sm=0; for(int kk=0;kk<K;kk++) sm+=val[kk]; for(int kk=0;kk<K;kk++) val[kk]/=sm; }
         /* IMPROVEMENT 2 activation heatmap AND the ROUTE_TRACE stream, in one
@@ -2277,6 +2317,8 @@ int main(int argc, char **argv) {
     g_pilot_evict_guard = getenv("PILOT_EVICT_GUARD") ? atoi(getenv("PILOT_EVICT_GUARD")) : 1;
     g_expert_drop = getenv("EXPERT_DROP") ? atoi(getenv("EXPERT_DROP")) : 0;
     g_fused3     = getenv("FUSED3") ? atoi(getenv("FUSED3")) : 0;
+    g_giant_stick = getenv("LMA_GIANT_STICK") ? (float)atof(getenv("LMA_GIANT_STICK")) : 0.0f;
+    if (g_giant_stick < 0.f) g_giant_stick = 0.f; if (g_giant_stick > 1.f) g_giant_stick = 1.f;
     if (g_wide < 1) g_wide = 1;
     if (g_wide > 4) g_wide = 4;
     int hot_n  = getenv("HOT")   ? atoi(getenv("HOT"))   : 0;

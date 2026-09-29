@@ -170,6 +170,65 @@ def run_calibration(model_dir, work_dir, max_tokens=96, domains=None, launcher=N
     return traces
 
 
+def auto_tune(model_dir, launcher=None, log=print, max_tokens=24, prompt=None):
+    """Short, real Auto-Tuning pass (#12 of the daily-use-readiness spec): try
+    a couple of real runtime presets against the real engine for a handful of
+    tokens each, measure actual wall-clock tok/s, and recommend the faster
+    one. This is intentionally brief (two short generations, not a sweep of
+    dozens of configurations) — it exists so a user does not have to hand-set
+    PILOT/WIDE/HOT/PILOT_WORKERS/SCHED_COST themselves, not to find a
+    globally optimal configuration. Returns None (and logs why) if the
+    engine cannot be started, rather than raising — auto-tuning failing must
+    never block build_agent() from finishing with what it already has."""
+    launcher = launcher or str(CDIR / "lmatomic")
+    prompt = prompt or "Write two sentences about how binary search works."
+    candidates = {
+        "auto": {},
+        "single-user": {"PILOT": "3", "WIDE": "2", "HOT": "8", "HOT_REEVAL_TOK": "100",
+                        "PILOT_WORKERS": "2", "SCHED_COST": "1"},
+    }
+    results = {}
+    for name, extra_env in candidates.items():
+        port = _free_port()
+        env = dict(os.environ, LMA_TEMP="0")
+        env.update(extra_env)
+        env.pop("PROF", None)
+        srv = subprocess.Popen([sys.executable, launcher, "serve", "--model", str(model_dir), "--port", str(port),
+                                "--model-id", "tune"], env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            for _ in range(240):
+                try:
+                    urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2).read(); break
+                except Exception:
+                    time.sleep(0.5)
+            else:
+                log(f"  [auto-tune] {name}: engine did not come up, skipping")
+                continue
+            body = json.dumps({"model": "tune", "messages": [{"role": "user", "content": prompt}],
+                               "max_tokens": max_tokens, "temperature": 0}).encode()
+            req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/chat/completions", body,
+                                         {"Content-Type": "application/json"})
+            t0 = time.time()
+            resp = json.loads(urllib.request.urlopen(req, timeout=900).read())
+            dt = time.time() - t0
+            gen = resp.get("usage", {}).get("completion_tokens", 0)
+            tok_s = gen / dt if dt > 0 else 0.0
+            results[name] = {"tok_s": round(tok_s, 4), "tokens": gen, "wall_s": round(dt, 3), "env": extra_env}
+            log(f"  [auto-tune] {name}: {tok_s:.3f} tok/s ({gen} tokens, {dt:.2f}s)")
+        except Exception as e:
+            log(f"  [auto-tune] {name}: failed ({e}), skipping")
+        finally:
+            srv.terminate()
+            try:
+                srv.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                srv.kill()
+    if not results:
+        return None
+    best = max(results, key=lambda k: results[k]["tok_s"])
+    return {"measured": results, "recommended_preset": best}
+
+
 def decide(graph, fp_all, hw):
     """Turn measured locality and measured hardware into an execution strategy."""
     cm = (hw or {}).get("cost_model", {})
@@ -232,6 +291,16 @@ def build_agent(model_dir, out_dir, hw_profile=None, calibrate=True, log=print, 
         trs = {d: routing.parse(traces[d], graph["experts_per_layer"]) for d in doms}
         cross = {f"{a}~{b}": round(routing.jaccard_hot(trs[a], trs[b]) or 0, 3) for i, a in enumerate(doms) for b in doms[i + 1:]}
         fp_all["cross_domain_hot_jaccard"] = cross
+    tuned = None
+    if kw.get("auto_tune", True) and calibrate:
+        log("[agent] auto-tuning (real, short: two presets, a few tokens each)")
+        tuned = auto_tune(model_dir, log=log)
+        if tuned:
+            log(f"  recommended preset: {tuned['recommended_preset']}")
+    strategy = decide(graph, fp_all, hw) if fp_all else None
+    if strategy is not None and tuned is not None:
+        strategy["auto_tuned_preset"] = tuned["recommended_preset"]
+        strategy["auto_tune_measured"] = tuned["measured"]
     profile = {
         "schema": SCHEMA, "kind": "model_agent",
         "created_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -239,7 +308,7 @@ def build_agent(model_dir, out_dir, hw_profile=None, calibrate=True, log=print, 
         "hardware_fingerprint_id": hw["fingerprint_id"],
         "graph": graph,
         "routing_fingerprint": {"all": fp_all, "by_domain": fps},
-        "strategy": decide(graph, fp_all, hw) if fp_all else None,
+        "strategy": strategy,
         "build_seconds": round(time.time() - t0, 1),
     }
     (out_dir / "agent_profile.json").write_text(json.dumps(profile, indent=2), encoding="utf-8")
@@ -266,10 +335,12 @@ def main(argv=None):
     ap.add_argument("--model", required=True)
     ap.add_argument("--out", required=True, help="directory for hardware_profile.json / agent_profile.json / traces")
     ap.add_argument("--no-calibrate", action="store_true")
+    ap.add_argument("--no-auto-tune", action="store_true", help="skip the short real preset auto-tune pass")
     ap.add_argument("--max-tokens", type=int, default=96)
     ap.add_argument("--disk-gb", type=float, default=4.0)
     a = ap.parse_args(argv)
-    prof = load_or_build(a.model, a.out, calibrate=not a.no_calibrate, max_tokens=a.max_tokens, disk_gb=a.disk_gb)
+    prof = load_or_build(a.model, a.out, calibrate=not a.no_calibrate, auto_tune=not a.no_auto_tune,
+                         max_tokens=a.max_tokens, disk_gb=a.disk_gb)
     print(json.dumps({k: prof[k] for k in ("model_hash", "hardware_fingerprint_id", "strategy")}, indent=2))
 
 
