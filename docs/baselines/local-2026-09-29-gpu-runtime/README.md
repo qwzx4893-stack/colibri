@@ -64,3 +64,35 @@ than int8 while the model already fits VRAM): its value is capacity, see section
 resume. Real OLMoE: 16 layers -> 4 shards, 3.62 GB (int8 experts: 6.5 GB, ratio 0.557), 41 s. Re-run = 4 shards verified and
 skipped; deleting one shard rebuilds only that shard. The overlay route and the on-the-fly quantiser give bit-identical logits
 (KL 0.0 over 1790 positions). The source model directory is never written.
+
+## 6. Giant-model tiering on the GPU path (PHYSICALLY EMULATED, random weights)
+
+`c/tools/giant_emulator/make_giant.py 30B_A3B <dir> 0.3 --gpu --int4` builds a disk-backed model with the real 30B-A3B
+geometry (48 layers, 128 experts, top-8, 4.7 MB int8 / 2.6 MB int4 per expert; 6144 experts) whose expert tensors alias a
+small pool of real blocks. Weights are random, so the routing is near-uniform: this is the **worst case for locality**
+and says nothing about weight-structure-dependent properties. It does measure real tiering, real I/O volume and real
+kernels. 64 teacher-forced tokens (prefill of 8 included), 3 reps, VRAM holds what fits next to the dense weights.
+
+| config | resident in VRAM | misses/token | GB moved/token | median tok/s (min-max) |
+|---|---|---|---|---|
+| int8 experts, cold reads | 1515/6144 | 323 | 1.61 | 1.23 (1.13-1.23) |
+| int8 experts, page-cache warm | 1515/6144 | 323 | 1.61 | 1.70 (1.69-1.72) |
+| int4 overlay, cold reads | 2709/6144 | 211 | 0.66 | 4.39 (4.19-4.41) |
+| int4 overlay, page-cache warm | 2709/6144 | 211 | 0.66 | 4.42 (4.40-4.43) |
+| int4 overlay + async staging ring | 2709/6144 | 211 | 0.66 | 4.13 (4.12-4.20): no gain |
+
+int4 storage is a 3.6x speed-up for this model class (2.4x fewer bytes per miss and 1.8x more experts resident). The first
+int4 attempt tripped the circuit breaker (non-finite logits): the emulator had written random bit patterns as the FP16
+scales; the breaker fell back to the CPU and the run finished, which is the behaviour it is there for.
+
+Where the time goes (int4, miss path timers over 63 decode tokens, 14.1 s): reading the experts 9.5 s (151 ms/token,
+3.7 GB/s), waiting on the router sync, which includes the host-to-device copies, 4.6 s (73 ms/token). An asynchronous
+staging ring did not help because each layer needs its own experts before it can run; only predicting the next layer's
+experts (accuracy depends on real routing, so it cannot be validated on this emulator) could overlap them.
+Microbenchmark on the same machine (page-cache-hot shard, 2.6 MB blocks): pageable mapped view to GPU 5.7 GB/s, page-locked
+view 8.2 GB/s (the PCIe ceiling), per-chunk register + copy + unregister 3.6 GB/s. Uploading straight from a mapped view
+measured 6.05 tok/s in one run on this model, but one earlier run of that configuration hung, so it is experimental.
+
+Physical bound: with 211 misses/token at 0.66 GB/token and ~8.5 GB/s PCIe, 77 ms/token (13 tok/s) is the ceiling at this
+hit rate; 30 tok/s needs the miss traffic under ~0.25 GB/token, i.e. a hit rate that only real routing locality can give.
+For a model whose experts do not fit RAM+VRAM the NVMe (2-4 GB/s here) bounds it far below that.
