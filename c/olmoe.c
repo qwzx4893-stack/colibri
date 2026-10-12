@@ -1631,6 +1631,14 @@ typedef struct {
     int   (*alloc_slots4)(int);                            /* optional: int4 expert pool (High-Fidelity storage) */
     int   (*upload_expert4)(int, int, int, const uint8_t *, const uint16_t *);
     void  (*set_layer_fmt)(int, int);
+    int   (*astage_init)(int);                             /* optional: async upload pipeline (pinned ring + copy stream) */
+    void *(*astage_ptr)(int);
+    int   (*astage_wait)(int);
+    int   (*upload_async)(int, int, int, int, int);
+    int   (*unmap_async)(int, int);
+    int   (*upload_barrier)(void);
+    int   (*upload_ptr)(int, int, int, int, const void *, const void *);   /* optional: upload from mapped host memory */
+    int   (*host_register)(void *, size_t);
 } OcApi;
 static OcApi g_oc;
 static int g_gpu_verify = 0;
@@ -1673,7 +1681,13 @@ static int oc_load_dll(void) {
       FARPROC bb = GetProcAddress(h, "oc_bench_bw"); if (bb) memcpy(&g_oc.bench_bw, &bb, sizeof bb);
       FARPROC hf = GetProcAddress(h, "oc_set_hf"); if (hf) memcpy(&g_oc.set_hf, &hf, sizeof hf);
       FARPROC a4 = GetProcAddress(h, "oc_alloc_slots4"), u4 = GetProcAddress(h, "oc_upload_expert4"), lf = GetProcAddress(h, "oc_set_layer_fmt");
-      if (a4 && u4 && lf) { memcpy(&g_oc.alloc_slots4, &a4, sizeof a4); memcpy(&g_oc.upload_expert4, &u4, sizeof u4); memcpy(&g_oc.set_layer_fmt, &lf, sizeof lf); } }
+      if (a4 && u4 && lf) { memcpy(&g_oc.alloc_slots4, &a4, sizeof a4); memcpy(&g_oc.upload_expert4, &u4, sizeof u4); memcpy(&g_oc.set_layer_fmt, &lf, sizeof lf); }
+      FARPROC as[6]; const char *an[6] = {"oc_astage_init", "oc_astage_ptr", "oc_astage_wait", "oc_upload_async", "oc_unmap_async", "oc_upload_barrier"};
+      int aall = 1; for (int i = 0; i < 6; i++) { as[i] = GetProcAddress(h, an[i]); if (!as[i]) aall = 0; }
+      if (aall) { memcpy(&g_oc.astage_init, &as[0], sizeof as[0]); memcpy(&g_oc.astage_ptr, &as[1], sizeof as[1]); memcpy(&g_oc.astage_wait, &as[2], sizeof as[2]);
+                  memcpy(&g_oc.upload_async, &as[3], sizeof as[3]); memcpy(&g_oc.unmap_async, &as[4], sizeof as[4]); memcpy(&g_oc.upload_barrier, &as[5], sizeof as[5]); }
+      FARPROC up = GetProcAddress(h, "oc_upload_ptr"), hr = GetProcAddress(h, "oc_host_register");
+      if (up) memcpy(&g_oc.upload_ptr, &up, sizeof up); if (hr) memcpy(&g_oc.host_register, &hr, sizeof hr); }
 #else
     { void *a = dlsym(h, "oc_prof_enable"), *b = dlsym(h, "oc_prof_get");
       if (a && b) { memcpy(&g_oc.prof_enable, &a, sizeof a); memcpy(&g_oc.prof_get, &b, sizeof b); } }
@@ -1685,7 +1699,13 @@ static int oc_load_dll(void) {
       void *bb = dlsym(h, "oc_bench_bw"); if (bb) memcpy(&g_oc.bench_bw, &bb, sizeof bb);
       void *hf = dlsym(h, "oc_set_hf"); if (hf) memcpy(&g_oc.set_hf, &hf, sizeof hf);
       void *a4 = dlsym(h, "oc_alloc_slots4"), *u4 = dlsym(h, "oc_upload_expert4"), *lf = dlsym(h, "oc_set_layer_fmt");
-      if (a4 && u4 && lf) { memcpy(&g_oc.alloc_slots4, &a4, sizeof a4); memcpy(&g_oc.upload_expert4, &u4, sizeof u4); memcpy(&g_oc.set_layer_fmt, &lf, sizeof lf); } }
+      if (a4 && u4 && lf) { memcpy(&g_oc.alloc_slots4, &a4, sizeof a4); memcpy(&g_oc.upload_expert4, &u4, sizeof u4); memcpy(&g_oc.set_layer_fmt, &lf, sizeof lf); }
+      void *as[6]; const char *an[6] = {"oc_astage_init", "oc_astage_ptr", "oc_astage_wait", "oc_upload_async", "oc_unmap_async", "oc_upload_barrier"};
+      int aall = 1; for (int i = 0; i < 6; i++) { as[i] = dlsym(h, an[i]); if (!as[i]) aall = 0; }
+      if (aall) { memcpy(&g_oc.astage_init, &as[0], sizeof as[0]); memcpy(&g_oc.astage_ptr, &as[1], sizeof as[1]); memcpy(&g_oc.astage_wait, &as[2], sizeof as[2]);
+                  memcpy(&g_oc.upload_async, &as[3], sizeof as[3]); memcpy(&g_oc.unmap_async, &as[4], sizeof as[4]); memcpy(&g_oc.upload_barrier, &as[5], sizeof as[5]); }
+      void *up = dlsym(h, "oc_upload_ptr"), *hr = dlsym(h, "oc_host_register");
+      if (up) memcpy(&g_oc.upload_ptr, &up, sizeof up); if (hr) memcpy(&g_oc.host_register, &hr, sizeof hr); }
 #endif
     return 1;
 }
@@ -1788,6 +1808,147 @@ static int gpu_load_expert(Model *m, int layer, int eid, int slot) {
     return g_oc.upload_expert(layer, eid, slot, stage, (const float *)(stage + want_w)) > 0;
 }
 
+/* ---- async expert upload: parallel readers -> pinned staging ring -> copy stream (overlaps PCIe with reads) ---- */
+#define GPU_NB 8
+static double g_t_read = 0, g_t_upl = 0, g_t_sync = 0, g_t_expk = 0;   /* miss-path wall seconds: reads, upload issue+barrier, router sync, layer_experts issue */
+static int g_astage_n = 0;                       /* 0 = pipeline unavailable / disabled (LMA_GPU_ASYNC=0): synchronous loads */
+static int8_t *g_tmp8[GPU_NB]; static float *g_tmpq[GPU_NB];
+
+/* Fill `dst` (a pinned staging buffer) with expert (layer, eid) in the layout of the layer's pool. Thread-safe: preads only. */
+static int gpu_stage_expert(Model *m, int layer, int eid, int bi, uint8_t *dst) {
+    Cfg *c = &m->c;
+    int64_t ng = (int64_t)c->inter * c->hidden, want_w = 3 * ng, w4b = 3 * ng / 2, s4n = 3 * ng / 32;
+    char nm[256], qsnm[256];
+    if (m->gpu_fmt[layer] == 1 && m->s4_open) {
+        snprintf(nm, sizeof nm, "model.layers.%d.mlp.experts.%d.w4", layer, eid);
+        snprintf(qsnm, sizeof qsnm, "model.layers.%d.mlp.experts.%d.s4", layer, eid);
+        st_tensor *t4 = st_find(&m->S4, nm), *u4 = st_find(&m->S4, qsnm);
+        if (t4 && u4 && t4->nbytes == w4b && u4->nbytes == 2 * s4n) {
+            st_read_raw(&m->S4, nm, dst, g_expert_drop); st_read_raw(&m->S4, qsnm, dst + w4b, g_expert_drop);
+            __atomic_fetch_add(&m->disk_bytes, (uint64_t)(w4b + 2 * s4n), __ATOMIC_RELAXED);
+            return 1;
+        }
+    }
+    snprintf(nm, sizeof nm, "model.layers.%d.mlp.experts.%d.merged_weight", layer, eid);
+    snprintf(qsnm, sizeof qsnm, "model.layers.%d.mlp.experts.%d.qs", layer, eid);
+    st_tensor *tw = st_find(&m->S, nm), *ts = st_find(&m->S, qsnm);
+    if (!tw || tw->nbytes != want_w || !ts || ts->numel != (int64_t)(2 * c->inter + c->hidden)) return 0;
+    __atomic_fetch_add(&m->disk_bytes, (uint64_t)(want_w + ts->numel * 4), __ATOMIC_RELAXED);
+    if (m->gpu_fmt[layer] == 0) {
+        st_read_raw(&m->S, nm, dst, g_expert_drop); st_read_f32(&m->S, qsnm, (float *)(dst + want_w), g_expert_drop);
+        return 1;
+    }
+    if (!g_tmp8[bi]) { g_tmp8[bi] = malloc((size_t)want_w); g_tmpq[bi] = malloc((size_t)(2 * c->inter + c->hidden) * sizeof(float)); if (!g_tmp8[bi] || !g_tmpq[bi]) return 0; }
+    st_read_raw(&m->S, nm, g_tmp8[bi], g_expert_drop); st_read_f32(&m->S, qsnm, g_tmpq[bi], g_expert_drop);
+    quant_expert_i4(g_tmp8[bi], g_tmpq[bi], c->inter, c->hidden, dst, (uint16_t *)(dst + w4b));
+    return 1;
+}
+
+/* ---- memory-mapped expert reads: page cache -> PCIe with no engine-side copy ----
+ * Measured on this machine (page-cache-hot shard): pread into pinned staging + upload 3.7 GB/s effective, upload straight
+ * from a mapped view 5.7 GB/s, from a registered (page-locked) view 8.2 GB/s (= the PCIe ceiling). Cold data is fetched
+ * with PrefetchVirtualMemory / madvise(WILLNEED) for the whole layer's misses first, so the NVMe sees a deep queue of large
+ * reads instead of page faults one 4 KB page at a time. */
+static int g_map_on = 1;                          /* LMA_GPU_MAP=0 keeps the pread + staging path */
+static const uint8_t *st_map_base(shards *S, int fidx) {
+    static const uint8_t *maps[512];
+    if (fidx < 0 || fidx >= 512) return NULL;
+    if (maps[fidx]) return maps[fidx];
+#ifdef _WIN32
+    HANDLE fh = (HANDLE)_get_osfhandle(S->fds[fidx]);
+    if (fh == INVALID_HANDLE_VALUE) return NULL;
+    HANDLE mh = CreateFileMappingA(fh, NULL, PAGE_READONLY, 0, 0, NULL);
+    if (!mh) return NULL;
+    maps[fidx] = (const uint8_t *)MapViewOfFile(mh, FILE_MAP_READ, 0, 0, 0);
+#else
+    void *p = mmap(NULL, (size_t)S->sizes[fidx], PROT_READ, MAP_SHARED, S->fds[fidx], 0);
+    maps[fidx] = p == MAP_FAILED ? NULL : (const uint8_t *)p;
+#endif
+    return maps[fidx];
+}
+static const uint8_t *gpu_tensor_ptr(shards *S, const char *name, int64_t want_bytes) {
+    st_tensor *t = st_find(S, name);
+    if (!t || t->nbytes != want_bytes) return NULL;
+    int fi = st_fidx(S, t->fd);
+    if (fi < 0 || t->off < 0 || t->off + t->nbytes > S->sizes[fi]) return NULL;
+    const uint8_t *b = st_map_base(S, fi);
+    return b ? b + t->off : NULL;
+}
+static void gpu_prefetch_ranges(const uint8_t **p, const int64_t *n, int cnt) {
+#ifdef _WIN32
+    typedef struct { PVOID a; SIZE_T n; } RangeEntry;
+    typedef BOOL (WINAPI *PrefetchFn)(HANDLE, ULONG_PTR, RangeEntry *, ULONG);
+    static PrefetchFn fn = NULL; static int tried = 0;
+    if (!tried) { tried = 1; FARPROC f = GetProcAddress(GetModuleHandleA("kernel32.dll"), "PrefetchVirtualMemory"); if (f) memcpy(&fn, &f, sizeof f); }
+    if (!fn || cnt < 1) return;
+    RangeEntry r[64]; int k = cnt < 64 ? cnt : 64;
+    for (int i = 0; i < k; i++) { r[i].a = (PVOID)p[i]; r[i].n = (SIZE_T)n[i]; }
+    fn(GetCurrentProcess(), (ULONG_PTR)k, r, 0);
+#else
+    for (int i = 0; i < cnt; i++) {
+        uintptr_t a = (uintptr_t)p[i] & ~(uintptr_t)4095;
+        madvise((void *)a, (size_t)(n[i] + ((uintptr_t)p[i] - a)), MADV_WILLNEED);
+    }
+#endif
+}
+
+/* Upload `n` experts of `layer` from mapped shards. Returns 1 ok, 0 = not applicable/failed (caller uses the pread path). */
+static int gpu_upload_batch_map(Model *m, int layer, const int *eids, const int *slots, int n) {
+    Cfg *c = &m->c; int fmt = m->gpu_fmt[layer];
+    int64_t ng = (int64_t)c->inter * c->hidden, want_w = 3 * ng, w4b = 3 * ng / 2, s4n = 3 * ng / 32;
+    if (!g_oc.upload_ptr || n < 1 || n > 64) return 0;
+    const uint8_t *wp[64], *sp[64]; int64_t wn = fmt ? w4b : want_w, sn = fmt ? 2 * s4n : (int64_t)(2 * c->inter + c->hidden) * 4;
+    const uint8_t *pf[128]; int64_t pn[128]; int npf = 0;
+    for (int j = 0; j < n; j++) {
+        char a[256], b[256];
+        if (fmt == 1) {
+            if (!m->s4_open) return 0;
+            snprintf(a, sizeof a, "model.layers.%d.mlp.experts.%d.w4", layer, eids[j]);
+            snprintf(b, sizeof b, "model.layers.%d.mlp.experts.%d.s4", layer, eids[j]);
+            wp[j] = gpu_tensor_ptr(&m->S4, a, wn); sp[j] = gpu_tensor_ptr(&m->S4, b, sn);
+        } else {
+            snprintf(a, sizeof a, "model.layers.%d.mlp.experts.%d.merged_weight", layer, eids[j]);
+            snprintf(b, sizeof b, "model.layers.%d.mlp.experts.%d.qs", layer, eids[j]);
+            st_tensor *tq = st_find(&m->S, b);
+            if (!tq || tq->dtype != 2) return 0;                    /* scales must already be raw F32 on disk */
+            wp[j] = gpu_tensor_ptr(&m->S, a, wn); sp[j] = gpu_tensor_ptr(&m->S, b, sn);
+        }
+        if (!wp[j] || !sp[j]) return 0;
+        if (npf + 2 <= 128) { pf[npf] = wp[j]; pn[npf++] = wn; pf[npf] = sp[j]; pn[npf++] = sn; }
+    }
+    double tq = now_s();
+    gpu_prefetch_ranges(pf, pn, npf);
+    for (int j = 0; j < n; j++) {
+        if (g_oc.upload_ptr(layer, eids[j], slots[j], fmt, wp[j], sp[j]) <= 0) return 0;
+        __atomic_fetch_add(&m->disk_bytes, (uint64_t)(wn + sn), __ATOMIC_RELAXED);
+    }
+    g_t_upl += now_s() - tq;
+    return g_oc.upload_barrier() > 0;
+}
+
+/* Make `n` experts of `layer` resident in the given slots (their table entries were already reserved on the host). */
+static int gpu_upload_batch(Model *m, int layer, const int *eids, const int *slots, int n) {
+    int fmt = m->gpu_fmt[layer];
+    if (g_map_on && gpu_upload_batch_map(m, layer, eids, slots, n)) return 1;
+    if (g_astage_n < 1) {
+        for (int j = 0; j < n; j++) if (!gpu_load_expert(m, layer, eids[j], slots[j])) return 0;
+        return 1;
+    }
+    for (int base = 0; base < n; base += g_astage_n) {
+        int cnt = n - base < g_astage_n ? n - base : g_astage_n, ok = 1;
+        double tq = now_s();
+        for (int j = 0; j < cnt; j++) if (g_oc.astage_wait(j) <= 0) return 0;      /* buffer j free again (its last upload finished) */
+        #pragma omp parallel for num_threads(cnt) schedule(static, 1)
+        for (int j = 0; j < cnt; j++)
+            if (!gpu_stage_expert(m, layer, eids[base + j], j, (uint8_t *)g_oc.astage_ptr(j))) { __atomic_store_n(&ok, 0, __ATOMIC_RELAXED); }
+        if (!ok) return 0;
+        g_t_read += now_s() - tq; tq = now_s();
+        for (int j = 0; j < cnt; j++) if (g_oc.upload_async(j, layer, eids[base + j], slots[base + j], fmt) <= 0) return 0;
+        g_t_upl += now_s() - tq;
+    }
+    return g_oc.upload_barrier() > 0;
+}
+
 /* LMA_HF_INT4: "all" or a list like "0,3,8-11" of layers whose experts are stored as int4 (lossy, off by default) */
 static void gpu_parse_int4_layers(Model *m) {
     const char *e = getenv("LMA_HF_INT4");
@@ -1860,6 +2021,12 @@ static void gpu_try_init(Model *m) {
         }
     }
     m->gpu_all_resident = (loaded == want);
+    if (getenv("LMA_GPU_MAP")) g_map_on = atoi(getenv("LMA_GPU_MAP"));
+    if (!m->gpu_all_resident && g_oc.astage_init && !(getenv("LMA_GPU_ASYNC") && atoi(getenv("LMA_GPU_ASYNC")) == 0)) {
+        int nb = getenv("LMA_GPU_ASYNC_BUFS") ? atoi(getenv("LMA_GPU_ASYNC_BUFS")) : 8;
+        if (nb > GPU_NB) nb = GPU_NB;
+        g_astage_n = g_oc.astage_init(nb) > 0 ? nb : 0;
+    }
     m->gpu_max_t = max_t; m->gpu_kv_len = 0;
     m->gpu_kv_stage = malloc((size_t)c->n_layers * 2 * c->hidden * sizeof(float));
     m->gpu_on = 1;
@@ -1974,8 +2141,10 @@ static int gpu_decode(Model *m, int tok, int pos, float *logit_out, int mirror_k
             if (g_oc.layer_experts(NULL) <= 0) return 0;
             continue;
         }
-        int ids[16], miss = 0, slots[16], kept[16], nk = 0; float w[16];
+        int ids[16], miss = 0, slots[16], kept[16], nk = 0, me[16], ms[16], nmiss = 0; float w[16];
+        double tsy = now_s();
         if (g_oc.route_fetch(ids, w, &miss) <= 0) return 0;
+        g_t_sync += now_s() - tsy;
         m->gpu_fetch_syncs++;
         for (int k = 0; k < K; k++) {
             if (ids[k] < 0) { slots[k] = -2; continue; }      /* dropped by High-Fidelity sparsity */
@@ -1984,12 +2153,13 @@ static int gpu_decode(Model *m, int tok, int pos, float *logit_out, int mirror_k
                 sl = gpu_pick_slot(m, pool, kept, nk);
                 if (sl < 0) return 0;
                 int old = m->gpu_owner[pool][sl];
-                if (old >= 0) { g_oc.unmap_expert(old / E, old % E); m->gpu_slot_of[old] = -1; }
-                if (!gpu_load_expert(m, l, ids[k], sl)) return 0;
+                if (old >= 0) { if (g_astage_n) g_oc.unmap_async(old / E, old % E); else g_oc.unmap_expert(old / E, old % E); m->gpu_slot_of[old] = -1; }
+                me[nmiss] = ids[k]; ms[nmiss] = sl; nmiss++;
                 m->gpu_slot_of[idx] = sl; m->gpu_owner[pool][sl] = idx; m->gpu_miss++;
             }
             m->gpu_use[pool][sl] = ++m->gpu_clock; slots[k] = sl; kept[nk++] = sl;
         }
+        if (nmiss && !gpu_upload_batch(m, l, me, ms, nmiss)) return 0;
         if (g_oc.layer_experts(slots) <= 0) return 0;
     }
     if (g_oc.finish(logit_out, m->gpu_kv_stage) <= 0) return 0;
@@ -2037,7 +2207,7 @@ static int gpu_prefill(Model *m, const int *ids, int S, int pos_base, float *log
         m->gpu_kv_len = pos_base;
     }
     float *xr = falloc((int64_t)GPU_PF_MAX * D);
-    int *kept = malloc((size_t)E * sizeof(int)), *used = malloc((size_t)E * sizeof(int));
+    int *kept = malloc((size_t)E * sizeof(int)), *used = malloc((size_t)E * sizeof(int)), *pme = malloc((size_t)E * sizeof(int)), *pms = malloc((size_t)E * sizeof(int));
     int ok = 1;
     for (int c0 = 0; c0 < S && ok; c0 += GPU_PF_MAX) {
         int cs = S - c0 < GPU_PF_MAX ? S - c0 : GPU_PF_MAX, pos = pos_base + c0, last = (c0 + cs == S);
@@ -2051,7 +2221,7 @@ static int gpu_prefill(Model *m, const int *ids, int S, int pos_base, float *log
             }
             if (g_oc.pf_route(l, used) <= 0) { ok = 0; break; }
             m->gpu_fetch_syncs++;
-            int nk = 0;
+            int nk = 0, npm = 0;
             for (int e = 0; e < E && ok; e++) {
                 if (!used[e]) continue;
                 int idx = l * E + e, sl = m->gpu_slot_of[idx], pool = m->gpu_fmt[l];
@@ -2059,12 +2229,13 @@ static int gpu_prefill(Model *m, const int *ids, int S, int pos_base, float *log
                     sl = gpu_pick_slot(m, pool, kept, nk);
                     if (sl < 0) { ok = 0; break; }
                     int old = m->gpu_owner[pool][sl];
-                    if (old >= 0) { g_oc.unmap_expert(old / E, old % E); m->gpu_slot_of[old] = -1; }
-                    if (!gpu_load_expert(m, l, e, sl)) { ok = 0; break; }
+                    if (old >= 0) { if (g_astage_n) g_oc.unmap_async(old / E, old % E); else g_oc.unmap_expert(old / E, old % E); m->gpu_slot_of[old] = -1; }
+                    pme[npm] = e; pms[npm] = sl; npm++;
                     m->gpu_slot_of[idx] = sl; m->gpu_owner[pool][sl] = idx; m->gpu_miss++;
                 }
                 m->gpu_use[pool][sl] = ++m->gpu_clock; kept[nk++] = sl;
             }
+            if (ok && npm && !gpu_upload_batch(m, l, pme, pms, npm)) ok = 0;
             if (ok && g_oc.pf_experts(l) <= 0) ok = 0;
         }
         if (!ok) break;
@@ -2083,7 +2254,7 @@ static int gpu_prefill(Model *m, const int *ids, int S, int pos_base, float *log
         }
         m->gpu_kv_len = pos + cs;
     }
-    free(xr); free(kept); free(used);
+    free(xr); free(kept); free(used); free(pme); free(pms);
     if (ok) { m->gpu_pf_rows += (uint64_t)S; m->gpu_pf_calls++; m->gpu_pf_s += now_s() - t0; }
     return ok;
 }
@@ -3303,10 +3474,10 @@ int main(int argc, char **argv) {
             double pe = 3.0 * m.c.inter * m.c.hidden + (2.0 * m.c.inter + m.c.hidden) * 4;
             uint64_t db = __atomic_load_n(&m.disk_bytes, __ATOMIC_RELAXED);
             printf("[GPU_STATS] on=%d slots=%d/%d tokens=%llu expert_misses=%llu miss_per_token=%.2f fetch_syncs=%llu "
-                   "disk_gb_per_token=%.4f gpu_s=%.3f gpu_pf_s=%.3f expert_mb_int8=%.2f\n",
+                   "disk_gb_per_token=%.4f gpu_s=%.3f gpu_pf_s=%.3f expert_mb_int8=%.2f t_read=%.3f t_upl=%.3f t_sync=%.3f\n",
                    m.gpu_on, m.gpu_n_slots, m.c.n_layers * m.c.n_experts, (unsigned long long)m.gpu_tokens,
                    (unsigned long long)m.gpu_miss, m.gpu_tokens ? (double)m.gpu_miss / m.gpu_tokens : 0.0,
-                   (unsigned long long)m.gpu_fetch_syncs, scored ? (double)db / scored / 1e9 : 0.0, m.gpu_s, m.gpu_pf_s, pe / 1e6);
+                   (unsigned long long)m.gpu_fetch_syncs, scored ? (double)db / scored / 1e9 : 0.0, m.gpu_s, m.gpu_pf_s, pe / 1e6, g_t_read, g_t_upl, g_t_sync);
         }
         free(buf); free(arena);
         return 0;      /* PPL is a measurement run: no rt_save on purpose, so a loss

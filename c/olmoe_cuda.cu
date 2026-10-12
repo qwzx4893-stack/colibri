@@ -62,6 +62,9 @@ struct G {
     int n_slots4 = 0; size_t w4_bytes = 0, s4_elems = 0;
     unsigned char layer_fmt[128] = {0};                   /* 0 = int8 pool, 1 = int4 pool, per layer */
     int cur_l = 0;
+    /* async expert upload pipeline: a copy stream + a ring of pinned staging buffers (see oc_astage_init) */
+    cudaStream_t cst = nullptr; cudaEvent_t ev_up[16], ev_done; int ev_rec[16] = {0}; int nb = 0;
+    void *h_astage[16] = {nullptr}; int *h_slotv = nullptr; size_t astage_bytes = 0;
     int *slot_of = nullptr;                              /* [L*E] */
     size_t w_bytes = 0, s_elems = 0;
     /* scratch */
@@ -565,6 +568,72 @@ OC_API int oc_upload_expert4(int layer, int eid, int slot, const uint8_t *w, con
     CK(cudaMemcpy(g.slot_of + (size_t)layer * g.E + eid, &slot, 4, cudaMemcpyHostToDevice));
     return 1;
 }
+/* ---- async upload pipeline: reader threads fill pinned staging buffers, uploads run on their own stream and the compute
+ * stream only waits (on the device) for the batch it needs, so PCIe transfers overlap disk/page-cache reads ---- */
+__global__ void k_set_slot(int *dst, int v) { *dst = v; }
+
+/* Upload straight from host memory the engine has memory-mapped (page cache -> PCIe, no staging copy by the engine):
+ * w / s point at the expert's weight and scale bytes in the mapped shard(s). Table entry updated by a 1-thread kernel
+ * on the copy stream (its argument is captured at launch, so no pinned scratch can be overwritten early). */
+OC_API int oc_upload_ptr(int layer, int eid, int slot, int fmt, const void *w, const void *s) {
+    if (!g.cst) return -3;
+    if (fmt) {
+        if (slot < 0 || slot >= g.n_slots4) return -3;
+        CK(cudaMemcpyAsync(g.slot_w4 + (size_t)slot * g.w4_bytes, w, g.w4_bytes, cudaMemcpyHostToDevice, g.cst));
+        CK(cudaMemcpyAsync(g.slot_s4 + (size_t)slot * g.s4_elems, s, g.s4_elems * 2, cudaMemcpyHostToDevice, g.cst));
+    } else {
+        if (slot < 0 || slot >= g.n_slots) return -3;
+        CK(cudaMemcpyAsync(g.slot_w + (size_t)slot * g.w_bytes, w, g.w_bytes, cudaMemcpyHostToDevice, g.cst));
+        CK(cudaMemcpyAsync(g.slot_s + (size_t)slot * g.s_elems, s, g.s_elems * 4, cudaMemcpyHostToDevice, g.cst));
+    }
+    k_set_slot<<<1, 1, 0, g.cst>>>(g.slot_of + (size_t)layer * g.E + eid, slot);
+    CK(cudaGetLastError());
+    return 1;
+}
+/* Pin (page-lock) a host range for the process lifetime so uploads from it run at full PCIe speed (read-only ok). */
+OC_API int oc_host_register(void *p, size_t n) {
+    cudaError_t e = cudaHostRegister(p, n, cudaHostRegisterReadOnly);
+    if (e != cudaSuccess) { cudaGetLastError(); return 0; }
+    return 1;
+}
+
+OC_API int oc_astage_init(int nb) {
+    if (nb < 1) return 0;
+    if (nb > 16) nb = 16;
+    if (g.nb) return g.nb;
+    g.astage_bytes = g.w_bytes + g.s_elems * 4 > g.w4_bytes + g.s4_elems * 2 ? g.w_bytes + g.s_elems * 4 : g.w4_bytes + g.s4_elems * 2;
+    CK(cudaStreamCreateWithFlags(&g.cst, cudaStreamNonBlocking));
+    for (int i = 0; i < nb; i++) { CK(cudaHostAlloc(&g.h_astage[i], g.astage_bytes, 0)); CK(cudaEventCreateWithFlags(&g.ev_up[i], cudaEventDisableTiming)); g.ev_rec[i] = 0; }
+    CK(cudaHostAlloc((void **)&g.h_slotv, 20 * sizeof(int), 0)); g.h_slotv[16] = -1;
+    CK(cudaEventCreateWithFlags(&g.ev_done, cudaEventDisableTiming));
+    g.nb = nb;
+    return nb;
+}
+OC_API void *oc_astage_ptr(int i) { return (i >= 0 && i < g.nb) ? g.h_astage[i] : nullptr; }
+OC_API int oc_astage_wait(int i) { if (g.ev_rec[i]) { CK(cudaEventSynchronize(g.ev_up[i])); g.ev_rec[i] = 0; } return 1; }
+OC_API int oc_upload_async(int i, int layer, int eid, int slot, int fmt) {
+    if (i < 0 || i >= g.nb) return -3;
+    const char *st = (const char *)g.h_astage[i];
+    if (fmt) {
+        if (slot < 0 || slot >= g.n_slots4) return -3;
+        CK(cudaMemcpyAsync(g.slot_w4 + (size_t)slot * g.w4_bytes, st, g.w4_bytes, cudaMemcpyHostToDevice, g.cst));
+        CK(cudaMemcpyAsync(g.slot_s4 + (size_t)slot * g.s4_elems, st + g.w4_bytes, g.s4_elems * 2, cudaMemcpyHostToDevice, g.cst));
+    } else {
+        if (slot < 0 || slot >= g.n_slots) return -3;
+        CK(cudaMemcpyAsync(g.slot_w + (size_t)slot * g.w_bytes, st, g.w_bytes, cudaMemcpyHostToDevice, g.cst));
+        CK(cudaMemcpyAsync(g.slot_s + (size_t)slot * g.s_elems, st + g.w_bytes, g.s_elems * 4, cudaMemcpyHostToDevice, g.cst));
+    }
+    g.h_slotv[i] = slot;
+    CK(cudaMemcpyAsync(g.slot_of + (size_t)layer * g.E + eid, &g.h_slotv[i], 4, cudaMemcpyHostToDevice, g.cst));
+    CK(cudaEventRecord(g.ev_up[i], g.cst)); g.ev_rec[i] = 1;
+    return 1;
+}
+OC_API int oc_unmap_async(int layer, int eid) {
+    CK(cudaMemcpyAsync(g.slot_of + (size_t)layer * g.E + eid, &g.h_slotv[16], 4, cudaMemcpyHostToDevice, g.cst));
+    return 1;
+}
+OC_API int oc_upload_barrier(void) { CK(cudaEventRecord(g.ev_done, g.cst)); CK(cudaStreamWaitEvent(g.st, g.ev_done, 0)); return 1; }
+
 OC_API void oc_set_layer_fmt(int l, int fmt) { if (l >= 0 && l < 128) g.layer_fmt[l] = (unsigned char)fmt; }
 
 /* copy one expert (merged int8 blob + scales) into a VRAM slot and publish it in the device table */

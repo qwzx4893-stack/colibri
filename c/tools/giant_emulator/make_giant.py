@@ -174,9 +174,12 @@ def build_overlay(preset_name, out_dir, pool_gb=2.0, seed=1, gpu_shape=True):
     rng = random.Random(seed)
     header, chunks, offset = {}, [], 0
     pool = []
+    import numpy as np
+    nrng = np.random.default_rng(seed)
     for b in range(pool_blocks):
         pool.append(offset)
-        chunks.append(rng.randbytes(blk)); offset += blk
+        # random nibbles, but FINITE FP16 scales (random bit patterns would be NaN/Inf and trip the runtime's breaker)
+        chunks.append(rng.randbytes(w4b) + nrng.uniform(0.0005, 0.02, s4n).astype(np.float16).tobytes()); offset += blk
     for l in range(d["layers"]):
         for e in range(d["experts"]):
             o = pool[(l * d["experts"] + e) % pool_blocks]
