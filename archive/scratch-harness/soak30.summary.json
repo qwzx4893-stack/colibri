@@ -1,0 +1,47 @@
+{
+ "requests": 208,
+ "minutes": 150.2,
+ "text_mismatches": 0,
+ "rss_mb": {
+  "first_quarter_median": 1355.3,
+  "last_quarter_median": 1355.4,
+  "min": 1330.8,
+  "max": 1355.4,
+  "slope_per_hour": 1.491
+ },
+ "vms_mb": {
+  "first_quarter_median": 9379.8,
+  "last_quarter_median": 9379.8,
+  "min": 9379.6,
+  "max": 9487.4,
+  "slope_per_hour": -1.076
+ },
+ "handles": {
+  "first_quarter_median": 389.0,
+  "last_quarter_median": 387.0,
+  "min": 387,
+  "max": 392,
+  "slope_per_hour": -1.43
+ },
+ "threads": {
+  "first_quarter_median": 15.0,
+  "last_quarter_median": 12.0,
+  "min": 11,
+  "max": 16,
+  "slope_per_hour": -1.082
+ },
+ "vram_mb": {
+  "first_quarter_median": 7710.0,
+  "last_quarter_median": 7710.0,
+  "min": 7696,
+  "max": 7750,
+  "slope_per_hour": 19.419
+ },
+ "tok_s": {
+  "first_quarter_median": 59.43,
+  "last_quarter_median": 58.97,
+  "min": 0.01,
+  "max": 69.16,
+  "slope_per_hour": -23.215
+ }
+}

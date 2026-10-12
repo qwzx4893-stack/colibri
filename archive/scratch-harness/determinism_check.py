@@ -1,0 +1,15 @@
+import sys
+sys.path.insert(0, r"C:\Users\STS\lma_ab")
+from compute_check import run
+
+engine = r"C:\Users\STS\projects\colibri\c\olmoe.exe"
+tok_s1, t1, _ = run(engine, {}, 96, cap=64)
+tok_s2, t2, _ = run(engine, {}, 96, cap=64)
+print("run1:", repr(t1[:120]))
+print("run2:", repr(t2[:120]))
+print("baseline self-identical across two runs:", t1 == t2)
+if t1 != t2:
+    for i, (a, b) in enumerate(zip(t1, t2)):
+        if a != b:
+            print(f"first diff at char {i}")
+            break

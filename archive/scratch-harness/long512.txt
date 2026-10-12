@@ -1,0 +1,6 @@
+rep 1 cpu: 4.42 tok/s wall 115.85s gen 512  pf: None
+rep 1 gpu: 62.62 tok/s wall 8.18s gen 512  pf: [LMA_GPU_PF] calls=2 rows=112 gpu_s=1.183 verify_n=0 verify_argmax_agree=0 verify_max_dlogit=0.00000
+cpu: tok/s median 4.42 min 4.42 max 4.42 | wall median 115.85s
+gpu: tok/s median 62.62 min 62.62 max 62.62 | wall median 8.18s
+cpu text identical to first cfg: True distinct: 1
+gpu text identical to first cfg: True distinct: 1

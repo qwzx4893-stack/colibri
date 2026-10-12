@@ -1,0 +1,54 @@
+/* ---- async expert upload: parallel readers -> pinned staging ring -> copy stream (overlaps PCIe with reads) ---- */
+#define GPU_NB 8
+static int g_astage_n = 0;                       /* 0 = pipeline unavailable / disabled (LMA_GPU_ASYNC=0): synchronous loads */
+static int8_t *g_tmp8[GPU_NB]; static float *g_tmpq[GPU_NB];
+
+/* Fill `dst` (a pinned staging buffer) with expert (layer, eid) in the layout of the layer's pool. Thread-safe: preads only. */
+static int gpu_stage_expert(Model *m, int layer, int eid, int bi, uint8_t *dst) {
+    Cfg *c = &m->c;
+    int64_t ng = (int64_t)c->inter * c->hidden, want_w = 3 * ng, w4b = 3 * ng / 2, s4n = 3 * ng / 32;
+    char nm[256], qsnm[256];
+    if (m->gpu_fmt[layer] == 1 && m->s4_open) {
+        snprintf(nm, sizeof nm, "model.layers.%d.mlp.experts.%d.w4", layer, eid);
+        snprintf(qsnm, sizeof qsnm, "model.layers.%d.mlp.experts.%d.s4", layer, eid);
+        st_tensor *t4 = st_find(&m->S4, nm), *u4 = st_find(&m->S4, qsnm);
+        if (t4 && u4 && t4->nbytes == w4b && u4->nbytes == 2 * s4n) {
+            st_read_raw(&m->S4, nm, dst, g_expert_drop); st_read_raw(&m->S4, qsnm, dst + w4b, g_expert_drop);
+            __atomic_fetch_add(&m->disk_bytes, (uint64_t)(w4b + 2 * s4n), __ATOMIC_RELAXED);
+            return 1;
+        }
+    }
+    snprintf(nm, sizeof nm, "model.layers.%d.mlp.experts.%d.merged_weight", layer, eid);
+    snprintf(qsnm, sizeof qsnm, "model.layers.%d.mlp.experts.%d.qs", layer, eid);
+    st_tensor *tw = st_find(&m->S, nm), *ts = st_find(&m->S, qsnm);
+    if (!tw || tw->nbytes != want_w || !ts || ts->numel != (int64_t)(2 * c->inter + c->hidden)) return 0;
+    __atomic_fetch_add(&m->disk_bytes, (uint64_t)(want_w + ts->numel * 4), __ATOMIC_RELAXED);
+    if (m->gpu_fmt[layer] == 0) {
+        st_read_raw(&m->S, nm, dst, g_expert_drop); st_read_f32(&m->S, qsnm, (float *)(dst + want_w), g_expert_drop);
+        return 1;
+    }
+    if (!g_tmp8[bi]) { g_tmp8[bi] = malloc((size_t)want_w); g_tmpq[bi] = malloc((size_t)(2 * c->inter + c->hidden) * sizeof(float)); if (!g_tmp8[bi] || !g_tmpq[bi]) return 0; }
+    st_read_raw(&m->S, nm, g_tmp8[bi], g_expert_drop); st_read_f32(&m->S, qsnm, g_tmpq[bi], g_expert_drop);
+    quant_expert_i4(g_tmp8[bi], g_tmpq[bi], c->inter, c->hidden, dst, (uint16_t *)(dst + w4b));
+    return 1;
+}
+
+/* Make `n` experts of `layer` resident in the given slots (their table entries were already reserved on the host). */
+static int gpu_upload_batch(Model *m, int layer, const int *eids, const int *slots, int n) {
+    int fmt = m->gpu_fmt[layer];
+    if (g_astage_n < 1) {
+        for (int j = 0; j < n; j++) if (!gpu_load_expert(m, layer, eids[j], slots[j])) return 0;
+        return 1;
+    }
+    for (int base = 0; base < n; base += g_astage_n) {
+        int cnt = n - base < g_astage_n ? n - base : g_astage_n, ok = 1;
+        for (int j = 0; j < cnt; j++) if (g_oc.astage_wait(j) <= 0) return 0;      /* buffer j free again (its last upload finished) */
+        #pragma omp parallel for num_threads(cnt) schedule(static, 1)
+        for (int j = 0; j < cnt; j++)
+            if (!gpu_stage_expert(m, layer, eids[base + j], j, (uint8_t *)g_oc.astage_ptr(j))) { __atomic_store_n(&ok, 0, __ATOMIC_RELAXED); }
+        if (!ok) return 0;
+        for (int j = 0; j < cnt; j++) if (g_oc.upload_async(j, layer, eids[base + j], slots[base + j], fmt) <= 0) return 0;
+    }
+    return g_oc.upload_barrier() > 0;
+}
+

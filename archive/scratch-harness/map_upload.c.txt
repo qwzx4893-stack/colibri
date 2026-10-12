@@ -1,0 +1,82 @@
+/* ---- memory-mapped expert reads: page cache -> PCIe with no engine-side copy ----
+ * Measured on this machine (page-cache-hot shard): pread into pinned staging + upload 3.7 GB/s effective, upload straight
+ * from a mapped view 5.7 GB/s, from a registered (page-locked) view 8.2 GB/s (= the PCIe ceiling). Cold data is fetched
+ * with PrefetchVirtualMemory / madvise(WILLNEED) for the whole layer's misses first, so the NVMe sees a deep queue of large
+ * reads instead of page faults one 4 KB page at a time. */
+static int g_map_on = 1;                          /* LMA_GPU_MAP=0 keeps the pread + staging path */
+static const uint8_t *st_map_base(shards *S, int fidx) {
+    static const uint8_t *maps[512];
+    if (fidx < 0 || fidx >= 512) return NULL;
+    if (maps[fidx]) return maps[fidx];
+#ifdef _WIN32
+    HANDLE fh = (HANDLE)_get_osfhandle(S->fds[fidx]);
+    if (fh == INVALID_HANDLE_VALUE) return NULL;
+    HANDLE mh = CreateFileMappingA(fh, NULL, PAGE_READONLY, 0, 0, NULL);
+    if (!mh) return NULL;
+    maps[fidx] = (const uint8_t *)MapViewOfFile(mh, FILE_MAP_READ, 0, 0, 0);
+#else
+    void *p = mmap(NULL, (size_t)S->sizes[fidx], PROT_READ, MAP_SHARED, S->fds[fidx], 0);
+    maps[fidx] = p == MAP_FAILED ? NULL : (const uint8_t *)p;
+#endif
+    return maps[fidx];
+}
+static const uint8_t *gpu_tensor_ptr(shards *S, const char *name, int64_t want_bytes) {
+    st_tensor *t = st_find(S, name);
+    if (!t || t->nbytes != want_bytes) return NULL;
+    int fi = st_fidx(S, t->fd);
+    if (fi < 0 || t->off < 0 || t->off + t->nbytes > S->sizes[fi]) return NULL;
+    const uint8_t *b = st_map_base(S, fi);
+    return b ? b + t->off : NULL;
+}
+static void gpu_prefetch_ranges(const uint8_t **p, const int64_t *n, int cnt) {
+#ifdef _WIN32
+    typedef struct { PVOID a; SIZE_T n; } RangeEntry;
+    typedef BOOL (WINAPI *PrefetchFn)(HANDLE, ULONG_PTR, RangeEntry *, ULONG);
+    static PrefetchFn fn = NULL; static int tried = 0;
+    if (!tried) { tried = 1; FARPROC f = GetProcAddress(GetModuleHandleA("kernel32.dll"), "PrefetchVirtualMemory"); if (f) memcpy(&fn, &f, sizeof f); }
+    if (!fn || cnt < 1) return;
+    RangeEntry r[64]; int k = cnt < 64 ? cnt : 64;
+    for (int i = 0; i < k; i++) { r[i].a = (PVOID)p[i]; r[i].n = (SIZE_T)n[i]; }
+    fn(GetCurrentProcess(), (ULONG_PTR)k, r, 0);
+#else
+    for (int i = 0; i < cnt; i++) {
+        uintptr_t a = (uintptr_t)p[i] & ~(uintptr_t)4095;
+        madvise((void *)a, (size_t)(n[i] + ((uintptr_t)p[i] - a)), MADV_WILLNEED);
+    }
+#endif
+}
+
+/* Upload `n` experts of `layer` from mapped shards. Returns 1 ok, 0 = not applicable/failed (caller uses the pread path). */
+static int gpu_upload_batch_map(Model *m, int layer, const int *eids, const int *slots, int n) {
+    Cfg *c = &m->c; int fmt = m->gpu_fmt[layer];
+    int64_t ng = (int64_t)c->inter * c->hidden, want_w = 3 * ng, w4b = 3 * ng / 2, s4n = 3 * ng / 32;
+    if (!g_oc.upload_ptr || n < 1 || n > 64) return 0;
+    const uint8_t *wp[64], *sp[64]; int64_t wn = fmt ? w4b : want_w, sn = fmt ? 2 * s4n : (int64_t)(2 * c->inter + c->hidden) * 4;
+    const uint8_t *pf[128]; int64_t pn[128]; int npf = 0;
+    for (int j = 0; j < n; j++) {
+        char a[256], b[256];
+        if (fmt == 1) {
+            if (!m->s4_open) return 0;
+            snprintf(a, sizeof a, "model.layers.%d.mlp.experts.%d.w4", layer, eids[j]);
+            snprintf(b, sizeof b, "model.layers.%d.mlp.experts.%d.s4", layer, eids[j]);
+            wp[j] = gpu_tensor_ptr(&m->S4, a, wn); sp[j] = gpu_tensor_ptr(&m->S4, b, sn);
+        } else {
+            snprintf(a, sizeof a, "model.layers.%d.mlp.experts.%d.merged_weight", layer, eids[j]);
+            snprintf(b, sizeof b, "model.layers.%d.mlp.experts.%d.qs", layer, eids[j]);
+            st_tensor *tq = st_find(&m->S, b);
+            if (!tq || tq->dtype != 2) return 0;                    /* scales must already be raw F32 on disk */
+            wp[j] = gpu_tensor_ptr(&m->S, a, wn); sp[j] = gpu_tensor_ptr(&m->S, b, sn);
+        }
+        if (!wp[j] || !sp[j]) return 0;
+        if (npf + 2 <= 128) { pf[npf] = wp[j]; pn[npf++] = wn; pf[npf] = sp[j]; pn[npf++] = sn; }
+    }
+    double tq = now_s();
+    gpu_prefetch_ranges(pf, pn, npf);
+    for (int j = 0; j < n; j++) {
+        if (g_oc.upload_ptr(layer, eids[j], slots[j], fmt, wp[j], sp[j]) <= 0) return 0;
+        __atomic_fetch_add(&m->disk_bytes, (uint64_t)(wn + sn), __ATOMIC_RELAXED);
+    }
+    g_t_upl += now_s() - tq;
+    return g_oc.upload_barrier() > 0;
+}
+

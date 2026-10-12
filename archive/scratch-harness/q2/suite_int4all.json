@@ -1,0 +1,191 @@
+[
+ {
+  "domain": "coding",
+  "prompt": "Write a Python function named square(x) that returns x squared. Reply with only ",
+  "prompt_full": "Write a Python function named square(x) that returns x squared. Reply with only the code.",
+  "text": "def square(x):\n    return x*x\n\nif __name__ == '__main__':\n    print(square(5))\n    print(square(-3))\n    print(square(0))<|endoftext|>-1<|endoftext|>-\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n-\n\n-\n\n-\n",
+  "ok": false,
+  "tokens": 80,
+  "tok_s": 57.44598907043951
+ },
+ {
+  "domain": "coding",
+  "prompt": "Write a Python function named is_even(n) that returns True if n is even. Reply w",
+  "prompt_full": "Write a Python function named is_even(n) that returns True if n is even. Reply with only the code.",
+  "text": "def is_even(n):\n    return n % 2 == 0\n\nif __name__ == '__main__':\n    print(is_even(4))  # Output: True\n    print(is_even(5))  # Output: False<|endoftext|>\n    # Test with odd number\n    print(is_even(3))  # Output: True",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 57.519283556954655
+ },
+ {
+  "domain": "coding",
+  "prompt": "Write a Python function named maximum(a, b) returning the larger of a and b. Rep",
+  "prompt_full": "Write a Python function named maximum(a, b) returning the larger of a and b. Reply with only the code.",
+  "text": "Here is the Python function named `maximum(a, b)` that returns the larger of `a` and `b`:\n\n```python\ndef maximum(a, b):\n    return max(a, b)\n```\n\nThis function uses the built-in `max()` function from the `math` module to find the maximum of two numbers. The `max()`",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 57.22082992839047
+ },
+ {
+  "domain": "reasoning",
+  "prompt": "Tom is taller than Sam. Sam is taller than Ken. Who is the shortest? Answer with",
+  "prompt_full": "Tom is taller than Sam. Sam is taller than Ken. Who is the shortest? Answer with one name.",
+  "text": "Ken is the shortest among Tom, Sam, and Ken since Sam is taller than Ken and Tom is taller than Sam. Therefore, the answer is Ken.<|endoftext|>- Advertisement -\n\n- Advertisement -\n\n10 Tips for Writing a Memorable Character\n\nCreating memorable characters is one of the most important aspects of writing a great story. A well-written character can make readers feel invested",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 58.4078266942299
+ },
+ {
+  "domain": "reasoning",
+  "prompt": "If all bloops are razzies and all razzies are lazzies, are all bloops lazzies? A",
+  "prompt_full": "If all bloops are razzies and all razzies are lazzies, are all bloops lazzies? Answer yes or no.",
+  "text": "No.\n\nBased on the given information that all bloops are razzies and all razzies are lazzies, it does not necessarily mean that all bloops are lazzies. The relationship between the three terms (bloops, razzies, and lazzies) is not necessarily linear or direct. There could be other factors or relationships at play that would determine whether",
+  "ok": false,
+  "tokens": 80,
+  "tok_s": 55.04970799618132
+ },
+ {
+  "domain": "reasoning",
+  "prompt": "I have 3 boxes with 4 apples each. I eat 2 apples. How many apples are left? Ans",
+  "prompt_full": "I have 3 boxes with 4 apples each. I eat 2 apples. How many apples are left? Answer with a number.",
+  "text": "You have 3 boxes with 4 apples each, so you initially had 3 * 4 = 12 apples.\nAfter eating 2 apples, you have 12 - 2 = 10 apples left.\n\nSo, there are 10 apples left.<|endoftext|>- Advertisement -\n\nLatest article\n\nHow to Make a DIY Herb Garden: A Step-by-Step Guide\n\nHerb gardens are",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 57.53354465616545
+ },
+ {
+  "domain": "math",
+  "prompt": "What is 12 + 29? Answer with a number only.",
+  "prompt_full": "What is 12 + 29? Answer with a number only.",
+  "text": "The sum of 12 and 29 is 41.<|endoftext|>- Petizioni -\n\nA proposito di: 12 + 29 = 41\n\n12 + 29 = 41 \u00e8 una somma matematica semplice, che pu\u00f2 essere resa in un solo passo. La somma di 12 e 29 \u00e8 41.\n\nPer rispondere a questa domanda, ho",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 62.738112978380364
+ },
+ {
+  "domain": "math",
+  "prompt": "What is 7 times 8? Answer with a number only.",
+  "prompt_full": "What is 7 times 8? Answer with a number only.",
+  "text": "7 times 8 is 56.<|endoftext|>- [x] I am a **bot**\n- [ ] I am a **battery**\n- [ ] I am a **human**\n- [ ] I am a **computer**\n- [ ] I am a **program**\n- [ ] I am a **website**\n- [ ] I am a **database**\n-",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 62.83168500747514
+ },
+ {
+  "domain": "math",
+  "prompt": "What is 100 minus 37? Answer with a number only.",
+  "prompt_full": "What is 100 minus 37? Answer with a number only.",
+  "text": "63<|endoftext|>-0.1 0 0.1 1 1.1 2 2.1 3 3.1 4 4.1 5 5.1 6 6.1 7 7.1 8 8.1 9 9.1 10 10.1 11 11.1 12 12.1 13 13.1 14 14.1 15 15.1 16 16.1 17 17.1 18 18",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 62.24880128911278
+ },
+ {
+  "domain": "factual",
+  "prompt": "What is the capital of France? Answer in one word.",
+  "prompt_full": "What is the capital of France? Answer in one word.",
+  "text": "Paris. The capital of France is Paris.<|endoftext|>- Advertisement -\n\nThe French Revolution, which lasted from 1789 to 1799, was a period of radical social and political upheaval in France. It began with the convening of the Estates-General in 1789, which was called to address France's deepening financial crisis. The Estates-General was made up of",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 62.154756943093766
+ },
+ {
+  "domain": "factual",
+  "prompt": "What is the chemical symbol for water? Answer briefly.",
+  "prompt_full": "What is the chemical symbol for water? Answer briefly.",
+  "text": "The chemical symbol for water is H2O. It consists of two hydrogen atoms (H) bonded to one oxygen atom (O). Water is a polar molecule, meaning it has a slightly positive charge on one end and a slightly negative charge on the other. This polarity allows water to dissolve a wide variety of substances and is essential for many biological processes.<|endoftext|>- - -\n\nTitle: The",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 63.116576437245484
+ },
+ {
+  "domain": "factual",
+  "prompt": "Who wrote the play Romeo and Juliet? Answer briefly.",
+  "prompt_full": "Who wrote the play Romeo and Juliet? Answer briefly.",
+  "text": "The play Romeo and Juliet was written by William Shakespeare. It is a tragic love story that follows the lives of two young star-crossed lovers, Romeo Montague and Juliet Capulet, as they fall in love and ultimately face tragic consequences. The play is considered one of Shakespeare's most popular and enduring works.<|endoftext|>- -\n\nThe Importance of Sleep for a Healthy Life",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 62.93333773464658
+ },
+ {
+  "domain": "instruction",
+  "prompt": "Reply with exactly the word BANANA in capital letters and nothing else.",
+  "prompt_full": "Reply with exactly the word BANANA in capital letters and nothing else.",
+  "text": "BANANA<|endoftext|>\n\nAny further requests to be fulfilled in exactly the same manner will be met with the same response.<|endoftext|>\n\n| |\n| |\n| |\n| |\n| |<|endoftext|>|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|\n|",
+  "ok": false,
+  "tokens": 80,
+  "tok_s": 61.37829203939984
+ },
+ {
+  "domain": "instruction",
+  "prompt": "List exactly three fruits, one per line, with no other text.",
+  "prompt_full": "List exactly three fruits, one per line, with no other text.",
+  "text": "Apple\nBanana\nOrange<|endoftext|>\n\n(Note: The above list is in compliance with the request for exactly three fruits, one per line, without any other text.)<|endoftext|>\n\nFruits are a delicious and nutritious food that come in a wide variety of flavors and textures. They are also an important source of vitamins, minerals, and other nutrients that are essential for good",
+  "ok": false,
+  "tokens": 80,
+  "tok_s": 61.7548085550124
+ },
+ {
+  "domain": "instruction",
+  "prompt": "Write one sentence about cats that ends with the word 'purr'.",
+  "prompt_full": "Write one sentence about cats that ends with the word 'purr'.",
+  "text": "Cats purr contentedly when they're stroked or relaxed, providing a soothing and comforting sound that can be both soothing and therapeutic.<|endoftext|>- Advertisement -\n\nLatest article\n\nHow to Make a DIY Cat Toy from a Paper Towel Roll\n\nCats love to play and explore, and one of the easiest and most affordable ways to provide them with entertainment is by making",
+  "ok": false,
+  "tokens": 80,
+  "tok_s": 60.954684043935345
+ },
+ {
+  "domain": "structured",
+  "prompt": "Return a JSON object with keys \"name\" and \"age\" for a person called Ana who is 3",
+  "prompt_full": "Return a JSON object with keys \"name\" and \"age\" for a person called Ana who is 30. Output only JSON.",
+  "text": "{\n  \"name\": \"Ana\",\n  \"age\": 30\n}<|endoftext|>\n\nHere is the JSON object with the specified keys and values:\n\n{\n  \"name\": \"Ana\",\n  \"age\": 30\n}<|endoftext|>\n\nThis JSON object contains the information about a person called Ana who is 30 years old. The \"name\" key has the",
+  "ok": false,
+  "tokens": 80,
+  "tok_s": 56.80983223758171
+ },
+ {
+  "domain": "structured",
+  "prompt": "Return a JSON object with keys \"city\" and \"country\" for Rome. Output only JSON.",
+  "prompt_full": "Return a JSON object with keys \"city\" and \"country\" for Rome. Output only JSON.",
+  "text": "Here is a JSON object with the keys \"city\" and \"country\" for Rome:\n\n```json\n{\n  \"city\": \"Rome\",\n  \"country\": \"Italy\"\n}\n```\n\nThis JSON object can be outputted as a string in JavaScript using the `JSON.stringify()` method:\n\n```javascript\nconst data = {\n  ",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 58.85573601874154
+ },
+ {
+  "domain": "structured",
+  "prompt": "Return a JSON object with a key \"items\" listing the numbers 1, 2, 3. Output only",
+  "prompt_full": "Return a JSON object with a key \"items\" listing the numbers 1, 2, 3. Output only JSON.",
+  "text": "To return a JSON object with the key \"items\" listing the numbers 1, 2, and 3, you can use the following Python code:\n\n```python\nimport json\n\ndef get_json_object():\n    data = {\n        \"items\": [1, 2, 3]\n    }\n    return json.dumps(data)\n\njson_object",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 57.629908221679756
+ },
+ {
+  "domain": "long_context",
+  "prompt": "The archive contains many unrelated notes about weather, trains, gardens and old",
+  "prompt_full": "The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The secret code is 7291. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. \nWhat is the secret code? Answer with the number only.",
+  "text": "The secret code is 7291.<|endoftext|>| **Description** | A simple Python program that generates a random password of length 10 using lowercase letters, uppercase letters, and digits. |\n| --- | --- |\n| **Input** | None |\n| **Output** | A random password of length 10 |\n| **How it works** | The program generates a random password of",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 14.365252103846155
+ },
+ {
+  "domain": "long_context",
+  "prompt": "The archive contains many unrelated notes about weather, trains, gardens and old",
+  "prompt_full": "The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The visitor's name is Marguerite. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. \nWhat is the visitor's name? Answer with one word.",
+  "text": "Marguerite<|endoftext|>ms. diane peterson\n\nDiane Peterson is a character in the TV series \"The Expanse\". She is a former United Nations Assistant Secretary-General and a key figure in the conspiracy to overthrow the United Nations.\n\nDiane Peterson is portrayed by actress Mimi Kennedy.\n\nIn the series, Diane Peterson is a highly intelligent and ambitious woman",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 14.407676873382867
+ },
+ {
+  "domain": "long_context",
+  "prompt": "The archive contains many unrelated notes about weather, trains, gardens and old",
+  "prompt_full": "The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The train leaves at platform 12. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. The archive contains many unrelated notes about weather, trains, gardens and old bridges. \nWhich platform does the train leave from? Answer with the number only.",
+  "text": "The train leaves from platform 12.<|endoftext|>| Number | Subject | Text | Keywords | Sentence |\n| --- | --- | --- | --- | --- |\n| 1 | Weather | Many unrelated notes about weather | weather, notes, unrelated | The archive contains many unrelated notes about weather |\n| 2 | Trains | The train leaves at platform 12 | train, leaves, platform 12",
+  "ok": true,
+  "tokens": 80,
+  "tok_s": 14.387017361099796
+ }
+]

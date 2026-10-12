@@ -1,0 +1,60 @@
+/* ---- Atomic Compiler backend: expert overlay shards ----
+ * QCOMPILE=<lo>-<hi> QC_OUT=<file> (with SNAP): re-quantise the int8 experts of layers lo..hi to the int4 group-32 format
+ * and write them as ONE safetensors overlay shard (tensors `model.layers.L.mlp.experts.E.w4` U8 and `.s4` F16). The
+ * runtime (LMA_EXPERT_OVERLAY) then reads 0.5625 B/weight from disk instead of re-quantising int8 at load time. The
+ * quantiser is quant_expert_i4 -- the very function the on-the-fly fallback uses -- so both routes give identical weights.
+ * The Python driver (lmatomic/compiler.py) orchestrates shards, checksums and resume; this function never writes
+ * anywhere but QC_OUT and never touches the source model. */
+static int qcompile(const char *snap, const char *spec, const char *outp) {
+    Cfg c; load_cfg(&c, snap);
+    shards S; st_init(&S, snap);
+    int lo = 0, hi = c.n_layers - 1;
+    if (sscanf(spec, "%d-%d", &lo, &hi) < 1) return 2;
+    if (strchr(spec, '-') == NULL) hi = lo;
+    if (lo < 0 || hi >= c.n_layers || lo > hi) { fprintf(stderr, "QCOMPILE: bad layer range %s\n", spec); return 2; }
+    if (getenv("LMA_HF_INT4_CLIP")) g_i4_clip = atoi(getenv("LMA_HF_INT4_CLIP"));
+    int64_t ng = (int64_t)c.inter * c.hidden, want_w = 3 * ng, w4b = 3 * ng / 2, s4n = 3 * ng / 32;
+    if (c.hidden % 32 || c.inter % 32) { fprintf(stderr, "QCOMPILE: hidden/inter must be multiples of 32\n"); return 2; }
+    int nl = hi - lo + 1, ne = c.n_experts;
+    size_t hcap = (size_t)nl * ne * 480 + 512, hp = 0;
+    char *hdr = malloc(hcap);
+    hp += (size_t)snprintf(hdr + hp, hcap - hp, "{\"__metadata__\":{\"lma_overlay\":\"int4-g32-fp16\"}");
+    int64_t off = 0;
+    for (int l = lo; l <= hi; l++)
+        for (int e = 0; e < ne; e++) {
+            hp += (size_t)snprintf(hdr + hp, hcap - hp, ",\"model.layers.%d.mlp.experts.%d.w4\":{\"dtype\":\"U8\",\"shape\":[%lld],\"data_offsets\":[%lld,%lld]}",
+                                   l, e, (long long)w4b, (long long)off, (long long)(off + w4b));
+            off += w4b;
+            hp += (size_t)snprintf(hdr + hp, hcap - hp, ",\"model.layers.%d.mlp.experts.%d.s4\":{\"dtype\":\"F16\",\"shape\":[%lld],\"data_offsets\":[%lld,%lld]}",
+                                   l, e, (long long)s4n, (long long)off, (long long)(off + 2 * s4n));
+            off += 2 * s4n;
+        }
+    hp += (size_t)snprintf(hdr + hp, hcap - hp, "}");
+    while (hp % 8) hdr[hp++] = ' ';
+    FILE *f = fopen(outp, "wb");
+    if (!f) { perror(outp); return 1; }
+    uint64_t hl = (uint64_t)hp;
+    fwrite(&hl, 8, 1, f); fwrite(hdr, 1, hp, f);
+    int8_t *w = malloc((size_t)want_w), *w_chk = NULL; (void)w_chk;
+    float *qs = malloc((size_t)(2 * c.inter + c.hidden) * sizeof(float));
+    uint8_t *w4 = malloc((size_t)w4b); uint16_t *s4 = malloc((size_t)s4n * 2);
+    for (int l = lo; l <= hi; l++) {
+        for (int e = 0; e < ne; e++) {
+            char nm[256], qn[256];
+            snprintf(nm, sizeof nm, "model.layers.%d.mlp.experts.%d.merged_weight", l, e);
+            snprintf(qn, sizeof qn, "model.layers.%d.mlp.experts.%d.qs", l, e);
+            st_tensor *tw = st_find(&S, nm), *ts = st_find(&S, qn);
+            if (!tw || tw->nbytes != want_w || !ts || ts->numel != (int64_t)(2 * c.inter + c.hidden)) {
+                fprintf(stderr, "QCOMPILE: layer %d expert %d missing or mis-sized\n", l, e); fclose(f); return 1; }
+            st_read_raw(&S, nm, w, 0); st_read_f32(&S, qn, qs, 0);
+            quant_expert_i4(w, qs, c.inter, c.hidden, w4, s4);
+            if (fwrite(w4, 1, (size_t)w4b, f) != (size_t)w4b || fwrite(s4, 2, (size_t)s4n, f) != (size_t)s4n) { perror("write"); fclose(f); return 1; }
+        }
+        fprintf(stderr, "[QCOMPILE] layer %d done\n", l);
+    }
+    if (fclose(f) != 0) { perror("close"); return 1; }
+    free(w); free(qs); free(w4); free(s4); free(hdr);
+    printf("QCOMPILE ok %s bytes=%lld\n", outp, (long long)(8 + hp + off));
+    return 0;
+}
+

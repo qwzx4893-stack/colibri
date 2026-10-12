@@ -1,0 +1,81 @@
+{
+  "summary": {
+    "pilot_old_equiv": {
+      "median_tok_s": 1.2958500000000002,
+      "median_gb_per_token": 0.861316,
+      "median_pf_precision": 0.2896,
+      "median_wall_s": 49.4863885641098,
+      "all_tok_s": [
+        1.6326,
+        1.239,
+        1.3527,
+        1.2057
+      ],
+      "all_gb_per_token": [
+        0.861316,
+        0.861316,
+        0.861316,
+        0.861316
+      ],
+      "all_wall_s": [
+        39.2186541557312,
+        51.658602237701416,
+        47.31417489051819,
+        53.0826632976532
+      ]
+    },
+    "pilot_workers_only": {
+      "median_tok_s": 1.5852,
+      "median_gb_per_token": 0.861316,
+      "median_pf_precision": 0.2896,
+      "median_wall_s": 41.4095242023468,
+      "all_tok_s": [
+        1.3347,
+        1.2714,
+        1.8357,
+        1.9124
+      ],
+      "all_gb_per_token": [
+        0.861316,
+        0.861316,
+        0.861119,
+        0.861316
+      ],
+      "all_wall_s": [
+        47.95269012451172,
+        50.33994483947754,
+        34.866358280181885,
+        33.47713041305542
+      ]
+    },
+    "pilot_predictor_only": {
+      "median_tok_s": 1.9788000000000001,
+      "median_gb_per_token": 0.8477144999999999,
+      "median_pf_precision": 0.26854999999999996,
+      "median_wall_s": 32.350741386413574,
+      "all_tok_s": [
+        1.9833,
+        1.9743,
+        2.0165,
+        1.7835
+      ],
+      "all_gb_per_token": [
+        0.844955,
+        0.847123,
+        0.8487,
+        0.848306
+      ],
+      "all_wall_s": [
+        32.28262543678284,
+        32.41885733604431,
+        31.73932456970215,
+        35.886712312698364
+      ]
+    }
+  },
+  "texts": {
+    "pilot_old_equiv": "A hash table is a data structure that uses a hash function to map keys to array indices, enabling efficient storage and retrieval of key-value pairs.<|endoftext|>.<|endoftext|>.\n\nThe hash table is a data structure that stores data in an associative manner, allowing for efficient retrieval of data based on a key. It works",
+    "pilot_workers_only": "A hash table is a data structure that uses a hash function to map keys to array indices, enabling efficient storage and retrieval of key-value pairs.<|endoftext|>.<|endoftext|>.\n\nThe hash table is a data structure that stores data in an associative manner, allowing for efficient retrieval of data based on a key. It works",
+    "pilot_predictor_only": "A hash table is a data structure that uses a hash function to map keys to array indices, enabling efficient storage and retrieval of key-value pairs.<|endoftext|>.<|endoftext|>.\n\nThe hash table is a data structure that stores data in an associative manner, allowing for efficient retrieval of data based on a key. It works"
+  }
+}

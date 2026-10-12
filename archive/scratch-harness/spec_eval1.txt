@@ -1,0 +1,30 @@
+== chat
+  plain      median  71.93 tok/s (min 71.0 max 72.8) identical_to_plain=True
+  spec6      median  54.88 tok/s (min 54.8 max 54.9) identical_to_plain=True
+     [LMA_SPEC] k=6 ngram=2 off=1 verify_calls=16 drafted=96 accepted=3 accept_rate=0.031 tokens_per_verify=1.188 nodraft_steps=126 plain_steps=126 verify_s=0.991 plain_s=1.648
+  spec6n3    median  64.64 tok/s (min 64.5 max 64.8) identical_to_plain=True
+     [LMA_SPEC] k=6 ngram=3 off=0 verify_calls=5 drafted=30 accepted=3 accept_rate=0.100 tokens_pe[api] 127.0.0.1 - "POST /v1/chat/completions HTTP/1.1" 200 -
+== code
+  plain      median  62.56 tok/s (min 62.2 max 62.9) identical_to_plain=True
+  spec6      median  53.48 tok/s (min 52.9 max 54.1) identical_to_plain=True
+     [LMA_SPEC] k=6 ngram=2 off=1 verify_calls=16 drafted=94 accepted=14 accept_rate=0.149 tokens_per_verify=1.875 nodraft_steps=32 plain_steps=32 verify_s=0.959 plain_s=0.401
+  spec6n3    median  55.54 tok/s (min 54.6 max 56.4) identical_to_plain=True
+     [LMA_SPEC] k=6 ngram=3 off=1 verify_calls=16 drafted=96 accepted=32 accept_rate=0.333 tokens_per_verify=3.000 nodraft_steps=89 plain_steps=89 verify_s=0.974 plain_s=1.074
+== copy
+  plain      median  62.53 tok/s (min 62.5 max 62.6) identical_to_plain=True
+  spec6      median  62.21 tok/s (min 62.2 max 62.2) identical_to_plain=True
+     [LMA_SPEC] k=6 ngram=2 off=1 verify_calls=16 drafted=96 accepted=[api] 127.0.0.1 - "POST /v1/chat/completions HTTP/1.1" 200 -
+  spec6n3    median  69.02 tok/s (min 68.6 max 69.4) identical_to_plain=True
+     [LMA_SPEC] k=6 ngram=3 off=0 verify_calls=19 drafted=114 accepted=97 accept_rate=0.851 tokens_per_verify=6.105 nodraft_steps=64 plain_steps=64 verify_s=1.172 plain_s=0.885
+== json
+  plain      median  68.17 tok/s (min 67.7 max 68.7) identical_to_plain=True
+  spec6      median  63.18 tok/s (min 63.2 max 63.2) identical_to_plain=True
+     [LMA_SPEC] k=6 ngram=2 off=0 verify_calls=2 drafted=12 accepted=12 accept_rate=1.000 tokens_per_verify=7.000 nodraft_steps=5 plain_steps=5 verify_s=0.135 plain_s=0.095
+  spec6n3    median  61.95 tok/s (min 61.2 max 62.7) identical_to_plain=True
+     [LMA_SPEC] k=6 ngram=3 off=1 verify_calls=16 drafted=96 accepted=45 accept_rate=0.469 tokens_per_verify=3.812 nodraft_steps=96 plain_steps=96 verify_s=0.981 plain_s=1.256
+== summ
+  plain      median  52.69 tok/s (min 52.2 max 53.2) identical_to_plain=True
+  spec6      median  50.39 tok/s (min 50.1 max 50.7) identical_to_plain=True
+     [LMA_SPEC] k=6 ngram=2 off=1 verify_calls=16 drafted=87 accepted=43 accept_rate=0.494 tokens_per_verify=3.688 nodraft_steps=55 plain_steps=55 verify_s=0.889 plain_s=0.772
+  spec6n3    median  58.03 tok/s (min 57.7 max 58.4) identical_to_plain=True
+     [LMA_SPEC] k=6 ngram=3 off=0 verify_calls=26 drafted=102 accepted=85 accept_rate=0.833 tokens_per_verify=4.269 nodraft_steps=64 plain_steps=64 verify_s=1.123 plain_s=0.891

@@ -1,0 +1,54 @@
+{
+ "label": "30B_A3B int4 async",
+ "model": "C:/Users/STS/giant/30B_A3B_gpu",
+ "env": {
+  "LMA_HF_INT4": "all",
+  "LMA_EXPERT_OVERLAY": "C:/Users/STS/giant/30B_A3B_gpu_int4"
+ },
+ "class": "PHYSICALLY EMULATED (random weights; real tiering, I/O, kernels)",
+ "runs": [
+  {
+   "wall_s": 18.6,
+   "tok_s": 4.2,
+   "seconds": 15.2,
+   "tokens": 64,
+   "peak_rss_gb": 0.35,
+   "gpu_on": 1,
+   "slots": 2709,
+   "total_experts": 6144,
+   "miss_per_token": 210.95,
+   "disk_gb_per_token": 0.6566,
+   "vram_resident": "2709/6144"
+  },
+  {
+   "wall_s": 18.7,
+   "tok_s": 4.12,
+   "seconds": 15.5,
+   "tokens": 64,
+   "peak_rss_gb": 0.35,
+   "gpu_on": 1,
+   "slots": 2709,
+   "total_experts": 6144,
+   "miss_per_token": 210.95,
+   "disk_gb_per_token": 0.6566,
+   "vram_resident": "2709/6144"
+  },
+  {
+   "wall_s": 18.7,
+   "tok_s": 4.13,
+   "seconds": 15.5,
+   "tokens": 64,
+   "peak_rss_gb": 0.35,
+   "gpu_on": 1,
+   "slots": 2709,
+   "total_experts": 6144,
+   "miss_per_token": 210.95,
+   "disk_gb_per_token": 0.6566,
+   "vram_resident": "2709/6144"
+  }
+ ],
+ "median_tok_s": 4.13,
+ "min_tok_s": 4.12,
+ "max_tok_s": 4.2,
+ "stdev": 0.03559026084010444
+}

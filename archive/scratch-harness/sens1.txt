@@ -1,0 +1,20 @@
+layer  0: KL 0.00801  top1 0.976  ppl ratio 1.0001  (43s)
+layer  1: KL 0.00755  top1 0.980  ppl ratio 0.9974  (39s)
+layer  2: KL 0.00828  top1 0.981  ppl ratio 1.0021  (39s)
+layer  3: KL 0.00661  top1 0.982  ppl ratio 1.0038  (39s)
+layer  4: KL 0.00597  top1 0.984  ppl ratio 0.9934  (39s)
+layer  5: KL 0.00521  top1 0.983  ppl ratio 0.9995  (39s)
+layer  6: KL 0.00426  top1 0.984  ppl ratio 1.0058  (39s)
+layer  7: KL 0.00413  top1 0.987  ppl ratio 1.0025  (39s)
+layer  8: KL 0.00400  top1 0.984  ppl ratio 1.0011  (39s)
+layer  9: KL 0.00367  top1 0.984  ppl ratio 1.0057  (39s)
+layer 10: KL 0.00438  top1 0.981  ppl ratio 1.0052  (39s)
+layer 11: KL 0.00343  top1 0.986  ppl ratio 1.0010  (39s)
+layer 12: KL 0.00470  top1 0.986  ppl ratio 1.0066  (43s)
+layer 13: KL 0.00969  top1 0.980  ppl ratio 1.0107  (52s)
+layer 14: KL 0.01768  top1 0.977  ppl ratio 1.0203  (51s)
+layer 15: KL 0.00130  top1 0.990  ppl ratio 1.0010  (38s)
+least -> most sensitive: [15, 11, 9, 8, 7, 6, 10, 12, 5, 4, 3, 1, 0, 2, 13, 14]
+int4 on the 4 least sensitive layers [8, 9, 11, 15]: KL 0.01388 top1 0.972 ppl ratio 1.0087 -> ACCEPT
+int4 on the 8 least sensitive layers [6, 7, 8, 9, 10, 11, 12, 15]: KL 0.02443 top1 0.954 ppl ratio 1.0234 -> REJECT
+int4 on the 12 least sensitive layers [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15]: KL 0.03539 top1 0.948 ppl ratio 1.0257 -> REJECT

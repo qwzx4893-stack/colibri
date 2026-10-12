@@ -1,0 +1,181 @@
+
+/* ============================ GPU decode path ============================
+ * See olmoe_cuda.cu. The DLL is optional: without it (or without a GPU, or with
+ * LMA_GPU=0) nothing here runs and decode stays on the CPU. Any GPU error in
+ * gpu_decode() trips the breaker (gpu_on = 0) and that same token is redone on the
+ * CPU, whose KV mirror is kept current after every GPU token, so a session never
+ * dies because the GPU path failed. */
+typedef struct {
+    int   (*init)(int, int, int, int, int, int, int, int, int, int, float, float, int);
+    int   (*set_layer)(int, const void *, const void *, const void *, const void *, const float *, const float *, const float *, const float *, const float *);
+    int   (*set_head)(const void *, const float *);
+    void  (*mem_info)(size_t *, size_t *);
+    int   (*alloc_slots)(int);
+    int   (*upload_expert)(int, int, int, const int8_t *, const float *);
+    int   (*unmap_expert)(int, int);
+    void *(*stage_ptr)(void);
+    int   (*kv_upload)(int, const float *, const float *, int, int, int);
+    int   (*begin_token)(const float *, int);
+    int   (*layer_attn)(int);
+    int   (*layer_route)(int);
+    int   (*route_fetch)(int *, float *, int *);
+    int   (*layer_experts)(const int *);
+    int   (*finish)(float *, float *);
+    void  (*shutdown)(void);
+} OcApi;
+static OcApi g_oc;
+static int g_gpu_verify = 0;
+
+static int oc_load_dll(void) {
+#ifdef _WIN32
+    char path[1024];
+    const char *ov = getenv("LMA_OLMOE_CUDA_DLL");
+    if (ov && *ov) snprintf(path, sizeof path, "%s", ov);
+    else { DWORD n = GetModuleFileNameA(NULL, path, sizeof path);
+           while (n > 0 && path[n-1] != '\\' && path[n-1] != '/') n--;
+           path[n] = 0; strncat(path, "lma_olmoe_cuda.dll", sizeof path - strlen(path) - 1); }
+    HMODULE h = LoadLibraryExA(path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!h) return 0;
+    #define OCR(f) do { *(FARPROC *)&g_oc.f = GetProcAddress(h, "oc_" #f); if (!g_oc.f) return 0; } while (0)
+#else
+    const char *ov = getenv("LMA_OLMOE_CUDA_DLL");
+    void *h = dlopen(ov && *ov ? ov : "./liblma_olmoe_cuda.so", RTLD_NOW);
+    if (!h) return 0;
+    #define OCR(f) do { *(void **)&g_oc.f = dlsym(h, "oc_" #f); if (!g_oc.f) return 0; } while (0)
+#endif
+    OCR(init); OCR(set_layer); OCR(set_head); OCR(mem_info); OCR(alloc_slots); OCR(upload_expert);
+    OCR(unmap_expert); OCR(stage_ptr); OCR(kv_upload); OCR(begin_token); OCR(layer_attn); OCR(layer_route);
+    OCR(route_fetch); OCR(layer_experts); OCR(finish); OCR(shutdown);
+    #undef OCR
+    return 1;
+}
+
+/* read one expert's merged int8 blob + scales into the DLL's pinned staging buffer and copy it to `slot` */
+static int gpu_load_expert(Model *m, int layer, int eid, int slot) {
+    Cfg *c = &m->c;
+    int64_t ng = (int64_t)c->inter * c->hidden, want_w = 3 * ng;
+    char nm[256], qsnm[256];
+    snprintf(nm, sizeof nm, "model.layers.%d.mlp.experts.%d.merged_weight", layer, eid);
+    snprintf(qsnm, sizeof qsnm, "model.layers.%d.mlp.experts.%d.qs", layer, eid);
+    st_tensor *tw = st_find(&m->S, nm), *ts = st_find(&m->S, qsnm);
+    if (!tw || tw->nbytes != want_w || !ts || ts->numel != (int64_t)(2 * c->inter + c->hidden)) return 0;
+    int8_t *stage = (int8_t *)g_oc.stage_ptr();
+    st_read_raw(&m->S, nm, stage, 0);
+    st_read_f32(&m->S, qsnm, (float *)(stage + want_w), 0);
+    __atomic_fetch_add(&m->disk_bytes, (uint64_t)(want_w + ts->numel * 4), __ATOMIC_RELAXED);
+    return g_oc.upload_expert(layer, eid, slot, stage, (const float *)(stage + want_w)) > 0;
+}
+
+static void gpu_try_init(Model *m) {
+    const char *en = getenv("LMA_GPU");
+    if (en && atoi(en) == 0) return;
+    Cfg *c = &m->c;
+    if (!m->L || !m->lm_head_h || !m->L[0].q_h || c->head_dim != 128 || c->n_experts > 1024) return;  /* needs FP16-resident dense */
+    if (!oc_load_dll()) { if (en) fprintf(stderr, "[GPU] lma_olmoe_cuda.dll not found; staying on CPU\n"); return; }
+    int max_t = getenv("LMA_GPU_CTX") ? atoi(getenv("LMA_GPU_CTX")) : 1024;
+    if (max_t < 64) max_t = 64;
+    if (max_t > 4096) max_t = 4096;
+    double t0 = now_s();
+    if (g_oc.init(0, c->n_layers, c->hidden, c->n_heads, c->head_dim, c->inter, c->n_experts, c->topk,
+                  c->vocab, max_t, c->eps, c->theta, c->norm_topk) <= 0) {
+        fprintf(stderr, "[GPU] init failed; staying on CPU\n"); return; }
+    for (int l = 0; l < c->n_layers; l++) {
+        Layer *L = &m->L[l];
+        if (g_oc.set_layer(l, L->q_h, L->k_h, L->v_h, L->o_h, L->in_ln, L->post_ln, L->qn, L->kn, L->gate) <= 0) {
+            fprintf(stderr, "[GPU] weight upload failed (layer %d); staying on CPU\n", l); g_oc.shutdown(); return; }
+    }
+    if (g_oc.set_head(m->lm_head_h, m->final_norm) <= 0) { g_oc.shutdown(); return; }
+    size_t fb = 0, tb = 0; g_oc.mem_info(&fb, &tb);
+    size_t reserve = (size_t)(getenv("LMA_GPU_RESERVE_MB") ? atoi(getenv("LMA_GPU_RESERVE_MB")) : 160) << 20;
+    size_t per = (size_t)3 * c->inter * c->hidden + ((size_t)2 * c->inter + c->hidden) * 4;
+    int want = c->n_layers * c->n_experts;
+    long fit = fb > reserve ? (long)((fb - reserve) / per) : 0;
+    int cap_env = getenv("LMA_GPU_SLOTS") ? atoi(getenv("LMA_GPU_SLOTS")) : want;
+    int n = (int)(fit < want ? fit : want);
+    if (n > cap_env) n = cap_env;
+    if (n < 1) n = 1;
+    n = g_oc.alloc_slots(n);
+    if (n < c->topk) { fprintf(stderr, "[GPU] no VRAM for expert slots; staying on CPU\n"); g_oc.shutdown(); return; }
+    m->gpu_n_slots = n;
+    m->gpu_slot_of = malloc((size_t)want * sizeof(int));
+    m->gpu_slot_owner = malloc((size_t)n * sizeof(int));
+    m->gpu_slot_use = calloc((size_t)n, sizeof(uint64_t));
+    for (int i = 0; i < want; i++) m->gpu_slot_of[i] = -1;
+    for (int i = 0; i < n; i++) m->gpu_slot_owner[i] = -1;
+    int loaded = 0;   /* layer-major preload; LRU refines it at run time when it does not all fit */
+    for (int l = 0; l < c->n_layers && loaded < n; l++)
+        for (int e = 0; e < c->n_experts && loaded < n; e++) {
+            if (!gpu_load_expert(m, l, e, loaded)) { fprintf(stderr, "[GPU] expert load failed\n"); g_oc.shutdown(); return; }
+            m->gpu_slot_of[l * c->n_experts + e] = loaded; m->gpu_slot_owner[loaded] = l * c->n_experts + e; loaded++;
+        }
+    m->gpu_all_resident = (loaded == want);
+    m->gpu_max_t = max_t; m->gpu_kv_len = 0;
+    m->gpu_kv_stage = malloc((size_t)c->n_layers * 2 * c->hidden * sizeof(float));
+    m->gpu_on = 1;
+    g_gpu_verify = getenv("LMA_GPU_VERIFY") ? atoi(getenv("LMA_GPU_VERIFY")) : 0;
+    fprintf(stderr, "[GPU] ready in %.1fs: %d/%d experts resident in VRAM (%.2f GB), ctx %d, %s%s\n",
+            now_s() - t0, loaded, want, (double)loaded * per / 1e9, max_t,
+            m->gpu_all_resident ? "all resident (no host sync per layer)" : "partial residency (LRU + on-demand upload)",
+            g_gpu_verify ? ", VERIFY vs CPU" : "");
+}
+
+/* pick a slot: a free one, else the least recently used that is not in `keep` */
+static int gpu_pick_slot(Model *m, const int *keep, int nkeep) {
+    int best = -1; uint64_t bu = ~0ULL;
+    for (int i = 0; i < m->gpu_n_slots; i++) {
+        if (m->gpu_slot_owner[i] < 0) return i;
+        int kept = 0;
+        for (int j = 0; j < nkeep; j++) if (keep[j] == i) { kept = 1; break; }
+        if (kept) continue;
+        if (m->gpu_slot_use[i] < bu) { bu = m->gpu_slot_use[i]; best = i; }
+    }
+    return best;
+}
+
+/* one decode token on the GPU. Returns 1 on success, 0 on failure (caller falls back to the CPU). */
+static int gpu_decode(Model *m, int tok, int pos, float *logit_out, int mirror_kv) {
+    Cfg *c = &m->c; int D = c->hidden, E = c->n_experts, K = c->topk, L = c->n_layers, H = c->n_heads, hd = c->head_dim;
+    double t0 = now_s();
+    if (pos >= m->gpu_max_t || !m->K || K > 16) return 0;
+    if (m->gpu_kv_len < pos) {                       /* rows the CPU produced (prefill / fallback) */
+        for (int l = 0; l < L; l++)
+            if (g_oc.kv_upload(l, m->K[l], m->V[l], m->max_t, m->gpu_kv_len, pos) <= 0) return 0;
+        m->gpu_kv_len = pos;
+    }
+    if (g_oc.begin_token(m->embed + (int64_t)tok * D, pos) <= 0) return 0;
+    for (int l = 0; l < L; l++) {
+        if (g_oc.layer_attn(l) <= 0 || g_oc.layer_route(l) <= 0) return 0;
+        if (m->gpu_all_resident) {
+            if (g_oc.layer_experts(NULL) <= 0) return 0;
+            continue;
+        }
+        int ids[16], miss = 0, slots[16], kept[16], nk = 0; float w[16];
+        if (g_oc.route_fetch(ids, w, &miss) <= 0) return 0;
+        m->gpu_fetch_syncs++;
+        for (int k = 0; k < K; k++) {
+            int idx = l * E + ids[k], sl = m->gpu_slot_of[idx];
+            if (sl < 0) {
+                sl = gpu_pick_slot(m, kept, nk);
+                if (sl < 0) return 0;
+                int old = m->gpu_slot_owner[sl];
+                if (old >= 0) { g_oc.unmap_expert(old / E, old % E); m->gpu_slot_of[old] = -1; }
+                if (!gpu_load_expert(m, l, ids[k], sl)) return 0;
+                m->gpu_slot_of[idx] = sl; m->gpu_slot_owner[sl] = idx; m->gpu_miss++;
+            }
+            m->gpu_slot_use[sl] = ++m->gpu_clock; slots[k] = sl; kept[nk++] = sl;
+        }
+        if (g_oc.layer_experts(slots) <= 0) return 0;
+    }
+    if (g_oc.finish(logit_out, m->gpu_kv_stage) <= 0) return 0;
+    if (mirror_kv) {
+        for (int l = 0; l < L; l++)
+            for (int h = 0; h < H; h++) {
+                memcpy(m->K[l] + ((int64_t)h * m->max_t + pos) * hd, m->gpu_kv_stage + (int64_t)l * 2 * D + h * hd, hd * sizeof(float));
+                memcpy(m->V[l] + ((int64_t)h * m->max_t + pos) * hd, m->gpu_kv_stage + (int64_t)l * 2 * D + D + h * hd, hd * sizeof(float));
+            }
+    }
+    m->gpu_kv_len = pos + 1;
+    m->gpu_tokens++; m->gpu_s += now_s() - t0;
+    return 1;
+}
+

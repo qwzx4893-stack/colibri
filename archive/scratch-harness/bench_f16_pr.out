@@ -1,0 +1,11 @@
+rep 0 F16=0: 2.30 tok/s  nll 1.4863  rss_after_load 1.79 GB
+rep 0 F16=1: 2.77 tok/s  nll 1.4863  rss_after_load 1.09 GB
+rep 1 F16=1: 2.60 tok/s  nll 1.4863  rss_after_load 1.09 GB
+rep 1 F16=0: 3.28 tok/s  nll 1.4863  rss_after_load 1.79 GB
+rep 2 F16=0: 5.27 tok/s  nll 1.4863  rss_after_load 1.79 GB
+rep 2 F16=1: 6.69 tok/s  nll 1.4863  rss_after_load 1.09 GB
+rep 3 F16=1: 6.72 tok/s  nll 1.4863  rss_after_load 1.09 GB
+rep 3 F16=0: 5.20 tok/s  nll 1.4863  rss_after_load 1.79 GB
+greedy token streams identical: True 128 tokens
+F16=0: tok/s [3.28, 5.27, 5.2] median 5.200  rss_after_load [1.79, 1.79, 1.79]  nll {'1.4863'}
+F16=1: tok/s [2.6, 6.69, 6.72] median 6.690  rss_after_load [1.09, 1.09, 1.09]  nll {'1.4863'}

@@ -1,0 +1,35 @@
+[
+  {
+    "label": "baseline",
+    "prompt": "short",
+    "text": "A hash table is a data structure that uses a hash function to map keys to array indices, enabling efficient storage and retrieval of key-value pairs.<|endoftext|>.<|endoftext|>.\n\nThe hash table is a data structure that stores data in an associative manner, allowing for efficient retrieval of data based on a key. It works by taking a key, applying a hash function to it, and using the resulting hash value to determine the index at which the data should be stored. When retrieving data, the hash function is used again to find the index at which the data is stored, and the data can then be retrieved from that index.\n\n",
+    "usage": {
+      "prompt_tokens": 24,
+      "completion_tokens": 128,
+      "total_tokens": 152
+    },
+    "wall_s": 34.026084184646606,
+    "stat": null,
+    "stderr": "[stop] batched serve mode: filtered 3 non-EOS stop tokens (tool-call safety, #401)\n[stop] 1 stop tokens: 0\nOpenAI-compatible API listening on http://127.0.0.1:52220/v1\n[api] 127.0.0.1 - \"GET /health HTTP/1.1\" 200 -\n[api] 127.0.0.1 - \"POST /v1/chat/completions HTTP/1.1\" 200 -\n"
+  },
+  {
+    "label": "new",
+    "prompt": "short",
+    "text": "A hash table is a data structure that uses a hash function to map keys to array indices, enabling efficient storage and retrieval of key-value pairs.<|endoftext|>.<|endoftext|>.\n\nThe hash table is a data structure that stores data in an associative manner, allowing for efficient retrieval of data based on a key. It works by taking a key, applying a hash function to it, and using the resulting hash value to determine the index at which the data should be stored. When retrieving data, the hash function is used again to find the index at which the data is stored, and the data can then be retrieved from that index.\n\n",
+    "usage": {
+      "prompt_tokens": 24,
+      "completion_tokens": 128,
+      "total_tokens": 152
+    },
+    "wall_s": 33.0442852973938,
+    "stat": {
+      "disk_bytes": 6042910720,
+      "gb_per_token": 0.04721,
+      "pf_issued": 609,
+      "pf_used": 609,
+      "pf_precision": 1.0,
+      "engine_tok_s": 3.8758
+    },
+    "stderr": "[stop] batched serve mode: filtered 3 non-EOS stop tokens (tool-call safety, #401)\n[stop] 1 stop tokens: 0\nOpenAI-compatible API listening on http://127.0.0.1:52223/v1\n[api] 127.0.0.1 - \"GET /health HTTP/1.1\" 200 -\n[LMA_STAT] req=1 tokens=128 disk_bytes=6042910720 gb_per_token=0.047210 pf_issued=609 pf_used=609 pf_precision=1.0000 tok_s=3.8758\n[api] 127.0.0.1 - \"POST /v1/chat/completions HTTP/1.1\" 200 -\n"
+  }
+]

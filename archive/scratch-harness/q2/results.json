@@ -1,0 +1,94 @@
+{
+ "int4all": {
+  "env": {
+   "LMA_HF_INT4": "all",
+   "LMA_GPU": "1"
+  },
+  "logit": {
+   "positions": 1280,
+   "top1_agreement": 0.92421875,
+   "kl_mean_nats": 0.09081550112107009,
+   "kl_p95_nats": 0.28828124176138525,
+   "kl_max_nats": 4.657298096597988,
+   "ppl_ref": 1.7792618843058285,
+   "ppl_cand": 1.979898381680834,
+   "ppl_ratio": 1.1127638933564201
+  },
+  "suite": {
+   "coding": {
+    "n": 3,
+    "ref_ok": 1,
+    "cand_ok": 2,
+    "identical": 0,
+    "prefix_agree": 0.1773,
+    "success_retention": 2.0
+   },
+   "reasoning": {
+    "n": 3,
+    "ref_ok": 3,
+    "cand_ok": 2,
+    "identical": 0,
+    "prefix_agree": 0.2561,
+    "success_retention": 0.6667
+   },
+   "math": {
+    "n": 3,
+    "ref_ok": 3,
+    "cand_ok": 3,
+    "identical": 0,
+    "prefix_agree": 0.0882,
+    "success_retention": 1.0
+   },
+   "factual": {
+    "n": 3,
+    "ref_ok": 3,
+    "cand_ok": 3,
+    "identical": 0,
+    "prefix_agree": 0.242,
+    "success_retention": 1.0
+   },
+   "instruction": {
+    "n": 3,
+    "ref_ok": 0,
+    "cand_ok": 0,
+    "identical": 0,
+    "prefix_agree": 0.018,
+    "success_retention": null
+   },
+   "structured": {
+    "n": 3,
+    "ref_ok": 3,
+    "cand_ok": 2,
+    "identical": 0,
+    "prefix_agree": 0.1105,
+    "success_retention": 0.6667
+   },
+   "long_context": {
+    "n": 3,
+    "ref_ok": 3,
+    "cand_ok": 3,
+    "identical": 0,
+    "prefix_agree": 0.0554,
+    "success_retention": 1.0
+   },
+   "ALL": {
+    "n": 21,
+    "ref_ok": 16,
+    "cand_ok": 15,
+    "identical": 0,
+    "prefix_agree": 0.1354,
+    "success_retention": 0.9375
+   }
+  },
+  "verdict": {
+   "accepted": false,
+   "reasons": [
+    "top-1 agreement 0.924 < 0.97",
+    "mean KL 0.0908 > 0.02",
+    "ppl ratio 1.113 > 1.03",
+    "task-success retention 0.938 < 0.95"
+   ]
+  },
+  "median_tok_s": 58.4078266942299
+ }
+}

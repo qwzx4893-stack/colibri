@@ -1,0 +1,9 @@
+=== COLI_DENSE_F16=0 mode=ppl wall=50.3s
+== Streaming C engine v2.2 | cache=64/layer bits=8 pilot=0 wide=1 guard=1 hot=0 smooth=0.30 conf=0.92 fused3=0 ==
+resident weights loaded in 1.3s | RSS after load: 1.79 GB
+TF-NLL: 1.4863 nats/token over 256 tokens  |  ppl = 4.42
+Expert cache hit rate: 97.4%  (hit=34779 miss=933)
+Speed: 5.29 tok/s (48.4s for 256 tokens) | PEAK RSS: 7.34 GB
+
+[OMP] olmoe: 14 physical-core threads instead of 20 logical CPUs; SMT can halve decode throughput on some CPUs (#718); set OMP_NUM_THREADS=<n> to override
+

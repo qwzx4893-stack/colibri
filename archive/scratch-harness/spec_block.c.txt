@@ -1,0 +1,87 @@
+/* ---- Speculative decoding (greedy only): prompt-lookup n-gram drafts + batched GPU verification ----
+ * The draft is free (a suffix n-gram match in the prompt+generated history); the k+1 tokens [current, d1..dk] are
+ * verified in ONE batched forward (weights read once per 8 tokens). Acceptance is exact: d_j is kept only when it
+ * equals argmax of the previous row, and the batched kernels accumulate in the same order as the decode kernels, so the
+ * emitted tokens are those plain greedy decoding would produce. Everything is measured end to end; a spec window that
+ * is slower per token than plain GPU decode switches speculation off for the session (circuit breaker). */
+static int g_spec_k = 0;              /* LMA_SPEC: max draft tokens per verification (0 = off) */
+static int g_spec_ngram = 2;          /* LMA_SPEC_NGRAM: minimum suffix match length */
+static uint64_t g_spec_calls, g_spec_drafted, g_spec_accepted, g_spec_nodraft, g_spec_plain;
+static double g_spec_s, g_spec_plain_s;   /* wall seconds: verify calls / plain decode steps taken while spec was armed */
+static int g_spec_off = 0;
+static double g_spec_win_s; int g_spec_win_calls, g_spec_win_tok;
+
+static int spec_draft(const int *hist, int hist_len, int kmax, int *out) {
+    for (int n = 4; n >= g_spec_ngram; n--) {
+        if (hist_len <= n) continue;
+        for (int j = hist_len - n - 1; j >= 0; j--) {
+            int eq = 1;
+            for (int t = 0; t < n; t++) if (hist[j + t] != hist[hist_len - n + t]) { eq = 0; break; }
+            if (!eq) continue;
+            int k = 0;
+            while (k < kmax && j + n + k < hist_len - 0 && j + n + k < hist_len) { out[k] = hist[j + n + k]; k++; }
+            if (k > 0) return k;
+        }
+    }
+    return 0;
+}
+
+/* One token step with speculation. `hist[0..hist_len)` holds prompt + generated tokens, the last being `nt` (position
+ * hist_len-1, not yet run). Returns the logits after `nt` (like step()); accepted draft rows are left in rows/*nq for the
+ * caller to consume one per following token. NULL = caller must run step(). */
+static float *spec_step(Model *m, const int *hist, int hist_len, int ctx_cap, float *rows, int *nq) {
+    Cfg *c = &m->c; int V = c->vocab;
+    *nq = 0;
+    if (g_spec_off || !m->gpu_on || !g_oc.pf_begin || g_spec_k < 1) return NULL;
+    int pos = hist_len - 1;
+    int kmax = g_spec_k;
+    if (kmax > 7) kmax = 7;
+    if (pos + 1 + kmax > m->gpu_max_t - 1) kmax = m->gpu_max_t - 1 - pos - 1;
+    if (pos + 1 + kmax > ctx_cap - 1) kmax = ctx_cap - 1 - pos - 1;
+    if (kmax < 1) return NULL;
+    int T[8], k = spec_draft(hist, hist_len, kmax, T + 1);
+    if (k < 1) { g_spec_nodraft++; return NULL; }
+    T[0] = hist[hist_len - 1];
+    double t0 = now_s();
+    if (!gpu_prefill(m, T, k + 1, pos, rows, k + 1, 1)) {
+        m->gpu_on = 0; fprintf(stderr, "[GPU] speculative verification failed at position %d: falling back to the CPU\n", pos);
+        return NULL;
+    }
+    for (int r = 0; r <= k; r++)
+        for (int i = 0; i < V; i++)
+            if (!isfinite(rows[(size_t)r * V + i])) {
+                m->gpu_on = 0; snprintf(m->gpu_trip_reason, sizeof m->gpu_trip_reason, "non-finite logits in speculative verification");
+                fprintf(stderr, "[GPU] %s: falling back to the CPU\n", m->gpu_trip_reason);
+                return NULL;
+            }
+    int a = 0;
+    while (a < k) {                                  /* accept d_{a+1} iff it is the argmax of row a */
+        const float *rw = rows + (size_t)a * V; int am = 0;
+        for (int i = 1; i < V; i++) if (rw[i] > rw[am]) am = i;
+        if (am != T[a + 1]) break;
+        a++;
+    }
+    m->gpu_kv_len = pos + a + 1;
+    m->token_count += a + 1; m->freq_token_count += a + 1;
+    m->kv_len = pos + a + 1;
+    kv_prefix_record(&m->kvp, T, pos, a + 1);
+    g_prof_forwards += 1;
+    double dt = now_s() - t0;
+    g_spec_calls++; g_spec_drafted += (uint64_t)k; g_spec_accepted += (uint64_t)a; g_spec_s += dt;
+    g_spec_win_s += dt; g_spec_win_calls++; g_spec_win_tok += a + 1;
+    if (g_spec_win_calls >= 16) {                    /* breaker: per-token cost must beat plain GPU decode */
+        double per_tok = g_spec_win_s / g_spec_win_tok;
+        double plain = g_spec_plain ? g_spec_plain_s / (double)g_spec_plain : 0.0;
+        if (plain > 0 && per_tok > plain) {
+            g_spec_off = 1;
+            fprintf(stderr, "[SPEC] circuit breaker: %.2f ms/token with speculation > %.2f ms/token plain decode; speculation off\n",
+                    per_tok * 1e3, plain * 1e3);
+        }
+        g_spec_win_s = 0; g_spec_win_calls = 0; g_spec_win_tok = 0;
+    }
+    *nq = a;
+    float *lg = falloc(V);
+    memcpy(lg, rows, (size_t)V * sizeof(float));
+    return lg;
+}
+

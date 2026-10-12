@@ -1,0 +1,37 @@
+def _engine_encode(model_dir, segments, exe=None):
+    """Token ids of each text segment from the engine's own tokenizer (QENCODE probe): exactly what serve mode feeds."""
+    import tempfile
+    exe = exe or str(CDIR / ("olmoe.exe" if sys.platform == "win32" else "olmoe"))
+    with tempfile.NamedTemporaryFile("wb", delete=False, suffix=".seg") as f:
+        f.write(b"\x01".join(t.encode("utf-8") for t in segments)); path = f.name
+    try:
+        r = subprocess.run([exe], env=dict(os.environ, SNAP=str(model_dir), QENCODE=path), capture_output=True, text=True, timeout=120)
+    finally:
+        os.unlink(path)
+    lines = r.stdout.split("\n")
+    return [[int(x) for x in ln.split()] for ln in lines[:len(segments)]]
+
+
+def build_qref(model_dir, suite_results, out_json, max_len=1900, exe=None):
+    """Teacher-forcing sequence for the logit-level probe: one chat conversation made of the (short) suite prompts and the
+    Exact reference answers. Writes an engine `ref.json` (prompt_ids = first token only) and a sidecar `<out>.mask.json`
+    marking the positions that belong to assistant answers (the only ones scored by compare_dumps)."""
+    segs = []
+    for r in suite_results:
+        if r["domain"] == "long_context":
+            continue
+        lead = "|||IP_ADDRESS|||" + ("" if not segs else "\n")
+        segs += [lead + "<|user|>\n" + r["prompt_full"] + "\n<|assistant|>\n", r["text"]]
+    enc = _engine_encode(model_dir, segs, exe)
+    ids, ans = [], []
+    for k in range(0, len(segs), 2):
+        u, a = enc[k], enc[k + 1]
+        if len(ids) + len(u) + len(a) > max_len:
+            break
+        ids += u; ans += [0] * len(u)
+        ids += a; ans += [1] * len(a)
+    Path(out_json).write_text(json.dumps({"prompt_ids": ids[:1], "full_ids": ids}))
+    Path(str(out_json) + ".mask.json").write_text(json.dumps(ans[1:]))     # positions 1.. are the scored ones
+    return len(ids)
+
+
